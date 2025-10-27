@@ -3,6 +3,9 @@ import logging
 import pathlib
 
 import mirror
+import mirror.command
+import mirror.config
+
 
 __version__ = "1.0.0-pre3"
 mirror.__version__ = __version__
@@ -11,7 +14,7 @@ mirror.__version__ = __version__
 @click.group()
 def main():
     """
-    Mirror is a tool for mirroring files and directories to a remote server.
+    Mirror.py is a tool for mirroring files and directories to a remote server.
     """
     pass
 
@@ -22,9 +25,7 @@ def crontab(user, config):
     """
     Generate a crontab file from the config file.
     """
-    config = mirror.config.load(config)
-    crontab = mirror.crontab.generate(config, user)
-    print(crontab)
+    mirror.command.crontab(user, config)
 
 @main.command("daemon")
 @click.argument("config", default="/etc/mirror/daemon.json")
@@ -32,5 +33,4 @@ def daemon(config):
     """
     Run the daemon.
     """
-    mirror.config.daemon_load(config)
-    mirror.daemon.run()
+    mirror.command.daemon(config)

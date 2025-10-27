@@ -5,7 +5,7 @@ import time
 import json
 from pathlib import Path
 
-def daemon():
+def daemon(config):
     daemonConfigPath = Path("/etc/mirror/daemon.json")
     if not daemonConfigPath.exists():
         raise FileNotFoundError(f"{daemonConfigPath} does not exist! Please initialize the mirror first.")

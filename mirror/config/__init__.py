@@ -1,4 +1,11 @@
 import mirror
+import mirror.structure
+
+import mirror.config.config
+import mirror.config.stat
+import mirror.config.status
+
+
 
 from pathlib import Path
 import json
@@ -10,152 +17,57 @@ DEFAULT_DAEMON_CONFIG = {
     "status": "/etc/mirror/status.json",
 }
 
-DEFAULT_CONFIG = {
-    "mirrorname": "My Mirror",
-    "settings": {
-        "logfolder": "/mirror/logs",
-        "webroot": "/var/www/mirror",
-        "gid": 1000,
-        "uid": 1000,
-        "localtimezone": "Asia/Seoul",
-        "logger": {
-            "level": "INFO",
-            "packagelevel": "ERROR",
-            "format": "[%(asctime)s] %(levelname)s # %(message)s",
-            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
+CONFIG_PATH: Path
+STAT_DATA_PATH: Path
+STATUS_PATH: Path
 
-            "fileformat": {
-                "base": "/var/log/mirror",
-                "folder": "{year}/{month}/{day}",
-                "filename": "{hour}:{minute}:{second}.{microsecond}.{packageid}.log",
-                "gzip": True,
-            }
-        },
-        "plugins": [
-            "/mirror/plugin/someof.py",
-            "/mirror/plugin/"
-        ]
-    },
-    "packages": {
-        "mirror": {
-            "name": "Name Mirror",
-            "id": "mirror",
-            "href": "/mirror",
-            "synctype": "rsync",
-            "syncrate": "PT1H",
-            "link": [
-                {
-                    "rel": "HOME",
-                    "href": "http://www.example.com"
-                },
-            ],
-            "settings": {
-                "hidden": False,
-                "src": "rsync://test.org/mirror", # ftp://test.org/mirror
-                "dst": "/disk/mirror",
-                "vitrualdir": "",
-                "options": {
-                    "ffts": True,
-                    "fftsfile": "fullfiletimelist-mirror", # only FFTS
-                }
-            }
-        }
-    }
-}
 
-DEFAULT_PLUGIN_CONFIG = {
-    "ftpsync": {
-        "maintainer": "Admins <admins@examile.com>", # only ftpsync
-        "sponsor": "Example <https://example.com>", # only ftpsync
-        "country": "KR", # only ftpsync
-        "location": "Seoul", # only ftpsync
-        "throughput": "1G", # only ftpsync
-        "include": "", # only ftpsync
-        "exclude": "", # only ftpsync
-    }
-}
+def load(confPath: Path | None):
+    """
+    Load the configuration and status data.
+    """
+    if not confPath or not confPath.exists():
+        raise FileNotFoundError(f"Configuration path {confPath} does not exist!")
+    
+    global CONFIG_PATH
+    CONFIG_PATH = confPath
 
-DEFAULT_STAT_DATA = {
-    "mirrorname": "My Mirror",
-    "settings": {
-        "logfolder": "/mirror/logs",
-        "webroot": "/var/www/mirror",
-        "gid": 1000,
-        "uid": 1000,
-        "localtimezone": "Asia/Seoul",
-        "logger": {
-            "level": "INFO",
-            "packagelevel": "ERROR",
-            "format": "[%(asctime)s] %(levelname)s # %(message)s",
-            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
+    _load_config()
 
-            "fileformat": {
-                "base": "/mirror/logs",
-                "folder": "{year}/{month}/{day}",
-                "filename": "{hour}:{minute}:{second}.{microsecond}.{packageid}.log",
-                "gzip": True,
-            }
-        },
-        "plugins": [
-            "/mirror/plugin/someof.py",
-            "/mirror/plugin/"
-        ]
-    },
-    "packages": {
-        "mirror": {
-            "name": "Name Mirror",
-            "id": "mirror",
-            "href": "/mirror",
-            "synctype": "rsync",
-            "syncrate": "PT1H",
-            "link": [
-                {
-                    "rel": "HOME",
-                    "href": "http://www.example.com"
-                },
-            ],
-            "settings": {
-                "hidden": False,
-                "src": "rsync://test.org/mirror", # ftp://test.org/mirror
-                "dst": "/disk/mirror",
-                "options": {
-                    "ffts": True,
-                    "fftsfile": "fullfiletimelist-mirror", # only FFTS
-                    "auth": True,
-                    "userid": "user",
-                    "passwd": "password",
-                }
-            },
-            "status": { # This is the status
-                "status": "ERROR",
-                "statusinfo": {
-                    "lastsynclog": "2024/01/01/00:00:00.000000.mirror.log",
-                    "lastsuccesslog": "2024/01/01/00:00:00.000000.mirror.log",
-                    "errorcount": 1
-                }
-            }
-        }
-    }
-}
 
-CONFIG_PATH: Path = None
-STAT_DATA_PATH: Path = None
-STATUS_PATH: Path = None
 
-def load_config():
-    """Load the configuration file"""
-
-    if CONFIG_PATH == None or STAT_DATA_PATH == None or STATUS_PATH == None:
-        raise Exception("CONFIG_PATH, DATA_PATH, STATUS_PATH is not set.")
-        
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"{CONFIG_PATH} does not exist! Please initialize the mirror first.")
+    
+def reload():
     config = json.loads(CONFIG_PATH.read_text())
-    if not STAT_DATA_PATH.exists():
+
+def _load_config():
+    """
+    Load Configuration file
+
+    Args: confPath (Path)
+
+    Return: None
+
+    Registration: 
+        mirror.conf
+
+    """
+
+    confPath = mirror.config.CONFIG_PATH
+    config: dict = json.loads(confPath.read_text())
+
+    if not config.get("stat_data", ""):
+        raise ValueError("Configuration file does not contain 'stat_data' key.")
+     
+    # Need to load STAT_DATA_PATH First in config file.
+    mirror.config.STAT_DATA_PATH = Path(config.get("stat_data", ""))
+
+
+    if not mirror.config.STAT_DATA_PATH.exists():
         for package in config["packages"]:
             package["status"] = "ERROR"
-        STAT_DATA_PATH.write_text(json.dumps(config["packages"]))
-    status = json.loads(STAT_DATA_PATH.read_text())
+        mirror.config.STAT_DATA_PATH.write_text(json.dumps(config["packages"]))
+    status = json.loads(mirror.config.STAT_DATA_PATH.read_text())
 
     conflist = list(config["packages"].keys())
     statuslist = list(status["packages"].keys())
@@ -169,13 +81,8 @@ def load_config():
     if statuslist:
         mirror.logger.warning(f"Status file has extra packages: {statuslist}. You might need to delete manually.")
     
-    STAT_DATA_PATH.write_text(json.dumps(config))
+    mirror.config.STAT_DATA_PATH.write_text(json.dumps(config))
     
-
-
-
-
-    mirror.settings = mirror.config.Settings(config)
-    
-def reload():
-    config = json.loads(CONFIG_PATH.read_text())
+    # Load config
+    mirror.conf = mirror.structure.Config.load_from_dict(config)
+    mirror.packages = mirror.structure.Packages(config["packages"])

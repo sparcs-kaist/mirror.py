@@ -1,4 +1,5 @@
 import mirror
+import mirror.structure
 
 from prompt_toolkit import PromptSession, print_formatted_text
 from prompt_toolkit.formatted_text import ANSI
@@ -15,7 +16,7 @@ class PromptHandler(logging.StreamHandler):
 psession = PromptSession()
 input = psession.prompt
 logger = logging.getLogger("mirror")
-basePath: Path = None
+basePath: Path
 
 DEFAULT_LEVEL = "INFO"
 DEFAULT_PACKAGE_LEVEL = "ERROR"
@@ -33,7 +34,7 @@ logger.setLevel(logging.INFO)
 logger.handlers[0].setLevel(logging.INFO)
 logger.handlers[0].setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s # %(message)s"))
 
-def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str = None) -> str:
+def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None) -> str:
     """
     Format time in the log message
 
@@ -115,7 +116,7 @@ def setup_logger():
         basePath.mkdir(parents=True)
     
     now = datetime.datetime.now()
-    folder = basePath / _time_formatting(mirror.conf.logger["fileformat"]["folder"], now)
+    folder = basePath / _time_formatting(mirror.conf.logger["fileformat"]["folder"], now, None)
     if not folder.exists():
         folder.mkdir(parents=True)
     filename = folder / "master.log"

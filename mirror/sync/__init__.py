@@ -20,13 +20,14 @@ class Options:
             setattr(self, key, None)
     
     def copy(self):
-        new = Options()
+        new = Options(self)
         for key in self.options.keys():
             setattr(new, key, getattr(self, key))
         return new
 
 def loader(methodPath: Path) -> None:
     """Load the sync moodules"""
+    import mirror.sync
     methodsFullPath = [method for method in methodPath.glob("*.py") if method.stem != "__init__"]
     for method in methodsFullPath:
         this = SourceFileLoader(f"mirror.sync.{method.stem}", str(method)).load_module()
@@ -36,7 +37,7 @@ def load_default():
     """Load the default sync moodules"""
     loader(BasicMethodPath)
 
-def execute(package: mirror.structure.Package, logger: logging.Logger, method: types.ModuleType):
+def execute(package: mirror.structure.Package, logger: logging.Logger, method: str):
     """
     Run the Sync method (CORE)
     Args:
@@ -46,12 +47,14 @@ def execute(package: mirror.structure.Package, logger: logging.Logger, method: t
     Returns:
         Null
     """
+    import mirror.sync
     getattr(mirror.sync, method).execute(package, logger)
 
 def _execute(package: mirror.structure.Package, logger: logging.Logger, method: types.ModuleType) -> bool:
     """
     execute with threading
     """
+    return False
 
 def setexecuser(uid: int, gid: int):
     def setids():

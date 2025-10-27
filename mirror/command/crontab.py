@@ -1,4 +1,4 @@
 import mirror
 
-def crontab():
+def crontab(user, config):
     pass
