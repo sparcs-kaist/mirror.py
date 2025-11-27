@@ -1,5 +1,4 @@
 import mirror.structure
-import mirror.structure
 
 from pathlib import Path
 import logging
@@ -11,6 +10,7 @@ publishPath: Path
 logger: logging.Logger
 debug: bool
 worker: dict[str, mirror.structure.Worker]
+status: dict
 __version__: str
 
 import mirror.toolbox

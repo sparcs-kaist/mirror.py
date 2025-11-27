@@ -3,10 +3,14 @@ DEFAULT_CONFIG = {
     "settings": {
         "logfolder": "/mirror/logs",
         "webroot": "/var/www/mirror",
-        "statfile": "/mirror/stat_data.json",
+        "statusfile": "/var/www/mirror/status.json",
         "gid": 1000,
         "uid": 1000,
         "localtimezone": "Asia/Seoul",
+        "maintainer": {
+            "name": "Roul",
+            "email": "op@roul.me"
+        },
         "logger": {
             "level": "INFO",
             "packagelevel": "ERROR",

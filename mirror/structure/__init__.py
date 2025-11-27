@@ -5,6 +5,7 @@ import mirror.toolbox
 import mirror.sync
 
 from dataclasses import dataclass, asdict
+from typing import Literal
 from pathlib import Path
 import json
 import time
@@ -60,6 +61,10 @@ class Package:
     syncrate: int
     link: list[Link]
     settings: PackageSettings
+    lastsync: float = 0.0
+    errorcount: int = 0
+    disabled: bool = False
+    
 
     @staticmethod
     def from_dict(config: dict) -> Package:
@@ -71,22 +76,24 @@ class Package:
         return Package(
             pkgid=config["id"],
             name=config["name"],
-            status=config["status"],
+            status=config.get("status", "UNKNOWN"),
             href=config["href"],
             synctype=synctype,
             syncrate=mirror.toolbox.iso_duration_parser(config["syncrate"]),
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
-            settings=PackageSettings(**config["settings"])
+            settings=PackageSettings(**config["settings"]),
+            lastsync=config.get("lastsync", 0.0),
+            errorcount=config.get("errorcount", 0)
         )
 
     def __str__(self) -> str:
         return self.pkgid
 
-    def set_status(self, status) -> None:
+    def set_status(self, status: Literal["ACTIVE", "SYNC", "ERROR", "UNKNOWN"]) -> None:
         if status == self.status: return
-        statuslist = ["ACTIVE", "ERROR", "SYNC", "UNKNOWN"]
-        if status not in statuslist:
-            raise ValueError(f"Status not in {statuslist}")
+        status_list = ('ACTIVE', 'SYNC', 'ERROR', 'UNKNOWN')
+        if status not in status_list:
+            raise ValueError(f"Status not in {status_list}")
         
         self.status = status
         self.timestamp = time.time() * 1000
@@ -103,6 +110,12 @@ class Package:
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
+    
+    def is_syncing(self) -> bool:
+        return self.status == "SYNC"
+    
+    def is_disabled(self) -> bool:
+        return self.disabled
 
     def _path_check(self, path: Path) -> None:
         if mirror.debug: return
@@ -123,12 +136,21 @@ class Sync:
 @dataclass
 class Packages(Options):
     def __init__(self, pkgs: dict) -> None:
-        self.keys = pkgs.keys()
+        self._keys = pkgs.keys()
         for key in pkgs:
             setattr(self, key, Package(**pkgs[key]))
 
+    def items(self) -> dict[str, Package]:
+        return {key: getattr(self, key) for key in self._keys}
+
+    def keys(self) -> list[str]:
+        return list(self._keys)
+
+    def values(self) -> list[Package]:
+        return [getattr(self, key) for key in self._keys]
+
     def to_dict(self) -> dict:
-        return {key: getattr(self, key).to_dict() for key in self.keys}
+        return {key: getattr(self, key).to_dict() for key in self._keys}
 
 @dataclass
 class Config:
@@ -193,7 +215,7 @@ class Config:
                 "plugins": self.plugins,
             }
         }
-    
+
     def to_json(self) -> str:
         return json.dumps(self.to_dict())
     

@@ -1,23 +1,22 @@
 import mirror
 import mirror.config
+import mirror.toolbox
 
 import time
 import json
 from pathlib import Path
 
 def daemon(config):
-    daemonConfigPath = Path("/etc/mirror/daemon.json")
-    if not daemonConfigPath.exists():
-        raise FileNotFoundError(f"{daemonConfigPath} does not exist! Please initialize the mirror first.")
-    
-    daemonConfig = json.loads(daemonConfigPath.read_text())
-    
-    mirror.config.CONFIG_PATH = daemonConfig["config"]
-    mirror.config.DATA_PATH = daemonConfig["data"]
-    mirror.config.STATUS_PATH = daemonConfig["status"]
+    """
+    Runs the mirror daemon.
+    'config' is the path to the main JSON configuration file.
+    """
+    # Load all configurations from the single config file path.
+    mirror.config.load(Path(config))
 
-    mirror.config.load_config(configPath)
-
+    mirror.logger.info("Daemon started and configuration loaded.")
+    
+    # ... Daemon main loop would start here ...
     pass
 
 

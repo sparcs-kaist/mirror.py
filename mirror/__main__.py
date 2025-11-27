@@ -20,7 +20,7 @@ def main():
 
 @main.command("crontab")
 @click.option("-u", "--user", default="root", help="User to run the cron job as.")
-@click.option("-c", "--config", default="config.json", help="Path to the config file.")
+@click.option("-c", "--config", default="/etc/mirror/config.json", help="Path to the config file.")
 def crontab(user, config):
     """
     Generate a crontab file from the config file.
@@ -28,7 +28,7 @@ def crontab(user, config):
     mirror.command.crontab(user, config)
 
 @main.command("daemon")
-@click.argument("config", default="/etc/mirror/daemon.json")
+@click.option("--config", default="/etc/mirror/config.json", help="Path to the config file.")
 def daemon(config):
     """
     Run the daemon.

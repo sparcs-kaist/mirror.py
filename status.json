@@ -1,0 +1,2096 @@
+{
+  "timestamp": "2025-07-06T11:25:01+09:00",
+  "package": {
+    "ArchLinux": {
+      "id": "ArchLinux",
+      "name": "ArchLinux",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.archlinux.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/ArchLinux"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/ArchLinux"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.gwdg.de/pub/linux/archlinux/",
+        "frequency": "PT10M"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/11:24:01.980132026.ArchLinux.log.gz",
+          "timestamp": "2025-07-06T11:24:07+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "CPAN": {
+      "id": "CPAN",
+      "name": "CPAN",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.cpan.org"
+        },
+        {
+          "rel": "list",
+          "href": "http://www.cpan.org/SITES.html"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/CPAN"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/CPAN"
+        }
+      ],
+      "sync": {
+        "source": "rsync://cpan-rsync.perl.org/CPAN/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:39:01.451881509.CPAN.log.gz",
+          "timestamp": "2025-07-05T13:47:36+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "CRAN": {
+      "id": "CRAN",
+      "name": "CRAN",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://cran.r-project.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/CRAN"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/CRAN"
+        }
+      ],
+      "sync": {
+        "source": "rsync://cran.r-project.org/CRAN/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/23:12:01.415073525.CRAN.log.gz",
+          "timestamp": "2025-07-06T04:49:57+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "CentOS": {
+      "id": "CentOS",
+      "name": "CentOS",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.centos.org"
+        },
+        {
+          "rel": "mirrors list",
+          "href": "http://www.centos.org/download/mirrors/"
+        },
+        {
+          "rel": "mirror status",
+          "href": "http://mirror-status.centos.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/CentOS"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/CentOS"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.riken.jp/centos",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:36:01.595367599.CentOS.log.gz",
+          "timestamp": "2025-07-05T12:36:05+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "NetBSD": {
+      "id": "NetBSD",
+      "name": "NetBSD",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "list",
+          "href": "http://www.netbsd.org/mirrors/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/NetBSD"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/NetBSD"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.NetBSD.org/NetBSD/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/03:57:02.001868319.NetBSD.log.gz",
+          "timestamp": "2025-07-05T08:09:53+09:00"
+        },
+        "updating": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/08:12:01.206189807.NetBSD.log",
+          "timestamp": "2025-07-06T08:12:01+09:00"
+        },
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "OpenBSD": {
+      "id": "OpenBSD",
+      "name": "OpenBSD",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "list",
+          "href": "http://www.openbsd.org/ftp.html"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/OpenBSD"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/OpenBSD"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.usa.openbsd.org/ftp/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/04/22:15:01.789987912.OpenBSD.log.gz",
+          "timestamp": "2025-07-05T10:30:16+09:00"
+        },
+        "updating": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/10:33:01.655142598.OpenBSD.log",
+          "timestamp": "2025-07-06T10:33:01+09:00"
+        },
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "apache": {
+      "id": "apache",
+      "name": "Apache",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.apache.org"
+        },
+        {
+          "rel": "list",
+          "href": "http://www.apache.org/mirrors/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/apache/"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/apache/"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.apache.org/apache-dist/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/17:27:01.863009002.apache.log.gz",
+          "timestamp": "2025-07-05T18:13:57+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "centos-stream": {
+      "id": "centos-stream",
+      "name": "CentOS Stream",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "https://www.centos.org/centos-stream/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/centos-stream"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/centos-stream"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.riken.jp/centos-stream",
+        "frequency": "PT30M"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/11:06:01.489036273.centos-stream.log.gz",
+          "timestamp": "2025-07-06T11:06:03+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "chicken": {
+      "id": "chicken",
+      "name": "Chicken",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/chicken"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/chicken"
+        }
+      ],
+      "status": {
+        "updated": null,
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "ctan": {
+      "id": "ctan",
+      "name": "CTAN",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.ctan.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/tex-archive/"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/tex-archive/"
+        }
+      ],
+      "sync": {
+        "source": "rsync://mirror.ctan.org/CTAN ",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/14:09:01.857122173.ctan.log.gz",
+          "timestamp": "2025-07-05T14:47:56+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "cygwin": {
+      "id": "cygwin",
+      "name": "Cygwin",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.cygwin.com"
+        },
+        {
+          "rel": "list",
+          "href": "http://cygwin.com/mirrors.html"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/cygwin"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/cygwin"
+        }
+      ],
+      "sync": {
+        "source": "rsync://cygwin.com/cygwin-ftp",
+        "frequency": "PT12H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/07:03:01.648216840.cygwin.log.gz",
+          "timestamp": "2025-07-06T07:31:52+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "debian-archive": {
+      "id": "debian-archive",
+      "name": "Debian Old Releases",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "Home",
+          "href": "http://www.debian.org/distrib/archive"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/debian-archive"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/debian-archive"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.archive.debian.org/debian-archive/",
+        "frequency": "P7D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/01/01:21:01.516642004.debian-archive.log.gz",
+          "timestamp": "2025-07-01T08:23:29+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "debian-cd": {
+      "id": "debian-cd",
+      "name": "Debian CD image",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.debian.org/CD/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/debian-cd"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/debian-cd"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.jaist.ac.jp/debian-cd/",
+        "frequency": "P7D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/06/29/10:12:01.437774276.debian-cd.log.gz",
+          "timestamp": "2025-06-29T11:01:30+09:00"
+        },
+        "updating": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/11:03:02.133754268.debian-cd.log",
+          "timestamp": "2025-07-06T11:03:02+09:00"
+        },
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "debian-multimedia": {
+      "id": "debian-multimedia",
+      "name": "Debian-Multimedia",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://debian-multimedia.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/debian-multimedia"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/debian-multimedia"
+        }
+      ],
+      "sync": {
+        "source": "rsync://www.deb-multimedia.org/deb",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/15:12:02.041546776.debian-multimedia.log.gz",
+          "timestamp": "2025-07-05T15:17:33+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "debian-ports": {
+      "id": "debian-ports",
+      "name": "Debian Ports",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.debian-ports.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/debian-ports"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/debian-ports"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.de.debian.org/debian-ports/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/19:51:02.274261562.debian-ports.log.gz",
+          "timestamp": "2025-07-06T03:09:30+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "debian-security": {
+      "id": "debian-security",
+      "name": "Debian Security",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://security.debian.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/debian-security"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/debian-security"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.security.debian.org/debian-security",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/05:30:02.060502182.debian-security.log.gz",
+          "timestamp": "2025-07-06T05:37:01+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "debian": {
+      "id": "debian",
+      "name": "Debian",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "list",
+          "href": "http://www.debian.org/mirror/list"
+        },
+        {
+          "rel": "Debian Mirror Checker",
+          "href": "https://mirror-master.debian.org/status/mirror-info/ftp.kaist.ac.kr.html"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/debian"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/debian"
+        }
+      ],
+      "sync": {
+        "source": "rsync://syncproxy2.wna.debian.org/debian/"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/05:38:38.074228032.debian.log.gz",
+          "timestamp": "2025-07-06T05:38:39+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "eclipse": {
+      "id": "eclipse",
+      "name": "Eclipse",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.eclipse.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/eclipse"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/eclipse"
+        }
+      ],
+      "sync": {
+        "source": "rsync://download.eclipse.org/eclipseMirror/",
+        "frequency": "PT6H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2024/04/14/18:04:31.291914595.eclipse.log.gz",
+          "timestamp": "2024-04-14T18:38:53+09:00"
+        },
+        "updating": null,
+        "failed": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/05/04/23:40:56.003762466.eclipse.log.gz",
+          "count": "66"
+        },
+        "usage": null,
+        "size": null
+      }
+    },
+    "exim": {
+      "id": "exim",
+      "name": "Exim",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.exim.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/exim"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/exim"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.exim.org/ftp",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:36:01.742995399.exim.log.gz",
+          "timestamp": "2025-07-05T12:36:13+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "fedora-epel": {
+      "id": "fedora-epel",
+      "name": "Fedora EPEL",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.fedoraproject.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/fedora-epel"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/fedora-epel"
+        }
+      ],
+      "sync": {
+        "source": "rsync://download-cc-rdu01.fedoraproject.org/fedora-epel",
+        "frequency": "PT10M"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/10:33:01.810400805.fedora-epel.log.gz",
+          "timestamp": "2025-07-06T10:33:05+09:00"
+        },
+        "updating": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/10:45:01.858255553.fedora-epel.log",
+          "timestamp": "2025-07-06T10:45:01+09:00"
+        },
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "fedora": {
+      "id": "fedora",
+      "name": "Fedora",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "List",
+          "href": "http://mirrors.fedoraproject.org/publiclist"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/fedora"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/fedora"
+        }
+      ],
+      "sync": {
+        "source": "rsync://download-cc-rdu01.fedoraproject.org/fedora-enchilada/",
+        "frequency": "PT10M"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/10:15:01.951798090.fedora.log.gz",
+          "timestamp": "2025-07-05T10:15:05+09:00"
+        },
+        "updating": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/10:27:02.084361801.fedora.log",
+          "timestamp": "2025-07-05T10:27:02+09:00"
+        },
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "freebsd": {
+      "id": "freebsd",
+      "name": "FreeBSD",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "list",
+          "href": "http://mirrorlist.freebsd.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/FreeBSD"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/FreeBSD"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp2.jp.freebsd.org/FreeBSD/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/04:51:01.460290355.freebsd.log.gz",
+          "timestamp": "2025-07-06T09:37:02+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "gentoo-portage": {
+      "id": "gentoo-portage",
+      "name": "Gentoo Portage",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "list",
+          "href": "http://www.gentoo.org/main/en/mirrors-rsync.xml"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/gentoo-portage"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/gentoo-portage"
+        }
+      ],
+      "sync": {
+        "source": "rsync://masterportage.gentoo.org/gentoo-portage",
+        "frequency": "PT30M"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/10:36:01.379380556.gentoo-portage.log.gz",
+          "timestamp": "2025-07-06T11:10:27+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "gentoo": {
+      "id": "gentoo",
+      "name": "Gentoo",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.gentoo.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/gentoo"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/gentoo"
+        }
+      ],
+      "sync": {
+        "source": "rsync://gentoo@masterdistfiles.gentoo.org/gentoo/",
+        "frequency": "PT4H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/07:00:02.122013220.gentoo.log.gz",
+          "timestamp": "2025-07-06T07:55:29+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "geoul": {
+      "id": "geoul",
+      "name": "Geoul system metadata",
+      "hidden": "true",
+      "link": [],
+      "status": {
+        "updated": null,
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "gnome": {
+      "id": "gnome",
+      "name": "GNOME",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.gnome.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/gnome"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/gnome"
+        }
+      ],
+      "sync": {
+        "source": "ftp://ftp.gnome.org/pub/gnome/"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2020/02/29/23:38:34.294132699.gnome.log.gz",
+          "timestamp": "2020-03-06T14:42:22+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "gnu-alpha": {
+      "id": "gnu-alpha",
+      "name": "GNU alpha",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/gnu-alpha"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/gnu-alpha"
+        }
+      ],
+      "sync": {
+        "source": "rsync://alpha.gnu.org/alpha",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/14:12:01.923872001.gnu-alpha.log.gz",
+          "timestamp": "2025-07-05T14:13:57+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "gnu": {
+      "id": "gnu",
+      "name": "GNU",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.gnu.org/"
+        },
+        {
+          "rel": "list",
+          "href": "http://www.gnu.org/prep/ftp.html"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/gnu"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/gnu"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.gnu.org/gnu",
+        "frequency": "PT6H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/08:51:01.552483712.gnu.log.gz",
+          "timestamp": "2025-07-06T08:53:53+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "hangul": {
+      "id": "hangul",
+      "name": "Hangul Archive",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/hangul"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/hangul"
+        }
+      ],
+      "status": {
+        "updated": null,
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "ietf": {
+      "id": "ietf",
+      "name": "Internet Drafts",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.ietf.org/"
+        },
+        {
+          "rel": "list",
+          "href": "http://www.ietf.org/shadow.html"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/internet-drafts"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/internet-drafts"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.ietf.org/internet-drafts/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:36:01.822638912.ietf.log.gz",
+          "timestamp": "2025-07-05T12:36:39+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "isc": {
+      "id": "isc",
+      "name": "ISC",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.isc.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/isc"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/isc"
+        }
+      ],
+      "sync": {
+        "source": "ftp://ftp.isc.org/isc/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/00:39:02.170369909.isc.log.gz",
+          "timestamp": "2025-07-06T05:29:11+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "kde-appdata": {
+      "id": "kde-appdata",
+      "name": "KDE Application Data",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.kde.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/kde-appdata"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/kde-appdata"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.kde.org/applicationdata",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/14:03:01.799817715.kde-appdata.log.gz",
+          "timestamp": "2025-07-06T01:23:41+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "kde": {
+      "id": "kde",
+      "name": "KDE",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.kde.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/kde"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/kde"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.kde.org/kdeftp",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/00:57:02.268144423.kde.log.gz",
+          "timestamp": "2025-07-06T01:27:53+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "linuxmint-iso": {
+      "id": "linuxmint-iso",
+      "name": "Linux Mint ISO",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.linuxmint.com"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/linuxmint-iso"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/linuxmint-iso"
+        }
+      ],
+      "sync": {
+        "source": "rsync://pub.linuxmint.com/pub/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:36:01.850362398.linuxmint-iso.log.gz",
+          "timestamp": "2025-07-05T12:36:06+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "linuxmint": {
+      "id": "linuxmint",
+      "name": "Linux Mint",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.linuxmint.com"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/linuxmint"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/linuxmint"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync-packages.linuxmint.com/packages",
+        "frequency": "PT12H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/03:48:02.037312675.linuxmint.log.gz",
+          "timestamp": "2025-07-06T03:51:36+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "lyx": {
+      "id": "lyx",
+      "name": "LyX",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.lyx.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/lyx"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/lyx"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.lip6.fr/ftp/pub/lyx",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/16:21:02.029376243.lyx.log.gz",
+          "timestamp": "2025-07-05T16:21:22+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "macports": {
+      "id": "macports",
+      "name": "MacPorts",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.macports.org/"
+        },
+        {
+          "rel": "mirrors",
+          "href": "http://trac.macports.org/wiki/Mirrors"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/macports"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/macports"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync-origin.macports.org/release/",
+        "frequency": "PT4H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/10:57:01.672726944.macports.log.gz",
+          "timestamp": "2025-07-06T11:15:33+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "manjaro": {
+      "id": "manjaro",
+      "name": "Manjaro",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "https://manjaro.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/manjaro"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/manjaro"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.tsukuba.wide.ad.jp/manjaro",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/16:33:01.768158297.manjaro.log.gz",
+          "timestamp": "2025-07-05T17:01:27+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "mariadb": {
+      "id": "mariadb",
+      "name": "MariaDB",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://mariadb.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/mariadb"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/mariadb"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.osuosl.org/mariadb",
+        "frequency": "PT12H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/11:00:02.408853821.mariadb.log.gz",
+          "timestamp": "2025-07-06T11:04:51+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "misc": {
+      "id": "misc",
+      "name": "Miscellanea",
+      "hidden": "true",
+      "link": [],
+      "status": {
+        "updated": null,
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "mplayer-www": {
+      "id": "mplayer-www",
+      "name": "MPlayer WWW",
+      "hidden": null,
+      "link": [],
+      "sync": {
+        "source": "rsync://www1.mplayerhq.hu/homepage/",
+        "frequency": "PT6H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/11:12:50.258606320.mplayer-www.log.gz",
+          "timestamp": "2025-07-06T11:12:57+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "mplayer": {
+      "id": "mplayer",
+      "name": "MPlayer",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.mplayerhq.hu/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/MPlayer"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/MPlayer"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp1.mplayerhq.hu/ftp/",
+        "frequency": "P2D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/19:15:01.596064263.mplayer.log.gz",
+          "timestamp": "2025-07-05T19:15:33+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "mxlinux-iso": {
+      "id": "mxlinux-iso",
+      "name": "MX Linux ISO Image",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "https://mxlinux.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/mxlinux-iso"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/mxlinux-iso"
+        }
+      ],
+      "sync": {
+        "source": "rsync://downstreamtestuser@rsync-mxlinux.org/MX-Linux/",
+        "frequency": "PT12H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/07:42:02.213050134.mxlinux-iso.log.gz",
+          "timestamp": "2025-07-06T07:42:08+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "mxlinux": {
+      "id": "mxlinux",
+      "name": "MX Linux",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "https://mxlinux.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/mxlinux"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/mxlinux"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsuser@iso.mxrepo.com/workspace",
+        "frequency": "PT12H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/05:15:02.552115722.mxlinux.log.gz",
+          "timestamp": "2025-07-06T05:23:09+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "mysql": {
+      "id": "mysql",
+      "name": "MySQL",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.mysql.com/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/mysql"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/mysql"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp5.gwdg.de/pub/linux/mysql/",
+        "frequency": "PT12H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/00:21:02.256961905.mysql.log.gz",
+          "timestamp": "2025-07-06T00:23:00+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "nagios-plugins": {
+      "id": "nagios-plugins",
+      "name": "The Monitoring Plugins Project",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "https://www.monitoring-plugins.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/nagios-plugins"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/nagios-plugins"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.monitoring-plugins.org/plugins/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:36:01.961609378.nagios-plugins.log.gz",
+          "timestamp": "2025-07-05T12:36:10+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "openoffice": {
+      "id": "openoffice",
+      "name": "OpenOffice",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/openoffice"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/openoffice"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.ussg.iu.edu/openoffice/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:36:01.958481582.openoffice.log.gz",
+          "timestamp": "2025-07-05T12:36:07+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "opensuse": {
+      "id": "opensuse",
+      "name": "openSUSE",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "list",
+          "href": "http://opensuse.org/Mirrors_Released_Version"
+        },
+        {
+          "rel": "list2",
+          "href": "http://opensuse.org/Mirrors_Development_Build"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/opensuse"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/opensuse"
+        }
+      ],
+      "sync": {
+        "source": "rsync://stage.opensuse.org/opensuse-hotstuff-640gb/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/05/11/21:27:02.547303320.opensuse.log.gz",
+          "timestamp": "2025-05-11T21:59:59+09:00"
+        },
+        "updating": null,
+        "failed": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/01:27:19.684142395.opensuse.log.gz",
+          "timestamp": "2025-07-06T07:30:25+09:00",
+          "count": "30"
+        },
+        "usage": null,
+        "size": null
+      }
+    },
+    "pdb": {
+      "id": "pdb",
+      "name": "RCSB Protein Data Bank",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "Home",
+          "href": "http://www.rcsb.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/pdb"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/pdb"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.wwpdb.org:33444/ftp/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/10:36:01.627438861.pdb.log.gz",
+          "timestamp": "2025-07-06T03:54:47+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "putty": {
+      "id": "putty",
+      "name": "PuTTY",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/putty"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/putty"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.chiark.greenend.org.uk/ftp/users/sgtatham/putty-website-mirror/",
+        "frequency": "P2D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/19:15:01.661691345.putty.log.gz",
+          "timestamp": "2025-07-05T19:15:15+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "raspbian": {
+      "id": "raspbian",
+      "name": "Raspbian",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.raspbian.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/raspbian"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/raspbian"
+        }
+      ],
+      "sync": {
+        "source": "rsync://archive.raspbian.org/archive",
+        "frequency": "PT12H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/00:42:02.125408371.raspbian.log.gz",
+          "timestamp": "2025-07-06T02:57:38+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "rfc": {
+      "id": "rfc",
+      "name": "RFC",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/rfc"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/rfc"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.ietf.org/rfc/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:45:02.134385630.rfc.log.gz",
+          "timestamp": "2025-07-05T12:46:43+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "rocky-linux": {
+      "id": "rocky-linux",
+      "name": "Rocky Linux",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.rockylinux.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/rocky-linux/"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/rocky-linux/"
+        }
+      ],
+      "sync": {
+        "source": "rsync://msync.rockylinux.org/rocky-linux",
+        "frequency": "PT10M"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/04/23:18:02.165266273.rocky-linux.log.gz",
+          "timestamp": "2025-07-04T23:18:05+09:00"
+        },
+        "updating": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/11:24:32.525751036.rocky-linux.log",
+          "timestamp": "2025-07-06T11:24:32+09:00"
+        },
+        "failed": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/09:30:02.087865182.rocky-linux.log.gz",
+          "timestamp": "2025-07-06T10:05:38+09:00",
+          "count": "9"
+        },
+        "usage": null,
+        "size": null
+      }
+    },
+    "rocky-sigs": {
+      "id": "rocky-sigs",
+      "name": "Rocky Linux Signatures",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.rockylinux.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/rocky-sigs"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/rocky-sigs"
+        }
+      ],
+      "sync": {
+        "source": "rsync://msync.rockylinux.org/rocky-sigs",
+        "frequency": "PT10M"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/11:18:01.998154678.rocky-sigs.log.gz",
+          "timestamp": "2025-07-06T11:18:04+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "sage": {
+      "id": "sage",
+      "name": "Sage",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "Home",
+          "href": "http://www.sagemath.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/sage"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/sage"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.sagemath.org/sage/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:48:02.134559988.sage.log.gz",
+          "timestamp": "2025-07-05T12:49:11+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "tdf": {
+      "id": "tdf",
+      "name": "The Document Foundation (LibreOffice)",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.documentfoundation.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/tdf"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/tdf"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync-stage.documentfoundation.org/tdf-stage/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/15:33:01.740785083.tdf.log.gz",
+          "timestamp": "2025-07-05T15:35:39+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "tldp": {
+      "id": "tldp",
+      "name": "The Linux Documentation Project",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://tldp.org"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/LDP"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/LDP"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.ibiblio.org/ldp_mirror",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/02:00:02.350313196.tldp.log.gz",
+          "timestamp": "2025-07-06T02:07:56+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "ubuntu-cd": {
+      "id": "ubuntu-cd",
+      "name": "Ubuntu Releases",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/ubuntu-cd"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/ubuntu-cd"
+        }
+      ],
+      "sync": {
+        "source": "rsync://us.rsync.releases.ubuntu.com/releases/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/12:54:02.090538928.ubuntu-cd.log.gz",
+          "timestamp": "2025-07-05T12:54:06+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "ubuntu-cdimage": {
+      "id": "ubuntu-cdimage",
+      "name": "Ubuntu Images",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://cdimage.ubuntu.com"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/ubuntu-cdimage"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/ubuntu-cdimage"
+        }
+      ],
+      "sync": {
+        "source": "rsync://cdimage.ubuntu.com/cdimage/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/16:49:55.364511290.ubuntu-cdimage.log.gz",
+          "timestamp": "2025-07-05T21:44:35+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "ubuntu-cloud-image": {
+      "id": "ubuntu-cloud-image",
+      "name": "Ubuntu Cloud Image",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "https://cloud-images.ubuntu.com/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/ubuntu-cloud-image"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/ubuntu-cloud-image"
+        }
+      ],
+      "sync": {
+        "source": "rsync://cloud-images.ubuntu.com/cloud-images",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/09:48:02.380161119.ubuntu-cloud-image.log.gz",
+          "timestamp": "2025-07-06T09:54:28+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "ubuntu-ports": {
+      "id": "ubuntu-ports",
+      "name": "Ubuntu Ports",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.ubuntu.com/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/ubuntu-ports"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/ubuntu-ports"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ports.ubuntu.com/ubuntu-ports/",
+        "frequency": "PT6H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/23:57:01.968653855.ubuntu-ports.log.gz",
+          "timestamp": "2025-07-06T06:10:51+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "ubuntu": {
+      "id": "ubuntu",
+      "name": "Ubuntu",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.ubuntu.com"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/ubuntu"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/ubuntu"
+        }
+      ],
+      "sync": {
+        "source": "rsync://us.rsync.archive.ubuntu.com/ubuntu/",
+        "frequency": "PT6H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/05/14:12:02.195135114.ubuntu.log.gz",
+          "timestamp": "2025-07-05T21:30:12+09:00"
+        },
+        "updating": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/03:33:02.531640026.ubuntu.log",
+          "timestamp": "2025-07-06T03:33:02+09:00"
+        },
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "vim": {
+      "id": "vim",
+      "name": "Vim",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.vim.org"
+        },
+        {
+          "rel": "list",
+          "href": "http://www.vim.org/mirrors.php"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/vim"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/vim"
+        }
+      ],
+      "sync": {
+        "source": "rsync://ftp.nluug.nl/Vim/",
+        "frequency": "P1D"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/03:48:02.252075535.vim.log.gz",
+          "timestamp": "2025-07-06T03:49:50+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    },
+    "vlc": {
+      "id": "vlc",
+      "name": "VideoLAN",
+      "hidden": null,
+      "link": [
+        {
+          "rel": "home",
+          "href": "http://www.videolan.org/"
+        },
+        {
+          "rel": "HTTP",
+          "href": "http://ftp.kaist.ac.kr/vlc"
+        },
+        {
+          "rel": "FTP",
+          "href": "ftp://ftp.kaist.ac.kr/vlc"
+        }
+      ],
+      "sync": {
+        "source": "rsync://rsync.videolan.org/videolan-ftp",
+        "frequency": "PT4H"
+      },
+      "status": {
+        "updated": {
+          "href": "http://ftp.kaist.ac.kr/geoul/sync/2025/07/06/10:21:01.954624441.vlc.log.gz",
+          "timestamp": "2025-07-06T10:21:11+09:00"
+        },
+        "updating": null,
+        "failed": null,
+        "usage": null,
+        "size": null
+      }
+    }
+  }
+}
