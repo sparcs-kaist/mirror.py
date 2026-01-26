@@ -9,7 +9,14 @@ import mirror
 
 @pytest.fixture
 def mock_master_server():
-    with patch("mirror.command.daemon.MasterServer") as mock:
+    # Patch at source to avoid shadowing issues
+    with patch("mirror.socket.master.MasterServer") as mock:
+        yield mock
+
+@pytest.fixture
+def mock_worker_check():
+    # Patch the function in its module
+    with patch("mirror.command.daemon.check_worker_running", return_value=True) as mock:
         yield mock
 
 @pytest.fixture
@@ -23,7 +30,7 @@ def mock_sys_exit():
         yield mock
 
 @pytest.fixture
-def mock_dependencies():
+def mock_dependencies(mock_worker_check):
     with patch("mirror.config.load"), \
          patch("mirror.logger.setup_logger"), \
          patch("mirror.sync.start"):
@@ -37,7 +44,7 @@ def mock_dependencies():
         
         yield
         
-        # Restore (though usually not strictly needed if running in isolated process, but good practice)
+        # Restore
         if original_packages is not None:
             mirror.packages = original_packages
         if original_log is not None:

@@ -8,7 +8,8 @@ from mirror.command.worker import worker
 
 @pytest.fixture
 def mock_server():
-    with patch("mirror.command.worker.WorkerServer") as mock:
+    # Patch at source to avoid shadowing issues
+    with patch("mirror.socket.worker.WorkerServer") as mock:
         yield mock
 
 @pytest.fixture
@@ -87,8 +88,6 @@ def test_worker_config_usage(mock_server, mock_logging):
     with patch("builtins.open", new_callable=MagicMock) as mock_open:
         mock_file = MagicMock()
         mock_file.__enter__.return_value.read.return_value = mock_config
-        # Important: json.load reads from the file object. 
-        # Since we mock json.load separately, we just need open to succeed.
         
         # Mock json.load to return the dict
         with patch("json.load", return_value={"settings": {"logger": {"level": "DEBUG"}}}) as mock_json:
@@ -100,7 +99,6 @@ def test_worker_config_usage(mock_server, mock_logging):
                         pass
     
     # Verify basicConfig was called with DEBUG level
-    # Note: logging.DEBUG is 10
     mock_basic_config.assert_called_with(
         level=logging.DEBUG,
         format="[%(asctime)s] %(levelname)s # %(message)s",

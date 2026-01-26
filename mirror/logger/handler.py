@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import ANSI
 from logging.handlers import TimedRotatingFileHandler
@@ -37,7 +35,7 @@ class GzipTimedRotatingFileHandler(TimedRotatingFileHandler):
         """Perform rollover and compress the old file if gzip is enabled."""
         if self.stream:
             self.stream.close()
-            self.stream = None
+            self.stream = None  # type: ignore
 
         currentTime = int(time.time())
         timeTuple = time.localtime(currentTime)

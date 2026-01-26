@@ -71,7 +71,7 @@ def load(conf_path: Path):
     try:
         STAT_DATA_PATH.write_text(json.dumps(full_stat_to_save, indent=4))
     except Exception as e:
-        mirror.logger.error(f"Failed to save merged stat data to {STAT_DATA_PATH}: {e}")
+        mirror.log.error(f"Failed to save merged stat data to {STAT_DATA_PATH}: {e}")
         raise
 
     # 4. Prepare for in-memory loading
@@ -97,7 +97,7 @@ def _load_web_status_data():
     if STATUS_PATH and STATUS_PATH.exists():
         mirror.status = json.loads(STATUS_PATH.read_text())
     else:
-        mirror.logger.warning(f"Web status file not found at {STATUS_PATH}. Web status will be unavailable.")
+        mirror.log.warning(f"Web status file not found at {STATUS_PATH}. Web status will be unavailable.")
         mirror.status = {}
 
 def reload():
@@ -112,7 +112,7 @@ def generate_and_save_web_status():
     and saves it to the status.json file.
     """
     if not STATUS_PATH:
-        mirror.logger.error("Cannot save web status, path not set.")
+        mirror.log.error("Cannot save web status, path not set.")
         return
 
     web_status = {
@@ -138,6 +138,6 @@ def generate_and_save_web_status():
 
     try:
         STATUS_PATH.write_text(json.dumps(web_status, indent=4))
-        mirror.logger.info(f"Web status successfully generated and saved to {STATUS_PATH}")
+        mirror.log.info(f"Web status successfully generated and saved to {STATUS_PATH}")
     except Exception as e:
-        mirror.logger.error(f"Failed to save web status to {STATUS_PATH}: {e}")
+        mirror.log.error(f"Failed to save web status to {STATUS_PATH}: {e}")

@@ -1,8 +1,5 @@
-from __future__ import annotations
-
 import mirror
 import mirror.toolbox
-import mirror.sync
 
 from dataclasses import dataclass, asdict, field
 from typing import Literal
@@ -12,7 +9,7 @@ import time
 import logging
 
 class SyncExecuter:
-    def __init__(self, package: Package) -> None:
+    def __init__(self, package: "Package") -> None:
         self.package = package
         self.settings = package.settings
     
@@ -20,13 +17,16 @@ class SyncExecuter:
         pass
 
 class Worker:
-    def __init__(self, package: Package, execute, logger: logging.Logger) -> None:
+    def __init__(self, package: "Package", execute, logger: logging.Logger) -> None:
         self.package = package
         self.logger = logger
         self.sync = SyncExecuter(package)
 
 @dataclass
 class Options:
+    def get(self, key: str, default=None):
+        return getattr(self, key, default)
+
     def to_dict(self) -> dict:
         return asdict(self)
     
@@ -39,6 +39,20 @@ class PackageSettings(Options):
     src: str
     dst: str
     options: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PackageSettings":
+        # Separate known fields from extra options
+        known_fields = {"hidden", "src", "dst", "options"}
+        fields_data = {k: v for k, v in data.items() if k in known_fields}
+        extra_options = {k: v for k, v in data.items() if k not in known_fields}
+        
+        # Merge extra options into the 'options' field if it exists in data
+        if "options" in data and isinstance(data["options"], dict):
+            extra_options.update(data["options"])
+        
+        fields_data["options"] = extra_options
+        return cls(**fields_data)
 
 @dataclass
 class Package:
@@ -67,7 +81,9 @@ class Package:
     
 
     @staticmethod
-    def from_dict(config: dict) -> Package:
+    def from_dict(config: dict) -> "Package":
+        import mirror.sync
+        from mirror.toolbox import iso_duration_parser
         # Validation
         synctype = config["synctype"]
         if synctype not in mirror.sync.methods:
@@ -79,9 +95,9 @@ class Package:
             status=config.get("status", "UNKNOWN"),
             href=config["href"],
             synctype=synctype,
-            syncrate=mirror.toolbox.iso_duration_parser(config["syncrate"]),
+            syncrate=iso_duration_parser(config["syncrate"]),
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
-            settings=PackageSettings(**config["settings"]),
+            settings=PackageSettings.from_dict(config["settings"]),
             lastsync=config.get("lastsync", 0.0),
             errorcount=config.get("errorcount", 0)
         )
@@ -130,7 +146,7 @@ class Sync:
     options: Options
     settings: PackageSettings
 
-    def __init__(self, pkg: Package):
+    def __init__(self, pkg: "Package"):
         pkgid = pkg.pkgid
         synctype = pkg.synctype
 
@@ -161,7 +177,7 @@ class Packages(Options):
     def keys(self) -> list[str]:
         return list(self._keys)
 
-    def values(self) -> list[Package]:
+    def values(self) -> list["Package"]:
         return [getattr(self, key) for key in self._keys]
 
     def to_dict(self) -> dict:
@@ -197,7 +213,7 @@ class Config:
     plugins: list[str]
 
     @staticmethod
-    def load_from_dict(config: dict) -> Config:
+    def load_from_dict(config: dict) -> "Config":
         return Config(
             name=config.get("mirrorname", ""),
             hostname=config.get("hostname", ""),

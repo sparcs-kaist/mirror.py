@@ -1,0 +1,7 @@
+{
+    "pythonVersion": "3.13",
+    "pythonPlatform": "Linux",
+    "typeCheckingMode": "basic",
+    "include": ["mirror"],
+    "exclude": ["**/__pycache__", "venv"]
+}

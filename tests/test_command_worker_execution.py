@@ -10,7 +10,6 @@ from mirror.socket.worker import WorkerClient
 
 def run_worker_process(config_path, socket_path):
     # Wrapper to run worker in a separate process
-    # We catch SystemExit because worker calls sys.exit(0)
     try:
         worker(config_path, socket_path=socket_path)
     except SystemExit:
