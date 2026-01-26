@@ -1,0 +1,98 @@
+{
+    "mirrorname": "KAIST FTP",
+    "packages": {
+        "geoul": {
+            "name": "Geoul",
+            "id": "geoul",
+            "href": "/geoul",
+            "synctype": "local",
+            "syncrate": "",
+            "link": [
+                {
+                    "rel": "HOME",
+                    "href": "http://ftp.kaist.ac.kr/"
+                }
+            ],
+            "settings": {
+                "hidden": false,
+                "src": "",
+                "dst": "/mirror/var/www"
+            },
+            "options": {},
+            "status": {
+                "status": "UNKNOWN",
+                "statusinfo": {
+                    "errorcount": 0,
+                    "lastsync": 0.0
+                }
+            }
+        },
+        "debian": {
+            "name": "Debian",
+            "id": "debian",
+            "href": "/debian",
+            "synctype": "ftpsync",
+            "syncrate": "PUSH",
+            "link": [
+                {
+                    "rel": "HOME",
+                    "href": "http://debian.org"
+                },
+                {
+                    "rel": "Debian Mirror Checker",
+                    "href": "https://mirror-master.debian.org/status/mirror-info/ftp.kaist.ac.kr.html"
+                }
+            ],
+            "settings": {
+                "hidden": false,
+                "src": "rsync://syncproxy2.wna.debian.org/debian",
+                "dst": "/srv/ftp/debian",
+                "options": {
+                    "username": "",
+                    "password": "",
+                    "include": "",
+                    "exclude": "",
+                    "hub": false
+                }
+            },
+            "status": {
+                "status": "UNKNOWN",
+                "statusinfo": {
+                    "errorcount": 0,
+                    "lastsync": 0.0
+                }
+            }
+        },
+        "rocky-linux": {
+            "name": "Rocky Linux",
+            "id": "rocky-linux",
+            "href": "/pub/rocky",
+            "synctype": "rsync",
+            "syncrate": "PT10M",
+            "link": [
+                {
+                    "rel": "HOME",
+                    "href": "https://rockylinux.org/"
+                }
+            ],
+            "settings": {
+                "hidden": false,
+                "src": "rsync://msync.rockylinux.org/rocky-linux",
+                "dst": "/srv/ftp/rocky-linux",
+                "options": {
+                    "username": "",
+                    "password": "",
+                    "ffts": true,
+                    "fftsfile": "fullfiletimelist-rocky"
+                }
+            },
+            "status": {
+                "status": "UNKNOWN",
+                "statusinfo": {
+                    "errorcount": 0,
+                    "lastsync": 0.0
+                }
+            }
+        }
+    }
+}
