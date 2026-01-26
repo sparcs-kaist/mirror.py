@@ -18,11 +18,11 @@ options: dict[str, type] = {
     "ffts": bool,
     "fftsfile": str,
     "auth": bool,
-    "userid": str,
-    "passwd": str,
+    "user": str,
+    "password": str,
 }
 
-optionClass = mirror.structure.Options(options)
+# optionClass = mirror.structure.Options(options)
 
 def setup():
     """
@@ -48,12 +48,18 @@ def execute(package: mirror.structure.Package):
 
     starttime = time.time()
 
-    logger = mirror.logger.create_logger(f"{module}.{name}", package.pkgid)
-    logger.info(f"Staring {module}.{name} for {package.name}")
+    pkg_logger = mirror.logger.create_logger(package.pkgid, starttime)
+    pkg_logger.info(f"Starting {module}.{name} for {package.name}")
+
+    try:
+        # TODO: Implement sync logic
+        pass
+    finally:
+        mirror.logger.close_logger(pkg_logger)
 
 
 
-def rsync(logger: logging.Logger, pkgid: str, src: Path, dst: Path, auth: bool, userid: str, passwd: str):
+def rsync(logger: logging.Logger, pkgid: str, src: Path, dst: Path, auth: bool, user: str, password: str):
     """
     Sync Package with rsync
 
@@ -76,8 +82,8 @@ def rsync(logger: logging.Logger, pkgid: str, src: Path, dst: Path, auth: bool, 
 
     env = os.environ.copy()
     if auth:
-        env["USER"] = userid
-        env["RSYNC_PASSWORD"] = passwd
+        env["USER"] = user
+        env["RSYNC_PASSWORD"] = password
     
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, preexec_fn=mirror.sync.setexecuser(mirror.conf.uid, mirror.conf.gid))
 
@@ -87,19 +93,23 @@ def rsync(logger: logging.Logger, pkgid: str, src: Path, dst: Path, auth: bool, 
 def ffts(package: mirror.structure.Package, logger: logging.Logger):
     """Check if the mirror is up to date"""
     logger.info(f"Running FFTS check for {package.name}")
-    package.setstatus("SYNC")
+    if package.is_syncing(): 
+        raise ValueError("Package is already syncing")
+    package.set_status("SYNC")
+
     command = [ # FFTS Check command
         "rsync",
         "--no-motd",
         "--dry-run",
         "--out-format=\"%n\"",
-        f'"{package.settings.src}::{package.settings.path}/{package.settings.fftsfile}"',
+        f'"{package.settings.src}/{package.settings.fftsfile}"',
         f'"{package.settings.dst}/{package.settings.fftsfile}"',
     ]
 
     env = os.environ.copy()
-    env["USER"] = package.settings.userid
-    env["RSYNC_PASSWORD"] = package.settings.passwd
+    
+    env["USER"] = package.settings.user
+    env["RSYNC_PASSWORD"] = package.settings.password
 
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, preexec_fn=mirror.sync.setexecuser(mirror.conf.uid, mirror.conf.gid))
 

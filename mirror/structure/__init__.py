@@ -4,7 +4,7 @@ import mirror
 import mirror.toolbox
 import mirror.sync
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Literal
 from pathlib import Path
 import json
@@ -38,7 +38,7 @@ class PackageSettings(Options):
     hidden: bool
     src: str
     dst: str
-    options: Options
+    options: dict = field(default_factory=dict)
 
 @dataclass
 class Package:
@@ -103,6 +103,7 @@ class Package:
     
     def to_dict(self) -> dict:
         package_dict = asdict(self)
+        package_dict["id"] = package_dict.pop("pkgid") # Convert pkgid -> id
         package_dict["syncrate"] = mirror.toolbox.iso_duration_maker(self.syncrate)
         package_dict["link"] = [link.to_dict() for link in self.link]
         package_dict["settings"] = self.settings.to_dict()
@@ -136,9 +137,23 @@ class Sync:
 @dataclass
 class Packages(Options):
     def __init__(self, pkgs: dict) -> None:
-        self._keys = pkgs.keys()
+        self._keys = list(pkgs.keys())
         for key in pkgs:
-            setattr(self, key, Package(**pkgs[key]))
+            setattr(self, key, Package.from_dict(pkgs[key]))
+
+    def __repr__(self) -> str:
+        return f"Packages(ids={self._keys})"
+
+    def __getitem__(self, key: str) -> Package:
+        if key in self._keys:
+            return getattr(self, key)
+        raise KeyError(key)
+
+    def __iter__(self):
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
 
     def items(self) -> dict[str, Package]:
         return {key: getattr(self, key) for key in self._keys}
@@ -161,10 +176,11 @@ class Config:
         country: str
         location: str
         throughput: str
-        include: str
-        exclude: str
+        include: str = ""
+        exclude: str = ""
 
     name: str
+    hostname: str
     lastsettingmodified: int
 
     logfolder: Path
@@ -173,6 +189,8 @@ class Config:
 
     uid: int
     gid: int
+    
+    maintainer: dict
 
     localtimezone: str
     logger: dict
@@ -181,13 +199,15 @@ class Config:
     @staticmethod
     def load_from_dict(config: dict) -> Config:
         return Config(
-            name=config["mirrorname"],
+            name=config.get("mirrorname", ""),
+            hostname=config.get("hostname", ""),
             lastsettingmodified=config.get("lastsettingmodified", 0),
             logfolder=Path(config["settings"]["logfolder"]),
             webroot=Path(config["settings"]["webroot"]),
-            uid=config["settings"]["uid"],
-            gid=config["settings"]["gid"],
+            uid=config["settings"].get("uid", 0),
+            gid=config["settings"].get("gid", 0),
             ftpsync=Config.FTPSync(**config["settings"]["ftpsync"]),
+            maintainer=config["settings"].get("maintainer", {}),
             localtimezone=config["settings"]["localtimezone"],
             logger=config["settings"]["logger"],
             plugins=config["settings"]["plugins"],

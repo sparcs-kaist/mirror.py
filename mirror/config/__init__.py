@@ -3,6 +3,7 @@ import mirror.structure
 import mirror.config.config
 import mirror.config.stat
 import mirror.config.status
+import mirror.toolbox
 import time
 
 from pathlib import Path
@@ -12,6 +13,7 @@ import json
 CONFIG_PATH: Path
 STAT_DATA_PATH: Path
 STATUS_PATH: Path
+SOCKET_PATH: str
 
 # --- Loading Functions ---
 
@@ -20,7 +22,7 @@ def load(conf_path: Path):
     Loads the main config file, derives other paths from it, synchronizes
     with the persistent stat file, and loads the state into the application.
     """
-    global CONFIG_PATH, STAT_DATA_PATH, STATUS_PATH
+    global CONFIG_PATH, STAT_DATA_PATH, STATUS_PATH, SOCKET_PATH
     CONFIG_PATH = conf_path
 
     if not CONFIG_PATH.exists():
@@ -31,6 +33,8 @@ def load(conf_path: Path):
     config = config_dict.get("settings", {})
     stat_path_str = config.get("statfile")
     status_path_str = config.get("statusfile")
+    SOCKET_PATH = config.get("socket_path", "/tmp/mirror_worker.sock")
+
 
     if not stat_path_str or not status_path_str:
         raise ValueError("Config file must contain 'statfile' and 'statusfile' settings.")
@@ -114,10 +118,10 @@ def generate_and_save_web_status():
     web_status = {
         "mirrorname": mirror.conf.name,
         "lastupdate": time.time() * 1000,
-        "lists": list(mirror.packages.keys),
+        "lists": list(mirror.packages.keys()),
     }
 
-    for pkg_id in mirror.packages.keys:
+    for pkg_id in mirror.packages.keys():
         package = getattr(mirror.packages, pkg_id)
         
         web_status[pkg_id] = {

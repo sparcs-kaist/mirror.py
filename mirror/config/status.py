@@ -1,7 +1,7 @@
 import mirror.config
 
 DEFAULT_STATUS = {
-    "lastupdate": 17535432060580.473
+    "lastupdate": 17535432060580.473,
     "mirrorname": "KAIST FTP TEST",
     "lists": [
         "mirror",
@@ -15,7 +15,7 @@ DEFAULT_STATUS = {
         "name": "KAIST FTP TEST Mirror",
         "id": "mirror",
         "status": "ACTIVE",
-        "synctype": null,
+        "synctype": None,
         "synctime": [],
         "syncrate": "",
         "syncurl": "https://test.ftp.kaist.ac.kr/",

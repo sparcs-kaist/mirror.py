@@ -1,14 +1,10 @@
 import click
-import logging
-import pathlib
 
 import mirror
 import mirror.command
-import mirror.config
 
 
-__version__ = "1.0.0-pre3"
-mirror.__version__ = __version__
+from mirror import __version__
 
 @click.version_option(prog_name="mirror", version=__version__)
 @click.group()
@@ -17,6 +13,13 @@ def main():
     Mirror.py is a tool for mirroring files and directories to a remote server.
     """
     pass
+
+@main.command("setup")
+def setup(config):
+    """
+    Setup the mirror environment.
+    """
+    mirror.command.setup()
 
 @main.command("crontab")
 @click.option("-u", "--user", default="root", help="User to run the cron job as.")
@@ -34,3 +37,11 @@ def daemon(config):
     Run the daemon.
     """
     mirror.command.daemon(config)
+
+@main.command("worker")
+@click.option("--config", default="/etc/mirror/config.json", help="Path to the config file.")
+def worker_cmd(config):
+    """
+    Run the worker server.
+    """
+    mirror.command.worker(config)

@@ -13,9 +13,7 @@ DEFAULT_CONFIG = {
         },
         "logger": {
             "level": "INFO",
-            "packagelevel": "ERROR",
-            "format": "[%(asctime)s] %(levelname)s # %(message)s",
-            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
+            "format": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
 
             "fileformat": {
                 "base": "/var/log/mirror",
