@@ -54,9 +54,6 @@ def daemon(config):
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Track packages that were recently syncing to detect completion
-    syncing_packages = set()
-
     try:
         while True:
             for package in mirror.packages.values():
@@ -64,15 +61,7 @@ def daemon(config):
                     continue
                 
                 if package.is_syncing():
-                    if package.pkgid not in syncing_packages:
-                        mirror.log.info(f"Package {package.pkgid} is now syncing...")
-                        syncing_packages.add(package.pkgid)
                     continue
-                
-                # If it was syncing but now it's not, it finished
-                if package.pkgid in syncing_packages:
-                    mirror.log.info(f"Package {package.pkgid} sync finished. Status: {package.status}")
-                    syncing_packages.remove(package.pkgid)
 
                 if time.time() - package.lastsync > package.syncrate:
                     mirror.log.info(f"Package {package.pkgid} requires sync (Last sync: {package.lastsync}, Rate: {package.syncrate})")
@@ -80,7 +69,6 @@ def daemon(config):
                     package.set_status("SYNC")
                     mirror.sync.start(package)
             
-            # Prevent CPU 100% usage
             time.sleep(1)
     except Exception as e:
         mirror.log.error(f"Daemon failed: {e}")
