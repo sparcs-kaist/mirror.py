@@ -15,13 +15,14 @@ class Job:
     """
     Represents a worker process.
     """
-    def __init__(self, job_id: str, commandline: list[str], env: dict[str, str], uid: int, gid: int, nice: int):
+    def __init__(self, job_id: str, commandline: list[str], env: dict[str, str], uid: int, gid: int, nice: int, log_path: Optional[Path] = None):
         self.id = job_id
         self.commandline = commandline
         self.env = env
         self.uid = uid
         self.gid = gid
         self.nice = nice
+        self.log_path = log_path
         self.process: Optional[subprocess.Popen] = None
         self.stdin: Optional[IO] = None
         self.stdout: Optional[IO] = None
@@ -64,22 +65,50 @@ class Job:
             run_env.update(self.env)
         
         self.start_time = time.time()
+        
+        stdout_dest = subprocess.PIPE
+        stderr_dest = subprocess.PIPE
+        log_file_handle = None
+
+        if self.log_path:
+            try:
+                # Ensure the directory exists
+                self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Open log file in append mode. Using binary mode 'ab' can be more 
+                # efficient and avoids encoding issues for subprocess output.
+                log_file_handle = open(self.log_path, "ab")
+                stdout_dest = log_file_handle
+                stderr_dest = subprocess.STDOUT # Merge stderr into stdout
+            except Exception as e:
+                logger.error(f"Failed to open log file {self.log_path}: {e}")
+                # Fallback to PIPE if file fails
+        
         try:
             self.process = subprocess.Popen(
                 self.commandline,
                 env=run_env,
                 preexec_fn=preexec,
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=stdout_dest,
+                stderr=stderr_dest,
+                bufsize=0, # Unbuffered for real-time logging
             )
             self.stdin = self.process.stdin
+            
+            # If we used pipes, these will be set. If we used file, they'll be None (for stdout/stderr)
             self.stdout = self.process.stdout
             self.stderr = self.process.stderr
+            
+            # Close our handle to the log file now that subprocess has it
+            if log_file_handle:
+                log_file_handle.close()
             
             logger.info(f"Started worker {self.id} (PID {self.process.pid})")
             _jobs[self.id] = self
         except Exception as e:
+            if log_file_handle:
+                log_file_handle.close()
             logger.error(f"Failed to start worker: {e}")
             self.end_time = time.time()
             raise e
@@ -171,7 +200,7 @@ class Job:
             "uptime": (time.time() - self.start_time) if self.is_running and self.start_time else 0
         }
 
-def create(job_id: str, commandline: list[str], env: dict[str, str], uid: int, gid: int, nice: int) -> Job:
+def create(job_id: str, commandline: list[str], env: dict[str, str], uid: int, gid: int, nice: int, log_path: Optional[Path] = None) -> Job:
     """
     Creates and starts a new worker.
     Raises ValueError if job_id already exists.
@@ -179,7 +208,7 @@ def create(job_id: str, commandline: list[str], env: dict[str, str], uid: int, g
     if job_id in _jobs:
         raise ValueError(f"Worker with ID '{job_id}' already exists.")
     
-    job = Job(job_id, commandline, env, uid, gid, nice)
+    job = Job(job_id, commandline, env, uid, gid, nice, log_path)
     job.start()
     return job
 

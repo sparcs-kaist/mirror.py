@@ -37,16 +37,23 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         # TODO: Get socket path from config
         socket_path = Path("/run/mirror/worker.sock")
         
+        log_path = None
+        for handler in pkg_logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                log_path = handler.baseFilename
+                break
+
         with WorkerClient(socket_path) as client:
             pkg_logger.info(f"Delegating sync to worker: {' '.join(command)}")
             
-            response, fds = client.start_sync(
+            response = client.start_sync(
                 job_id=package.pkgid,
                 sync_method=name,
                 commandline=command,
                 env=env,
                 uid=mirror.conf.uid,
-                gid=mirror.conf.gid
+                gid=mirror.conf.gid,
+                log_path=log_path
             )
 
             if response.get("status") == "started":
@@ -122,16 +129,24 @@ def ffts(package: mirror.structure.Package, pkg_logger: logging.Logger):
 
         # Delegate FFTS check to worker
         socket_path = Path("/run/mirror/worker.sock")
+        
+        log_path = None
+        for handler in pkg_logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                log_path = handler.baseFilename
+                break
+
         with WorkerClient(socket_path) as client:
             pkg_logger.info(f"Delegating FFTS check to worker: {' '.join(command)}")
             
-            response, fds = client.start_sync(
+            response = client.start_sync(
                 job_id=f"{package.pkgid}_ffts",
                 sync_method="ffts",
                 commandline=command,
                 env=env,
                 uid=mirror.conf.uid,
-                gid=mirror.conf.gid
+                gid=mirror.conf.gid,
+                log_path=log_path
             )
 
             if response.get("status") == "started":

@@ -44,16 +44,23 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         # 2. Delegate to Worker
         socket_path = Path("/run/mirror/worker.sock")
         
+        log_path = None
+        for handler in pkg_logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                log_path = handler.baseFilename
+                break
+
         with WorkerClient(socket_path) as client:
             pkg_logger.info(f"Delegating lftp sync to worker: {' '.join(command)}")
             
-            response, fds = client.start_sync(
+            response = client.start_sync(
                 job_id=package.pkgid,
                 sync_method=name,
                 commandline=command,
                 env={},
                 uid=os.getuid(),
-                gid=os.getgid()
+                gid=os.getgid(),
+                log_path=log_path
             )
 
             if response.get("status") == "started":

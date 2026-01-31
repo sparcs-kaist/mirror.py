@@ -49,7 +49,7 @@ class WorkerServer(BaseServer):
         }
 
     @expose("start_sync")
-    def _handle_start_sync(self, job_id: str, sync_method: str, commandline: list[str], env: dict, uid: int, gid: int, nice: int = 0) -> tuple[dict, list[int]]:
+    def _handle_start_sync(self, job_id: str, sync_method: str, commandline: list[str], env: dict, uid: int, gid: int, nice: int = 0, log_path: Optional[str] = None) -> dict:
         """Start sync for a package (job)"""
         if self._current_sync is not None:
             raise RuntimeError(f"Worker busy with {self._current_sync}")
@@ -62,28 +62,19 @@ class WorkerServer(BaseServer):
             env=env,
             uid=uid,
             gid=gid,
-            nice=nice
+            nice=nice,
+            log_path=Path(log_path) if log_path else None
         )
         
         self._current_sync = job_id
         
-        # Collect FDs to send (stdout, stderr)
-        fds = []
-        stdout_fd = job.get_pipe('stdout')
-        stderr_fd = job.get_pipe('stderr')
-        
-        if stdout_fd is not None:
-            fds.append(stdout_fd)
-        if stderr_fd is not None:
-            fds.append(stderr_fd)
-
         return {
             "job_id": job_id,
             "sync_method": sync_method,
             "status": "started",
             "job_pid": job.pid,
-            "has_fds": len(fds) > 0
-        }, fds
+            "has_fds": False
+        }
 
     @expose("stop_sync")
     def _handle_stop_sync(self) -> dict:
@@ -134,9 +125,9 @@ class WorkerClient(BaseClient):
         """Get worker status"""
         return self.send_command("status")
 
-    def start_sync(self, job_id: str, sync_method: str, commandline: list[str], env: dict, uid: int, gid: int, nice: int = 0) -> tuple[dict, list[int]]:
+    def start_sync(self, job_id: str, sync_method: str, commandline: list[str], env: dict, uid: int, gid: int, nice: int = 0, log_path: Optional[str] = None) -> dict:
         """Start sync for a package"""
-        return self.send_command("start_sync", expect_fds=True, job_id=job_id, sync_method=sync_method, commandline=commandline, env=env, uid=uid, gid=gid, nice=nice)
+        return self.send_command("start_sync", expect_fds=False, job_id=job_id, sync_method=sync_method, commandline=commandline, env=env, uid=uid, gid=gid, nice=nice, log_path=log_path)
 
     def stop_sync(self) -> dict:
         """Stop current sync"""

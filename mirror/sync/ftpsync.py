@@ -71,16 +71,23 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
         # 3. Delegate to Worker
         socket_path = Path("/run/mirror/worker.sock")
         
+        log_path = None
+        for handler in logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                log_path = handler.baseFilename
+                break
+
         with WorkerClient(socket_path) as client:
             logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
             
-            response, fds = client.start_sync(
+            response = client.start_sync(
                 job_id=package.pkgid,
                 sync_method="ftpsync",
                 commandline=command,
                 env={}, 
                 uid=os.getuid(),
-                gid=os.getgid()
+                gid=os.getgid(),
+                log_path=log_path
             )
 
             if response.get("status") == "started":

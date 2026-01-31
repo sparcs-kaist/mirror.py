@@ -66,7 +66,7 @@ class TestMasterWorkerCommunication(unittest.TestCase):
         
         with client:
             # 명령 전송
-            response, fds = client.start_sync(
+            response = client.start_sync(
                 job_id=test_job_id,
                 sync_method="rsync",
                 commandline=test_command,
@@ -88,7 +88,8 @@ class TestMasterWorkerCommunication(unittest.TestCase):
                 env=test_env,
                 uid=os.getuid(),
                 gid=os.getgid(),
-                nice=10
+                nice=10,
+                log_path=None
             )
             
             print(f"\n[SUCCESS] Command '{test_job_id}' reached worker successfully.")
