@@ -8,6 +8,7 @@ from pathlib import Path
 
 module = "sync"
 name = "lftp"
+_LOAD = False
 
 def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
     """

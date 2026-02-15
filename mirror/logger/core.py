@@ -206,3 +206,5 @@ def setup_logger():
         main_logger.setLevel(logging.DEBUG)
         main_logger.handlers[0].setLevel(logging.DEBUG)
         main_logger.handlers[1].setLevel(logging.DEBUG)
+    
+    mirror.log = main_logger

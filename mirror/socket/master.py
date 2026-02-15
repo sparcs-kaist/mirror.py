@@ -96,6 +96,39 @@ class MasterClient(BaseClient):
         return self.send_command("get_package", package_id=package_id)
 
 
+# Module-level convenience functions
+
+def ping(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+    """Health check"""
+    with MasterClient(socket_path) as client:
+        return client.ping()
+
+def status(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+    """Get master daemon status"""
+    with MasterClient(socket_path) as client:
+        return client.status()
+
+def list_packages(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+    """List all packages"""
+    with MasterClient(socket_path) as client:
+        return client.list_packages()
+
+def start_sync(package_id: str, socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+    """Start sync for a package"""
+    with MasterClient(socket_path) as client:
+        return client.start_sync(package_id)
+
+def stop_sync(package_id: str, socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+    """Stop sync for a package"""
+    with MasterClient(socket_path) as client:
+        return client.stop_sync(package_id)
+
+def get_package(package_id: str, socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+    """Get package details"""
+    with MasterClient(socket_path) as client:
+        return client.get_package(package_id)
+
+
 def get_master_client(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> MasterClient:
     """
     Get a connected MasterClient instance.

@@ -8,6 +8,7 @@ from pathlib import Path
 
 module = "sync"
 name = "bandersnatch"
+_LOAD = False
 
 def setup():
     """Setup bandersnatch sync module"""

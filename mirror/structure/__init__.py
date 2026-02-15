@@ -1,5 +1,6 @@
 import mirror
 import mirror.toolbox
+import mirror.event
 
 from dataclasses import dataclass, asdict, field
 from typing import Literal
@@ -7,6 +8,7 @@ from pathlib import Path
 import json
 import time
 import logging
+
 
 class SyncExecuter:
     def __init__(self, package: "Package") -> None:
@@ -79,7 +81,6 @@ class Package:
     errorcount: int = 0
     disabled: bool = False
     
-
     @staticmethod
     def from_dict(config: dict) -> "Package":
         import mirror.sync
@@ -109,13 +110,18 @@ class Package:
         if status == self.status: return
         status_list = ('ACTIVE', 'SYNC', 'ERROR', 'UNKNOWN')
         if status not in status_list:
-            raise ValueError(f"Status not in {status_list}")
+            mirror.log.error(f"Invalid status: {status}")
+            if mirror.debug: raise ValueError(f"Invalid status: {status}")
+            return
         
+        mirror.event.post_event("MASTER.PACKAGE_STATUS_UPDATE.PRE")
         self.status = status
         self.timestamp = time.time() * 1000
 
         if status == "ERROR":
             self.errorcount += 1
+        
+        mirror.event.post_event("MASTER.PACKAGE_STATUS_UPDATE.POST")
     
     def to_dict(self) -> dict:
         package_dict = asdict(self)
@@ -198,6 +204,7 @@ class Config:
     name: str
     hostname: str
     lastsettingmodified: int
+    errorcontinuetime: int
 
     logfolder: Path
     webroot: Path
@@ -218,6 +225,7 @@ class Config:
             name=config.get("mirrorname", ""),
             hostname=config.get("hostname", ""),
             lastsettingmodified=config.get("lastsettingmodified", 0),
+            errorcontinuetime=config["settings"].get("errorcontinuetime", 60),
             logfolder=Path(config["settings"]["logfolder"]),
             webroot=Path(config["settings"]["webroot"]),
             uid=config["settings"].get("uid", 0),
@@ -228,7 +236,6 @@ class Config:
             logger=config["settings"]["logger"],
             plugins=config["settings"]["plugins"],
         )
-
 
     def _path_check(self, path: Path) -> None:
         if mirror.debug: return

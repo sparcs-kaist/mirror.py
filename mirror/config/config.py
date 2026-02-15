@@ -7,6 +7,7 @@ DEFAULT_CONFIG = {
         "gid": 1000,
         "uid": 1000,
         "localtimezone": "Asia/Seoul",
+        "errorcontinuetime": 60,
         "maintainer": {
             "name": "Roul",
             "email": "op@roul.me"

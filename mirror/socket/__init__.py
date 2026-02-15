@@ -519,4 +519,77 @@ __all__ = [
     "expose",
     "send_fds",
     "recv_fds",
+    "init",
 ]
+
+def init(role: str, **kwargs) -> Any:
+    """
+    Initialize and start a socket server or connect a client.
+    
+    Args:
+        role: "master", "worker" for servers.
+              "client", "master_client" for MasterClient.
+              "worker_client" for WorkerClient.
+        **kwargs: Additional arguments passed to the constructor.
+    
+    Returns:
+        The initialized server or connected client instance.
+    """
+    import sys
+    import mirror
+    
+    # Get the current module to set attributes
+    this_module = sys.modules[__name__]
+    
+    if role == "master":
+        from .master import MasterServer
+        server = MasterServer(**kwargs)
+        if hasattr(mirror, "__version__"):
+            server.set_version(mirror.__version__)
+        server.start()
+        
+        # Register master server as mirror.socket.master
+        setattr(this_module, "master", server)
+        
+        # Check and register worker if alive
+        from .worker import WorkerClient
+        try:
+            # Try to connect to default worker socket
+            # We use a default client to check existence and liveness
+            worker_client = WorkerClient()
+            if worker_client.socket_path.exists():
+                worker_client.connect()
+                if worker_client.is_connected:
+                    setattr(this_module, "worker", worker_client)
+        except Exception:
+            # Worker not running or unreachable, ignore
+            pass
+
+        return server
+
+    elif role == "worker":
+        from .worker import WorkerServer
+        server = WorkerServer(**kwargs)
+        if hasattr(mirror, "__version__"):
+            server.set_version(mirror.__version__)
+        server.start()
+        return server
+
+    elif role in ("client", "master_client"):
+        from .master import MasterClient
+        client = MasterClient(**kwargs)
+        if hasattr(mirror, "__version__"):
+            client.set_version(mirror.__version__)
+        client.connect()
+        return client
+
+    elif role == "worker_client":
+        from .worker import WorkerClient
+        client = WorkerClient(**kwargs)
+        if hasattr(mirror, "__version__"):
+            client.set_version(mirror.__version__)
+        client.connect()
+        return client
+
+    else:
+        raise ValueError(f"Invalid role: {role}")

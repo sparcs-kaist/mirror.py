@@ -1,13 +1,13 @@
-import time
-import signal
 import sys
 import json
+import time
+import signal
+import logging
 from pathlib import Path
 
 import mirror
-from mirror.socket.worker import WorkerServer
+import mirror.socket
 
-import logging
 
 def worker(config, socket_path=None):
     """
@@ -37,10 +37,8 @@ def worker(config, socket_path=None):
     mirror.log = logging.getLogger("mirror")
     mirror.log.info("Worker started.")
 
-    # Use default socket path /run/mirror/worker.sock
-    server = WorkerServer(socket_path=socket_path)
-    server.set_version(mirror.__version__)
-    server.start()
+    # Use unified init for worker server
+    server = mirror.socket.init("worker", socket_path=socket_path)
 
     mirror.log.info(f"Worker listening on {server.socket_path}")
 

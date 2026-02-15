@@ -17,64 +17,74 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         package (mirror.structure.Package): Package object
         pkg_logger (logging.Logger): Logger object for this sync session
     """
-    from mirror.socket.worker import WorkerClient
-
     # Set status to SYNC as soon as we enter execute
     package.set_status("SYNC")
     pkg_logger.info(f"Starting {module}.{name} for {package.name}")
 
     try:
-        # 1. Get command and env from the internal rsync helper
-        src = Path(str(package.settings.get("src", "")))
-        dst = Path(str(package.settings.get("dst", "")))
-        auth = bool(package.settings.get("auth", False))
+        # 1. Get settings
+        src = package.settings.src
+        dst = Path(package.settings.dst)
+        ffts_val = package.settings.options.get("ffts", False)
+
         user = str(package.settings.get("user", ""))
         password = str(package.settings.get("password", ""))
-
-        command, env = rsync(pkg_logger, package.pkgid, src, dst, auth, user, password)
-
-        # 2. Delegate to Worker
-        # TODO: Get socket path from config
-        socket_path = Path("/run/mirror/worker.sock")
         
-        log_path = None
-        for handler in pkg_logger.handlers:
-            if isinstance(handler, logging.FileHandler):
-                log_path = handler.baseFilename
-                break
-
-        with WorkerClient(socket_path) as client:
-            pkg_logger.info(f"Delegating sync to worker: {' '.join(command)}")
-            
-            response = client.start_sync(
-                job_id=package.pkgid,
-                sync_method=name,
-                commandline=command,
-                env=env,
-                uid=mirror.conf.uid,
-                gid=mirror.conf.gid,
-                log_path=log_path
-            )
-
-            if response.get("status") == "started":
-                pkg_logger.info(f"Worker started sync (PID: {response.get('job_pid')})")
-                
-                # Update status - the master now tracks this package as syncing
+        # 2. FFTS Check
+        if ffts_val:
+            if not ffts(package, pkg_logger):
+                pkg_logger.info("FFTS check: Up to date. Skipping sync.")
                 package.lastsync = time.time()
                 package.set_status("ACTIVE")
-                pkg_logger.info(f"Sync for {package.pkgid} successfully delegated to worker.")
-            else:
-                raise RuntimeError(f"Worker failed to start sync: {response.get('message')}")
+                return
 
+        # 3. Prepare command and env
+        command, env = rsync(pkg_logger, package.pkgid, src, dst, user, password)
+
+        # 4. Execute sync directly
+        pkg_logger.info(f"ENV: src={src}")
+        pkg_logger.info(f"ENV: dst={dst}")
+        pkg_logger.info(f"Running rsync: {' '.join(command)}")
+        
+        log_file = None
+        for handler in pkg_logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                log_file = open(handler.baseFilename, "a")
+                break
+        
+        try:
+            result = subprocess.run(
+                command,
+                env=env,
+                stdout=log_file,
+                stderr=log_file,
+                text=True
+            )
+
+            if result.returncode == 0:
+                pkg_logger.info(f"Sync for {package.pkgid} completed successfully.")
+                package.lastsync = time.time()
+                package.set_status("ACTIVE")
+            else:
+                raise RuntimeError(f"rsync failed with return code {result.returncode}")
+        finally:
+            if log_file:
+                log_file.close()
+
+    except AttributeError as e:
+        pkg_logger.error(f"Sync for {package.pkgid} failed: value not found")
+        pkg_logger.error(e)
+        package.set_status("ERROR")
     except Exception as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: {e}")
         package.set_status("ERROR")
     finally:
-        mirror.logger.close_logger(pkg_logger)
+        #mirror.logger.close_logger(pkg_logger)
+        pass
 
 
 
-def rsync(logger: logging.Logger, pkgid: str, src: Path, dst: Path, auth: bool, user: str, password: str):
+def rsync(logger: logging.Logger, pkgid: str, src: str, dst: Path, user: str, password: str):
     """
     Generate rsync command and environment
     """
@@ -88,36 +98,33 @@ def rsync(logger: logging.Logger, pkgid: str, src: Path, dst: Path, auth: bool, 
         f"{dst}/",
     ]
 
-    env = os.environ.copy()
-    if auth:
+    env = {}
+    if user:
         env["USER"] = user
         env["RSYNC_PASSWORD"] = password
     
     return command, env
     
 
-def ffts(package: mirror.structure.Package, pkg_logger: logging.Logger):
-    """Check if the mirror is up to date via Worker delegation"""
-    from mirror.socket.worker import WorkerClient
-
+def ffts(package: mirror.structure.Package, pkg_logger: logging.Logger) -> bool:
+    """Check if the mirror is up to date via direct rsync call"""
     pkg_logger.info(f"Running FFTS check for {package.name}")
-    if package.is_syncing(): 
-        raise ValueError("Package is already syncing")
     
-    package.set_status("SYNC")
-
     try:
-        src = str(package.settings.get("src", ""))
-        dst = str(package.settings.get("dst", ""))
-        fftsfile = str(package.settings.get("fftsfile", ""))
-        user = str(package.settings.get("user", ""))
-        password = str(package.settings.get("password", ""))
+        src = package.settings.src
+        dst = Path(package.settings.dst)
+        fftsfile = package.settings.options.get("fftsfile", "")
+        timeout = 10
+
+        user = str(package.settings.options.get("user", ""))
+        password = str(package.settings.options.get("password", ""))
 
         command = [
             "rsync",
             "--no-motd",
             "--dry-run",
             "--out-format=%n",
+            f"--contimeout={timeout}",
             f"{src}/{fftsfile}",
             f"{dst}/{fftsfile}",
         ]
@@ -127,36 +134,20 @@ def ffts(package: mirror.structure.Package, pkg_logger: logging.Logger):
             env["USER"] = user
             env["RSYNC_PASSWORD"] = password
 
-        # Delegate FFTS check to worker
-        socket_path = Path("/run/mirror/worker.sock")
+        pkg_logger.info(f"Executing FFTS check: {' '.join(command)}")
+        result = subprocess.run(command, env=env, capture_output=True, text=True)
         
-        log_path = None
-        for handler in pkg_logger.handlers:
-            if isinstance(handler, logging.FileHandler):
-                log_path = handler.baseFilename
-                break
-
-        with WorkerClient(socket_path) as client:
-            pkg_logger.info(f"Delegating FFTS check to worker: {' '.join(command)}")
-            
-            response = client.start_sync(
-                job_id=f"{package.pkgid}_ffts",
-                sync_method="ffts",
-                commandline=command,
-                env=env,
-                uid=mirror.conf.uid,
-                gid=mirror.conf.gid,
-                log_path=log_path
-            )
-
-            if response.get("status") == "started":
-                pkg_logger.info(f"Worker started FFTS check (PID: {response.get('job_pid')})")
-                package.set_status("ACTIVE")
+        if result.returncode == 0:
+            if result.stdout.strip():
+                pkg_logger.info("FFTS check: Update needed.")
+                return True
             else:
-                raise RuntimeError(f"Worker failed to start FFTS check: {response.get('message')}")
-
+                pkg_logger.info("FFTS check: Up to date.")
+                return False
+        else:
+            pkg_logger.warning(f"FFTS check failed with return code {result.returncode}: {result.stderr}")
+            return True # Assume update needed on error
+            
     except Exception as e:
         pkg_logger.error(f"FFTS check for {package.pkgid} failed: {e}")
-        package.set_status("ERROR")
-    finally:
-        mirror.logger.close_logger(pkg_logger)
+        return True # Assume update needed on error

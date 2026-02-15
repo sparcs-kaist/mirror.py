@@ -6,6 +6,7 @@
         "webroot": "/var/www/mirror",
         "statusfile": "/var/www/mirror/status.json",
         "localtimezone": "Asia/Seoul",
+        "errorcontinuetime": 60,
         "maintainer": {
             "name": "Roul",
             "email": "roul@ftp.kaist.ac.kr"
@@ -72,6 +73,7 @@
                 "hidden": false,
                 "src": "rsync://syncproxy2.wna.debian.org/debian",
                 "dst": "/srv/ftp/debian",
+                "auth": true,
                 "options": {
                     "username": "",
                     "password": "",

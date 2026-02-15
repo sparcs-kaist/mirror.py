@@ -138,6 +138,33 @@ class WorkerClient(BaseClient):
         return self.send_command("get_progress")
 
 
+# Module-level convenience functions
+
+def ping(socket_path: Optional[Path | str] = None) -> dict:
+    """Health check"""
+    with WorkerClient(socket_path) as client:
+        return client.ping()
+
+def status(socket_path: Optional[Path | str] = None) -> dict:
+    """Get worker status"""
+    with WorkerClient(socket_path) as client:
+        return client.status()
+
+def start_sync(job_id: str, sync_method: str, commandline: list[str], env: dict, uid: int, gid: int, nice: int = 0, log_path: Optional[str] = None, socket_path: Optional[Path | str] = None) -> dict:
+    """Start sync for a package"""
+    with WorkerClient(socket_path) as client:
+        return client.start_sync(job_id, sync_method, commandline, env, uid, gid, nice, log_path)
+
+def stop_sync(socket_path: Optional[Path | str] = None) -> dict:
+    """Stop current sync"""
+    with WorkerClient(socket_path) as client:
+        return client.stop_sync()
+
+def get_progress(socket_path: Optional[Path | str] = None) -> dict:
+    """Get current sync progress"""
+    with WorkerClient(socket_path) as client:
+        return client.get_progress()
+
 
 def get_worker_client(job_id: str) -> WorkerClient:
     """

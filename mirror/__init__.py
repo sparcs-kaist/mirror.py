@@ -15,8 +15,7 @@ exit: bool = False
 __version__ = "1.0.0-pre3"
 
 import mirror.sync
-import mirror.plugin
-
-
 mirror.sync.load_default()
+
+# import mirror.plugin
 #mirror.plugin.plugin_loader()

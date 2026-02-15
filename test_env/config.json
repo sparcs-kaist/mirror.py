@@ -6,6 +6,7 @@
         "webroot": "test_env/web",
         "statusfile": "test_env/web/status.json",
         "localtimezone": "Asia/Seoul",
+        "errorcontinuetime": 45,
         "maintainer": {
             "name": "Roul",
             "email": "roul@ftp.kaist.ac.kr"
@@ -48,9 +49,9 @@
             "settings": {
                 "hidden": false,
                 "src": "",
-                "dst": "/mirror/var/www"
-            },
-            "options": {}
+                "dst": "/mirror/var/www",
+                "options": {}
+            }
         },
         "debian": {
             "name": "Debian",

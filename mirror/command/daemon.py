@@ -2,26 +2,14 @@ import mirror
 import mirror.config
 import mirror.logger
 import mirror.sync
-from mirror.socket.master import MasterServer
-from mirror.socket.worker import WorkerClient
+import mirror.socket
+import mirror.socket.worker
+import mirror.event
 
 import time
 import signal
 import sys
 from pathlib import Path
-
-def check_worker_running(log_error=True) -> bool:
-    """Check if the worker server is running."""
-    # TODO: Get socket path from config if it's configurable
-    socket_path = Path("/run/mirror/worker.sock")
-    try:
-        with WorkerClient(socket_path) as client:
-            client.ping()
-            return True
-    except Exception as e:
-        if log_error:
-            mirror.log.warning(f"Worker server is not running or not reachable at {socket_path}: {e}")
-        return False
 
 def daemon(config):
     """
@@ -32,16 +20,16 @@ def daemon(config):
     mirror.config.load(Path(config))
     mirror.logger.setup_logger()
 
+    # Fire initialization complete event
+    mirror.event.post_event("MASTER.INIT.PRE", wait=True)
+
     # Start Master Server socket
-    socket_server = MasterServer()
-    socket_server.set_version(mirror.__version__)
-    socket_server.start()
+    socket_server = mirror.socket.init("master")
 
     mirror.log.info(f"Master Daemon listening on {socket_server.socket_path}")
     mirror.log.info("Daemon started and configuration loaded.")
 
-    # Check Worker Status
-    if check_worker_running():
+    if mirror.socket.worker.is_worker_running("master"): # Or some general check
         mirror.log.info("Worker server is running and reachable.")
     else:
         mirror.log.error("Worker server is NOT running. Sync operations may fail if they rely on it.")
@@ -53,20 +41,35 @@ def daemon(config):
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    mirror.event.post_event("MASTER.INIT.POST")
     
     try:
         while True:
             for package in mirror.packages.values():
                 if package.is_disabled():
+                    mirror.log.debug(f"Package {package.pkgid} is disabled. Skipping.")
                     continue
                 
                 if package.is_syncing():
+                    if mirror.socket.worker.is_worker_running(package.pkgid):
+                        continue
+                    elif time.time() - package.lastsync < 60: # Because of ffts check time
+                        continue
+                    else:
+                        mirror.log.warning(f"Package {package.pkgid} marked as syncing but no worker found.")
+                        package.set_status("ERROR")
+                elif mirror.socket.worker.is_worker_running(package.pkgid):
+                    mirror.log.error(f"Package is synging while status is {package.status}. Changed the status to syncing.")
+                    package.set_status("SYNC")
+                    
                     continue
 
                 if time.time() - package.lastsync > package.syncrate:
                     mirror.log.info(f"Package {package.pkgid} requires sync (Last sync: {package.lastsync}, Rate: {package.syncrate})")
-                    
-                    package.set_status("SYNC")
+                    mirror.sync.start(package)
+                elif package.status == "ERROR" and time.time() - mirror.conf.errorcontinuetime > package.lastsync:
+                    mirror.log.info(f"Package {package.pkgid} is in {package.status} state. Retrying sync.")
                     mirror.sync.start(package)
             
             time.sleep(1)

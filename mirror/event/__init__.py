@@ -53,7 +53,7 @@ class EventManager:
                 if listener in self._listeners[event_name]:
                     self._listeners[event_name].remove(listener)
 
-    def post_event(self, event_name: str, *args, **kwargs):
+    def post_event(self, event_name: str, wait: bool = False, *args, **kwargs):
         """
         Fire an event.
         
@@ -61,7 +61,6 @@ class EventManager:
             wait (bool): If True, blocks until all listeners have completed. 
                          Defaults to False. Consumed by this method.
         """
-        should_wait = kwargs.pop('wait', False)
 
         with self._lock:
             # Copy list to allow modification during iteration
@@ -75,10 +74,10 @@ class EventManager:
         futures = []
         for listener in listeners:
             future = self._execute_listener(listener, event_name, *args, **kwargs)
-            if should_wait:
+            if wait:
                 futures.append(future)
         
-        if should_wait and futures:
+        if wait and futures:
             wait_futures(futures)
 
     def _execute_listener(self, listener: Callable, event_name: str, *args, **kwargs):
