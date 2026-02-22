@@ -9,6 +9,7 @@ import mirror.event
 import time
 import signal
 import sys
+import os # Added os import
 from pathlib import Path
 
 def daemon(config):
@@ -19,6 +20,15 @@ def daemon(config):
     # Load all configurations from the single config file path.
     mirror.config.load(Path(config))
     mirror.logger.setup_logger()
+
+    # Write PID file
+    pid_file = mirror.RUN_PATH / "mirror.pid"
+    try:
+        pid_file.parent.mkdir(parents=True, exist_ok=True)
+        pid_file.write_text(str(os.getpid()))
+    except OSError as e:
+        mirror.log.error(f"Failed to write PID file {pid_file}: {e}")
+        sys.exit(1)
 
     # Fire initialization complete event
     mirror.event.post_event("MASTER.INIT.PRE", wait=True)
@@ -36,7 +46,9 @@ def daemon(config):
 
     def signal_handler(sig, frame):
         mirror.log.info("Master Daemon stopping...")
-        socket_server.stop()
+        mirror.socket.stop()
+        if pid_file.exists():
+            pid_file.unlink()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -62,7 +74,6 @@ def daemon(config):
                 elif mirror.socket.worker.is_worker_running(package.pkgid):
                     mirror.log.error(f"Package is synging while status is {package.status}. Changed the status to syncing.")
                     package.set_status("SYNC")
-                    
                     continue
 
                 if time.time() - package.lastsync > package.syncrate:
@@ -76,4 +87,6 @@ def daemon(config):
     except Exception as e:
         mirror.log.error(f"Daemon failed: {e}")
         socket_server.stop()
+        if pid_file.exists():
+            pid_file.unlink()
         sys.exit(1)

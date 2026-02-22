@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-# PYTHONPATH 설정
+# Set PYTHONPATH
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import mirror
@@ -14,13 +14,13 @@ import mirror.structure
 
 class TestSyncWorkerDelegation(unittest.TestCase):
     def setUp(self):
-        # 기본 설정 모킹
+        # Mock default settings
         mirror.log = MagicMock()
         mirror.packages = {}
         mirror.conf = MagicMock()
         mirror.conf.logger = {"fileformat": {"gzip": True}}
         
-        # 가상의 패키지 생성 (rsync용)
+        # Create a virtual package (for rsync)
         self.rsync_pkg = MagicMock(spec=mirror.structure.Package)
         self.rsync_pkg.pkgid = "test-rsync"
         self.rsync_pkg.name = "Test Rsync"
@@ -34,7 +34,7 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         }
         self.rsync_pkg.status = "ACTIVE"
         
-        # 가상의 패키지 생성 (ftpsync용)
+        # Create a virtual package (for ftpsync)
         self.ftp_pkg = MagicMock(spec=mirror.structure.Package)
         self.ftp_pkg.pkgid = "test-ftpsync"
         self.ftp_pkg.name = "Test FTPSync"

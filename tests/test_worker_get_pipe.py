@@ -9,7 +9,7 @@ def test_get_pipe():
     worker = process.create(worker_id, command, {}, None, None, 0)
     
     try:
-        # 각 파이프의 FD 가져오기
+        # Get the FD for each pipe
         stdin_fd = worker.get_pipe("stdin")
         stdout_fd = worker.get_pipe("stdout")
         stderr_fd = worker.get_pipe("stderr")

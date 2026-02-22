@@ -16,7 +16,7 @@ def mock_master_server():
 @pytest.fixture
 def mock_worker_check():
     # Patch the function in its module
-    with patch("mirror.command.daemon.check_worker_running", return_value=True) as mock:
+    with patch("mirror.socket.worker.is_worker_running", return_value=True) as mock:
         yield mock
 
 @pytest.fixture

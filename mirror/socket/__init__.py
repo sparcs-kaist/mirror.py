@@ -69,74 +69,6 @@ def _recv_message(sock: socket.socket, timeout: Optional[float] = None) -> dict:
     return json.loads(data.decode('utf-8'))
 
 
-def send_fds(sock: socket.socket, data: dict, fds: list[int]) -> None:
-    """
-    Send a message along with file descriptors using SCM_RIGHTS.
-    """
-    body = json.dumps(data).encode('utf-8')
-    header = struct.pack('>I', len(body))
-    payload = header + body
-
-    ancillary = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))]
-    sock.sendmsg([payload], ancillary)
-
-
-def recv_fds(sock: socket.socket, max_len: int = 4096, max_fds: int = 3) -> tuple[dict, list[int]]:
-    """
-    Receive a message along with file descriptors.
-    Returns (message_dict, received_fds).
-    Handles cases where the message body is larger than the initial read buffer.
-    """
-    # Calculate buffer size for ancillary data
-    ancillary_size = socket.CMSG_LEN(max_fds * 4)
-
-    # 1. First read: Get header, some data, and ANY attached FDs
-    # We use recvmsg to capture the ancillary data (FDs) which are attached to the start of the packet
-    data, ancillary, flags, addr = sock.recvmsg(max_len, ancillary_size)
-
-    if not data:
-        raise ConnectionError("Connection closed while receiving FDs")
-
-    # Extract FDs (Critical to do this from the first packet)
-    fds = []
-    for cmsg_level, cmsg_type, cmsg_data in ancillary:
-        if cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
-            count = len(cmsg_data) // 4
-            fds.extend(struct.unpack('I' * count, cmsg_data))
-
-    # 2. Ensure we have at least the 4-byte header
-    while len(data) < 4:
-        chunk = sock.recv(4 - len(data))
-        if not chunk:
-            raise ConnectionError("Incomplete message header received with FDs")
-        data += chunk
-
-    # 3. Parse expected body length
-    length = struct.unpack('>I', data[:4])[0]
-    total_expected_size = 4 + length
-
-    # 4. Read remaining body if the initial recvmsg didn't get it all
-    while len(data) < total_expected_size:
-        remaining = total_expected_size - len(data)
-        # Read in chunks (e.g., up to 4096 bytes at a time)
-        chunk_size = min(remaining, 4096)
-        chunk = sock.recv(chunk_size)
-        if not chunk:
-            raise ConnectionError(f"Connection closed while receiving body (expected {length} bytes)")
-        data += chunk
-
-    # 5. Decode JSON
-    # Slice exactly the length we expect (in case there's extra data in the buffer for next msg)
-    json_bytes = data[4:total_expected_size]
-    
-    try:
-        message = json.loads(json_bytes.decode('utf-8'))
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to decode JSON body: {e}")
-
-    return message, fds
-
-
 
 def expose(cmd_name: Optional[str] = None):
     """
@@ -256,22 +188,14 @@ class BaseServer:
 
                 command = request.get("command")
                 kwargs = request.get("kwargs", {})
-                fds_to_send = []
 
                 if command in self._handlers:
                     try:
                         result = self._handlers[command](**kwargs) if kwargs else self._handlers[command]()
-
-                        # Check if result contains FDs to send: (data, [fds])
-                        if isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], list):
-                            response_data, fds_to_send = result
-                        else:
-                            response_data = result
-
                         response = {
                             "status": 200,
                             "message": "OK",
-                            "data": response_data
+                            "data": result
                         }
                     except Exception as e:
                         # Log error internally if needed
@@ -288,10 +212,7 @@ class BaseServer:
                         "data": None
                     }
 
-                if fds_to_send:
-                    send_fds(conn, response, fds_to_send)
-                else:
-                    _send_message(conn, response)
+                _send_message(conn, response)
         finally:
             conn.close()
 
@@ -446,36 +367,18 @@ class BaseClient:
         self._connected = False
         self._server_info = None
 
-    def send_command(self, command: str, expect_fds: bool = False, **kwargs) -> Any:
+    def send_command(self, command: str, **kwargs) -> Any:
         """Send a command to server and return result"""
         if not self._connected or not self._sock:
             raise ConnectionError("Not connected to server")
 
         _send_message(self._sock, {"command": command, "kwargs": kwargs if kwargs else None})
         
-        # Always use recv_fds to be safe, even if we don't expect them
-        response, fds = recv_fds(self._sock)
+        response = _recv_message(self._sock)
 
         if response.get("status") == 200:
-            data = response.get("data")
-            if expect_fds:
-                return data, fds
-            else:
-                # Close unexpected FDs to prevent leaks
-                for fd in fds:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                return data
+            return response.get("data")
         else:
-            # Close FDs on error
-            for fd in fds:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-
             error_msg = response.get("message", "Unknown error")
             data = response.get("data")
             if data and isinstance(data, dict) and "traceback" in data:
@@ -517,10 +420,32 @@ __all__ = [
     "PROTOCOL_VERSION",
     "APP_NAME",
     "expose",
-    "send_fds",
-    "recv_fds",
     "init",
+    "stop",
 ]
+
+def stop() -> None:
+    """
+    Stops the running master server and disconnects any clients.
+    This function is intended to be called for a clean shutdown.
+    """
+    import sys
+    this_module = sys.modules[__name__]
+
+    # Stop the master server if it's running
+    if hasattr(this_module, "master"):
+        server = getattr(this_module, "master")
+        if server and hasattr(server, "stop"):
+            server.stop()
+        delattr(this_module, "master")
+
+    # Disconnect the worker client if it's connected
+    if hasattr(this_module, "worker"):
+        client = getattr(this_module, "worker")
+        if client and hasattr(client, "disconnect"):
+            client.disconnect()
+        delattr(this_module, "worker")
+
 
 def init(role: str, **kwargs) -> Any:
     """
@@ -537,6 +462,8 @@ def init(role: str, **kwargs) -> Any:
     """
     import sys
     import mirror
+    from .master import MASTER_SOCKET_PATH
+    from .worker import WORKER_SOCKET_PATH
     
     # Get the current module to set attributes
     this_module = sys.modules[__name__]
@@ -552,10 +479,10 @@ def init(role: str, **kwargs) -> Any:
         setattr(this_module, "master", server)
         
         # Check and register worker if alive
-        from .worker import WorkerClient
         try:
             # Try to connect to default worker socket
             # We use a default client to check existence and liveness
+            from .worker import WorkerClient
             worker_client = WorkerClient()
             if worker_client.socket_path.exists():
                 worker_client.connect()
@@ -584,7 +511,6 @@ def init(role: str, **kwargs) -> Any:
         return client
 
     elif role == "worker_client":
-        from .worker import WorkerClient
         client = WorkerClient(**kwargs)
         if hasattr(mirror, "__version__"):
             client.set_version(mirror.__version__)

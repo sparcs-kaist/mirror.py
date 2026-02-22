@@ -61,7 +61,7 @@ def test_worker_execution_and_tasks(worker_process):
     uid = os.getuid()
     gid = os.getgid()
     
-    response, fds = client.start_sync(
+    response = client.start_sync(
         job_id=job_id_1,
         sync_method="rsync",
         commandline=cmd_1,
@@ -82,7 +82,7 @@ def test_worker_execution_and_tasks(worker_process):
     job_id_2 = "job_2"
     cmd_2 = ["echo", "task2"]
     
-    response, fds = client.start_sync(
+    response = client.start_sync(
         job_id=job_id_2,
         sync_method="rsync",
         commandline=cmd_2,

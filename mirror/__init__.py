@@ -14,6 +14,9 @@ debug: bool = False
 exit: bool = False
 __version__ = "1.0.0-pre3"
 
+STATE_PATH = Path("/var/lib/mirror/")
+RUN_PATH = Path("/var/run/mirror/")
+
 import mirror.sync
 mirror.sync.load_default()
 

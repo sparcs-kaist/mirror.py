@@ -42,7 +42,7 @@ def get_module(method: str) -> Callable:
     import mirror.sync
     return getattr(mirror.sync, method)
 
-def start(package: "mirror.structure.Package") -> None:
+def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
     """
     Start sync for a package.
 
@@ -60,6 +60,11 @@ def start(package: "mirror.structure.Package") -> None:
     pkg_logger = mirror.logger.create_logger(package.pkgid, start_time)
 
     package.set_status("SYNC")
+    mirror.log.info(f"Starting sync for {package.name} ({method})")
+    pkg_logger.info(f"Starting sync for {package.name} ({method})")
+    pkg_logger.info(f"Time: {time.ctime(start_time)}")
+    pkg_logger.info(f"Trigger: {trigger}")
+
     sync_module = getattr(mirror.sync, method)
     thread = Thread(target=sync_module.execute, args=(package, pkg_logger), daemon=True)
     thread.start()

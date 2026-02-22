@@ -10,6 +10,7 @@ module = "sync"
 name = "lftp"
 _LOAD = False
 
+
 def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
     """
     Run the lftp Sync method (CORE)
@@ -54,7 +55,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         with WorkerClient(socket_path) as client:
             pkg_logger.info(f"Delegating lftp sync to worker: {' '.join(command)}")
             
-            response = client.start_sync(
+            response = client.execute_command(
                 job_id=package.pkgid,
                 sync_method=name,
                 commandline=command,

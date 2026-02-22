@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-# 프로젝트 루트를 sys.path에 추가하여 mirror 모듈을 임포트할 수 있게 함
+# Add project root to sys.path to allow importing the mirror module
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import mirror
@@ -15,7 +15,7 @@ import mirror.structure
 @pytest.fixture(autouse=True)
 def mock_dependencies():
     """
-    mirror 패키지의 외부 의존성들을 Mocking합니다.
+    Mocks external dependencies of the mirror package.
     """
     # 1. Mock Logger
     if hasattr(mirror, 'logger'):
@@ -29,9 +29,9 @@ def mock_dependencies():
             def error(self, msg): pass
         mirror.logger = MockLogger()
 
-    # 2. Mock Toolbox (특히 iso_duration_parser)
-    # config-example.json에는 ""와 "PUSH" 같은 비표준 값이 포함되어 있어
-    # 실제 parser를 쓰면 에러가 날 수 있음.
+    # 2. Mock Toolbox (especially iso_duration_parser)
+    # config-example.json contains non-standard values like "" and "PUSH"
+    # Actual parser might raise errors.
     original_parser = None
     if hasattr(mirror, 'toolbox') and hasattr(mirror.toolbox, 'iso_duration_parser'):
         original_parser = mirror.toolbox.iso_duration_parser
@@ -41,8 +41,8 @@ def mock_dependencies():
             if duration_str == "":
                 return 0
             if duration_str == "PUSH":
-                return -1 # PUSH는 특별한 값으로 취급
-            # 그 외에는 간단한 파싱 또는 실제 parser 호출 시도 (여기선 간단히 처리)
+                return -1 # PUSH is treated as a special value
+            # Otherwise, attempt simple parsing or call actual parser (handle simply here)
             # PT10M -> 600
             if duration_str == "PT10M":
                 return 600
@@ -60,7 +60,7 @@ def mock_dependencies():
     mirror.toolbox = MockToolbox()
 
     # 3. Mock Sync Methods
-    # 로드될 때 synctype 검사를 통과하기 위해
+    # To pass the synctype check when loaded
     if not hasattr(mirror, 'sync'):
         class MockSync: pass
         mirror.sync = MockSync()
@@ -75,7 +75,7 @@ def mock_dependencies():
 @pytest.fixture
 def setup_example_env(tmp_path):
     """
-    config-example.json을 읽고 테스트 환경에 맞게 경로를 수정하여 임시 파일로 저장합니다.
+    Reads config-example.json, modifies paths for the test environment, and saves it as a temporary file.
     """
     root_dir = Path(__file__).parent.parent
     example_config_path = root_dir / 'config-example.json'
@@ -85,15 +85,15 @@ def setup_example_env(tmp_path):
 
     content = json.loads(example_config_path.read_text())
 
-    # 경로 수정 (테스트용 임시 디렉터리로)
+    # Modify paths (to a temporary directory for testing)
     content['settings']['logfolder'] = str(tmp_path / 'logs')
     content['settings']['webroot'] = str(tmp_path / 'webroot')
     content['settings']['statusfile'] = str(tmp_path / 'status.json')
-    # config-example.json에는 statfile이 없으므로 추가
+    # Add statfile as it's missing in config-example.json
     content['settings']['statfile'] = str(tmp_path / 'stat.json')
 
-    # 필요한 디렉터리 생성은 mirror.config.load가 알아서 하거나 로직에 맡김
-    # 다만 statfile은 존재해야 로드 로직이 원활히 돌 수 있음 (초기값 생성)
+    # Directory creation is handled by mirror.config.load or logic.
+    # However, the statfile must exist for the load logic to run smoothly (initial value creation).
     (tmp_path / 'stat.json').write_text(json.dumps({"packages": {}}))
     (tmp_path / 'status.json').write_text(json.dumps({}))
 
@@ -104,27 +104,27 @@ def setup_example_env(tmp_path):
 
 def test_load_config_example(setup_example_env):
     """
-    config-example.json 파일을 기반으로 설정 로드가 정상적으로 되는지 테스트합니다.
+    Tests if config-example.json is loaded correctly based on its content.
     """
     config_path, expected_content = setup_example_env
 
-    # 설정 로드 실행
+    # Execute config load
     mirror.config.load(config_path)
 
-    # 1. 기본 설정 검증
+    # 1. Verify basic settings
     assert mirror.conf.name == expected_content['mirrorname']
     assert mirror.conf.hostname == expected_content['hostname']
     assert str(mirror.conf.logfolder) == expected_content['settings']['logfolder']
     
-    # 2. 패키지 로드 검증
+    # 2. Verify package loading
     loaded_packages = mirror.packages.keys()
     expected_packages = expected_content['packages'].keys()
     
-    # 모든 패키지가 로드되었는지 확인
+    # Check if all packages are loaded
     for pkg_id in expected_packages:
         assert pkg_id in loaded_packages
 
-    # 3. 개별 패키지 속성 검증
+    # 3. Verify individual package attributes
     
     # - Geoul (synctype: local, syncrate: "")
     geoul = getattr(mirror.packages, 'geoul')
@@ -149,76 +149,78 @@ def test_load_config_example(setup_example_env):
 
 def test_config_roundtrip(setup_example_env):
     """
-    로드된 설정(mirror.packages)을 다시 JSON(dict)으로 변환했을 때,
-    원본 입력(config-example.json)의 packages 섹션과 일치하는지 검증합니다.
+    When the loaded configuration (mirror.packages) is converted back to JSON (dict),
+    it verifies consistency with the 'packages' section of the original input (config-example.json).
     """
     config_path, expected_content = setup_example_env
     mirror.config.load(config_path)
 
-    # 1. mirror.packages를 딕셔너리로 변환
-    # mirror.packages.to_dict()는 {pkg_id: pkg_dict, ...} 형태를 반환함
+    # 1. Convert mirror.packages to a dictionary
+    # mirror.packages.to_dict() returns a {pkg_id: pkg_dict, ...} format
     exported_packages = mirror.packages.to_dict()
 
-    # 2. 비교 대상 준비 (config-example.json의 packages 섹션)
+    # 2. Prepare for comparison (packages section of config-example.json)
     expected_packages = expected_content['packages']
 
-    # 3. 차이점 비교
-    # 주의: geoul 패키지의 경우 원본 파일에 'options'가 없으면 로드 후에는 생길 수 있음.
-    # 하지만 사용자가 제공한 레퍼런스에는 options가 있다고 가정하거나,
-    # 코드에서 default_factory로 생성된 options를 감안해야 함.
+    # 3. Compare differences
+    # Note: For the 'geoul' package, 'options' might be created after loading if not present in the original file.
+    # However, we assume 'options' exists in the provided reference or
+    # consider options generated by default_factory in the code.
     
-    # 여기서는 JSON 구조의 동등성을 비교합니다.
-    # 순서가 다를 수 있으므로 dict 비교를 사용하면 안전합니다.
+    # Here, we compare the equality of the JSON structure.
+    # Dictionary comparison is safe as order might differ.
     
-    # exported_packages에는 'lastsync', 'errorcount', 'status' 등의 런타임 필드가 추가될 수 있음.
-    # config-example.json에는 이것들이 없으므로 제거하거나 무시해야 함.
+    # 'lastsync', 'errorcount', 'status', etc., runtime fields may be added to exported_packages.
+    # These are absent in config-example.json, so they must be removed or ignored.
     
-    # 하지만 mirror.structure.Package.to_dict() 구현을 보면:
-    # package_dict = asdict(self) ...
-    # Package 클래스 필드들이 모두 포함됨 (status, lastsync, errorcount 등).
+    # However, looking at the implementation of mirror.structure.Package.to_dict():
+    # All fields of the Package class are included (status, lastsync, errorcount, etc.).
     
-    # 따라서, 비교를 위해서는 exported_packages에서 런타임 전용 필드를 제외하거나
-    # expected_packages에 해당 필드의 기본값을 채워넣어야 함.
+    # Therefore, for comparison, runtime-specific fields must be excluded from exported_packages or
+    # these fields might be missing in the original data (expected_pkg), so they are added for comparison.
     
     for pkg_id, pkg_data in exported_packages.items():
         assert pkg_id in expected_packages
-        expected_pkg = expected_packages[pkg_id]
+        expected_pkg = expected_content['packages'][pkg_id] # Use original expected_pkg for modification
         
-        # 런타임 필드 검증 제외 또는 값 보정
-        # Config에서 로드할 때 기본값: status="UNKNOWN", lastsync=0.0, errorcount=0
-        # Package.from_dict에서 이 값들을 설정함.
-        
-        # 원본 데이터(expected_pkg)에는 이 필드들이 없을 수 있으므로, 비교를 위해 추가해줌
+        # Add runtime fields to expected_pkg for comparison
         if "status" not in expected_pkg: expected_pkg["status"] = "UNKNOWN"
         if "lastsync" not in expected_pkg: expected_pkg["lastsync"] = 0.0
         if "errorcount" not in expected_pkg: expected_pkg["errorcount"] = 0
         if "disabled" not in expected_pkg: expected_pkg["disabled"] = False
 
-        # geoul의 options 처리 (없으면 빈 dict로 간주)
+        # Handle geoul's options (consider as empty dict if absent)
         if "options" not in expected_pkg.get("settings", {}):
-             # settings가 dict라면 수정
+             # Modify if settings is a dict
              if "settings" in expected_pkg:
                  expected_pkg["settings"]["options"] = {}
         
-        # to_dict() 결과와 예상치 비교
-        # assert pkg_data == expected_pkg # 전체 비교
+        # Special handling for debian's auth in settings.options
+        if pkg_id == "debian" and "auth" in expected_pkg.get("settings", {}):
+            auth_val = expected_pkg["settings"].pop("auth")
+            if "options" not in expected_pkg["settings"]:
+                expected_pkg["settings"]["options"] = {}
+            expected_pkg["settings"]["options"]["auth"] = auth_val
         
-        # 디버깅을 위해 상세 비교
+        # Compare to_dict() result with expected values
+        # assert pkg_data == expected_pkg # Full comparison
+        
+        # Detailed comparison for debugging
         assert pkg_data['name'] == expected_pkg['name']
         assert pkg_data['id'] == expected_pkg['id']
         assert pkg_data['synctype'] == expected_pkg['synctype']
         assert pkg_data['syncrate'] == expected_pkg['syncrate']
         assert pkg_data['href'] == expected_pkg['href']
         
-        # Settings 비교
+        # Settings comparison
         assert pkg_data['settings']['src'] == expected_pkg['settings']['src']
         assert pkg_data['settings']['dst'] == expected_pkg['settings']['dst']
         assert pkg_data['settings']['hidden'] == expected_pkg['settings']['hidden']
-        assert pkg_data['settings']['options'] == expected_pkg['settings'].get('options', {})
+        assert pkg_data['settings']['options'] == expected_pkg.get('settings', {}).get('options', {})
 
-        # Link 비교 (리스트 순서는 중요할 수 있음)
-        # pkg_data['link']는 [{'rel':..., 'href':...}, ...] 형태
-        # expected_pkg['link']도 동일 형태
+        # Link comparison (list order might be important)
+        # pkg_data['link'] is in the format [{'rel':..., 'href':...}, ...]
+        # expected_pkg['link'] is also in the same format
         assert len(pkg_data['link']) == len(expected_pkg['link'])
         for i, link in enumerate(pkg_data['link']):
              assert link['rel'] == expected_pkg['link'][i]['rel']

@@ -4,9 +4,13 @@ import argparse
 import time
 import shutil
 from pathlib import Path
+import logging
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Setup basic logging to capture output from the worker process module
+logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='[%(asctime)s] %(levelname)s # %(message)s')
 
 from mirror.worker import process
 
@@ -21,10 +25,10 @@ def verify_permissions(target_uid, target_gid):
     print(f"Creating worker to touch file: {test_file}")
     
     # Create the worker
-    # worker_id, commandline, env, uid, gid, nice
+    # job_id, commandline, env, uid, gid, nice
     try:
         worker = process.create(
-            worker_id="test_worker_1",
+            job_id="test_worker_1",
             commandline=["touch", str(test_file)],
             env={},
             uid=target_uid,

@@ -44,17 +44,10 @@ class PackageSettings(Options):
 
     @classmethod
     def from_dict(cls, data: dict) -> "PackageSettings":
-        # Separate known fields from extra options
+        # Filter data to only include known fields
         known_fields = {"hidden", "src", "dst", "options"}
-        fields_data = {k: v for k, v in data.items() if k in known_fields}
-        extra_options = {k: v for k, v in data.items() if k not in known_fields}
-        
-        # Merge extra options into the 'options' field if it exists in data
-        if "options" in data and isinstance(data["options"], dict):
-            extra_options.update(data["options"])
-        
-        fields_data["options"] = extra_options
-        return cls(**fields_data)
+        filtered_data = {k: v for k, v in data.items() if k in known_fields}
+        return cls(**filtered_data)
 
 @dataclass
 class Package:

@@ -1,6 +1,7 @@
 import mirror
 import mirror.structure
-import mirror.logger
+import mirror.socket.worker
+import mirror.toolbox
 import os
 import time
 import logging
@@ -9,6 +10,9 @@ from pathlib import Path
 
 module = "sync"
 name = "rsync"
+
+def setup(path: Path, package: mirror.structure.Package):
+    pass
 
 def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
     """
@@ -42,34 +46,18 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         command, env = rsync(pkg_logger, package.pkgid, src, dst, user, password)
 
         # 4. Execute sync directly
-        pkg_logger.info(f"ENV: src={src}")
-        pkg_logger.info(f"ENV: dst={dst}")
+        pkg_logger.info(f"+ src={src}")
+        pkg_logger.info(f"+ frequency={mirror.toolbox.iso_duration_maker(package.syncrate)}")
+        pkg_logger.info(f"+ lastupdate={time.ctime(package.lastsync)}")
         pkg_logger.info(f"Running rsync: {' '.join(command)}")
-        
-        log_file = None
+
+        logpath = None
         for handler in pkg_logger.handlers:
             if isinstance(handler, logging.FileHandler):
-                log_file = open(handler.baseFilename, "a")
+                logpath = Path(handler.baseFilename)
                 break
-        
-        try:
-            result = subprocess.run(
-                command,
-                env=env,
-                stdout=log_file,
-                stderr=log_file,
-                text=True
-            )
 
-            if result.returncode == 0:
-                pkg_logger.info(f"Sync for {package.pkgid} completed successfully.")
-                package.lastsync = time.time()
-                package.set_status("ACTIVE")
-            else:
-                raise RuntimeError(f"rsync failed with return code {result.returncode}")
-        finally:
-            if log_file:
-                log_file.close()
+        mirror.socket.worker.execute_command(package.name, command, env, logpath)
 
     except AttributeError as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: value not found")
@@ -81,8 +69,6 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
     finally:
         #mirror.logger.close_logger(pkg_logger)
         pass
-
-
 
 def rsync(logger: logging.Logger, pkgid: str, src: str, dst: Path, user: str, password: str):
     """

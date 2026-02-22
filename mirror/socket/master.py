@@ -6,12 +6,12 @@ CLI tools connect to Master via MasterClient.
 """
 
 from pathlib import Path
+from typing import Optional
+import mirror # Import mirror to access mirror.RUN_PATH
 
 from . import BaseServer, BaseClient, HandshakeInfo, expose
 
-# Default socket path for master
-DEFAULT_MASTER_SOCKET = Path("/run/mirror/master.sock")
-
+MASTER_SOCKET_PATH = mirror.RUN_PATH / "master.sock"
 
 class MasterServer(BaseServer):
     """
@@ -19,7 +19,9 @@ class MasterServer(BaseServer):
     Automatically registers default handlers and manages mirror operations.
     """
 
-    def __init__(self, socket_path: Path | str = DEFAULT_MASTER_SOCKET):
+    def __init__(self, socket_path: Optional[Path | str] = None):
+        if socket_path is None:
+            socket_path = MASTER_SOCKET_PATH
         super().__init__(socket_path, role="master")
 
     @expose("ping")
@@ -68,7 +70,9 @@ class MasterClient(BaseClient):
     Used by CLI tools and other processes.
     """
 
-    def __init__(self, socket_path: Path | str = DEFAULT_MASTER_SOCKET):
+    def __init__(self, socket_path: Optional[Path | str] = None):
+        if socket_path is None:
+            socket_path = MASTER_SOCKET_PATH
         super().__init__(socket_path, role="cli")
 
     def ping(self) -> dict:
@@ -98,38 +102,38 @@ class MasterClient(BaseClient):
 
 # Module-level convenience functions
 
-def ping(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+def ping(socket_path: Optional[Path | str] = None) -> dict:
     """Health check"""
     with MasterClient(socket_path) as client:
         return client.ping()
 
-def status(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+def status(socket_path: Optional[Path | str] = None) -> dict:
     """Get master daemon status"""
     with MasterClient(socket_path) as client:
         return client.status()
 
-def list_packages(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+def list_packages(socket_path: Optional[Path | str] = None) -> dict:
     """List all packages"""
     with MasterClient(socket_path) as client:
         return client.list_packages()
 
-def start_sync(package_id: str, socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+def start_sync(package_id: str, socket_path: Optional[Path | str] = None) -> dict:
     """Start sync for a package"""
     with MasterClient(socket_path) as client:
         return client.start_sync(package_id)
 
-def stop_sync(package_id: str, socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+def stop_sync(package_id: str, socket_path: Optional[Path | str] = None) -> dict:
     """Stop sync for a package"""
     with MasterClient(socket_path) as client:
         return client.stop_sync(package_id)
 
-def get_package(package_id: str, socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> dict:
+def get_package(package_id: str, socket_path: Optional[Path | str] = None) -> dict:
     """Get package details"""
     with MasterClient(socket_path) as client:
         return client.get_package(package_id)
 
 
-def get_master_client(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> MasterClient:
+def get_master_client(socket_path: Optional[Path | str] = None) -> MasterClient:
     """
     Get a connected MasterClient instance.
     Convenience function for CLI usage.
@@ -139,7 +143,7 @@ def get_master_client(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> Master
     return client
 
 
-def is_master_running(socket_path: Path | str = DEFAULT_MASTER_SOCKET) -> bool:
+def is_master_running(socket_path: Optional[Path | str] = None) -> bool:
     """Check if master daemon is running"""
     try:
         with MasterClient(socket_path) as client:
@@ -154,5 +158,6 @@ __all__ = [
     "MasterClient",
     "get_master_client",
     "is_master_running",
-    "DEFAULT_MASTER_SOCKET",
+    "MASTER_SOCKET_PATH",
 ]
+

@@ -9,29 +9,22 @@ import mirror
 
 from pathlib import Path
 from typing import Optional
+import os
 
 from . import BaseServer, BaseClient, HandshakeInfo, expose
 
-# Default socket path pattern for workers
-DEFAULT_WORKER_SOCKET_DIR = Path("/run/mirror/workers")
-
-
-def get_worker_socket_path(job_id: str) -> Path:
-    """Get socket path for a specific job (package)"""
-    return DEFAULT_WORKER_SOCKET_DIR / f"{job_id}.sock"
-
+WORKER_SOCKET_PATH = mirror.RUN_PATH / "worker.sock"
 
 class WorkerServer(BaseServer):
     """
     Worker process server.
-    Handles sync operations for assigned packages (jobs).
+    Handles multiple sync operations/commands concurrently.
     """
 
     def __init__(self, socket_path: Optional[Path | str] = None):
         if socket_path is None:
-            socket_path = Path("/run/mirror/worker.sock")
+            socket_path = WORKER_SOCKET_PATH
         super().__init__(socket_path, role="worker")
-        self._current_sync: Optional[str] = None
 
     @expose("ping")
     def _handle_ping(self) -> dict:
@@ -40,21 +33,30 @@ class WorkerServer(BaseServer):
 
     @expose("status")
     def _handle_status(self) -> dict:
-        """Get job status"""
+        """Get worker status and list of active jobs"""
+        import mirror.worker.process as process
+        process.prune_finished()
+        jobs = process.get_all()
         return {
             "running": self.running,
             "role": self.role,
             "version": mirror.__version__,
             "socket": str(self.socket_path),
+            "active_jobs": [j.id for j in jobs if j.is_running]
         }
 
-    @expose("start_sync")
-    def _handle_start_sync(self, job_id: str, sync_method: str, commandline: list[str], env: dict, uid: int, gid: int, nice: int = 0, log_path: Optional[str] = None) -> dict:
-        """Start sync for a package (job)"""
-        if self._current_sync is not None:
-            raise RuntimeError(f"Worker busy with {self._current_sync}")
-
+    @expose("execute_command")
+    def _handle_execute_command(self, job_id: str, commandline: list[str], env: dict, sync_method: str = "execute", uid: Optional[int] = None, gid: Optional[int] = None, nice: int = 0, log_path: Optional[str] = None) -> dict:
+        """Execute a shell command for a job. Multiple jobs can run concurrently."""
         import mirror.worker.process as process
+        
+        # Prune old jobs before creating a new one
+        process.prune_finished()
+
+        if not uid:
+            uid = os.getuid()
+        if not gid:
+            gid = os.getgid()
         
         job = process.create(
             job_id=job_id, 
@@ -66,8 +68,6 @@ class WorkerServer(BaseServer):
             log_path=Path(log_path) if log_path else None
         )
         
-        self._current_sync = job_id
-        
         return {
             "job_id": job_id,
             "sync_method": sync_method,
@@ -76,35 +76,50 @@ class WorkerServer(BaseServer):
             "has_fds": False
         }
 
-    @expose("stop_sync")
-    def _handle_stop_sync(self) -> dict:
-        """Stop current sync"""
-        if self._current_sync is None:
-            raise RuntimeError("No sync in progress")
-
-        job_id = self._current_sync
-        self._current_sync = None
-        # TODO: Implement actual sync stop
-        return {
-            "job_id": job_id,
-            "status": "stopped",
-        }
+    @expose("stop_command")
+    def _handle_stop_command(self, job_id: Optional[str] = None) -> dict:
+        """Stop a specific job or all jobs if no job_id is provided"""
+        import mirror.worker.process as process
+        
+        if job_id:
+            job = process.get(job_id)
+            if job:
+                job.stop()
+                return {"job_id": job_id, "status": "stopped"}
+            return {"job_id": job_id, "status": "not_found"}
+        else:
+            # Stop all active jobs
+            jobs = process.get_all()
+            stopped = []
+            for job in jobs:
+                if job.is_running:
+                    job.stop()
+                    stopped.append(job.id)
+            return {"status": "all_stopped", "stopped_jobs": stopped}
 
     @expose("get_progress")
-    def _handle_get_progress(self) -> dict:
-        """Get current sync progress"""
-        if self._current_sync is None:
-            return {"syncing": False}
+    def _handle_get_progress(self, job_id: Optional[str] = None) -> dict:
+        """Get progress for a specific job or all active jobs"""
+        import mirror.worker.process as process
+        process.prune_finished()
 
-        # TODO: Implement actual progress tracking
-        return {
-            "syncing": True,
-            "job_id": self._current_sync,
-            "progress": 0,
-            "speed": "0 B/s",
-        }
-    
-
+        if job_id:
+            job = process.get(job_id)
+            if job:
+                return {
+                    "job_id": job_id,
+                    "syncing": job.is_running,
+                    "progress": 0,
+                    "info": job.info()
+                }
+            return {"job_id": job_id, "syncing": False, "status": "not_found"}
+        else:
+            # Return summary of all jobs
+            jobs = process.get_all()
+            return {
+                "syncing": any(j.is_running for j in jobs),
+                "jobs": {j.id: {"running": j.is_running, "info": j.info()} for j in jobs}
+            }
 
 class WorkerClient(BaseClient):
     """
@@ -114,7 +129,7 @@ class WorkerClient(BaseClient):
 
     def __init__(self, socket_path: Optional[Path | str] = None):
         if socket_path is None:
-            socket_path = Path("/run/mirror/worker.sock")
+            socket_path = WORKER_SOCKET_PATH
         super().__init__(socket_path, role="master")
 
     def ping(self) -> dict:
@@ -125,17 +140,17 @@ class WorkerClient(BaseClient):
         """Get worker status"""
         return self.send_command("status")
 
-    def start_sync(self, job_id: str, sync_method: str, commandline: list[str], env: dict, uid: int, gid: int, nice: int = 0, log_path: Optional[str] = None) -> dict:
-        """Start sync for a package"""
-        return self.send_command("start_sync", expect_fds=False, job_id=job_id, sync_method=sync_method, commandline=commandline, env=env, uid=uid, gid=gid, nice=nice, log_path=log_path)
+    def execute_command(self, job_id: str, commandline: list[str], env: dict, sync_method: str = "execute", uid: Optional[int] = None, gid: Optional[int] = None, nice: int = 0, log_path: Optional[str] = None) -> dict:
+        """Execute a shell command"""
+        return self.send_command("execute_command", job_id=job_id, commandline=commandline, env=env, sync_method=sync_method, uid=uid, gid=gid, nice=nice, log_path=log_path)
 
-    def stop_sync(self) -> dict:
-        """Stop current sync"""
-        return self.send_command("stop_sync")
+    def stop_command(self, job_id: Optional[str] = None) -> dict:
+        """Stop current command"""
+        return self.send_command("stop_command", job_id=job_id)
 
-    def get_progress(self) -> dict:
+    def get_progress(self, job_id: Optional[str] = None) -> dict:
         """Get current sync progress"""
-        return self.send_command("get_progress")
+        return self.send_command("get_progress", job_id=job_id)
 
 
 # Module-level convenience functions
@@ -150,38 +165,37 @@ def status(socket_path: Optional[Path | str] = None) -> dict:
     with WorkerClient(socket_path) as client:
         return client.status()
 
-def start_sync(job_id: str, sync_method: str, commandline: list[str], env: dict, uid: int, gid: int, nice: int = 0, log_path: Optional[str] = None, socket_path: Optional[Path | str] = None) -> dict:
-    """Start sync for a package"""
+def stop_command(job_id: Optional[str] = None, socket_path: Optional[Path | str] = None) -> dict:
+    """Stop current command"""
     with WorkerClient(socket_path) as client:
-        return client.start_sync(job_id, sync_method, commandline, env, uid, gid, nice, log_path)
+        return client.stop_command(job_id)
 
-def stop_sync(socket_path: Optional[Path | str] = None) -> dict:
-    """Stop current sync"""
-    with WorkerClient(socket_path) as client:
-        return client.stop_sync()
-
-def get_progress(socket_path: Optional[Path | str] = None) -> dict:
+def get_progress(job_id: Optional[str] = None, socket_path: Optional[Path | str] = None) -> dict:
     """Get current sync progress"""
     with WorkerClient(socket_path) as client:
-        return client.get_progress()
+        return client.get_progress(job_id)
+
+def execute_command(job_id: str, commandline: list[str], env: dict, sync_method: str = "execute", uid: Optional[int] = None, gid: Optional[int] = None, nice: int = 0, log_path: Optional[Path | str] = None, socket_path: Optional[Path | str] = None) -> dict:
+    """Execute a shell command"""
+    with WorkerClient(socket_path) as client:
+        return client.execute_command(job_id, commandline, env, sync_method=sync_method, uid=uid, gid=gid, nice=nice, log_path=str(log_path) if log_path else None)
 
 
-def get_worker_client(job_id: str) -> WorkerClient:
+def is_worker_running(job_id: Optional[str] = None) -> bool:
     """
-    Get a connected WorkerClient instance.
-    Convenience function for Master usage.
+    Check if the local worker server is alive.
+    If job_id is provided, check if that specific job is currently running on the worker.
     """
-    client = WorkerClient(job_id)
-    client.connect()
-    return client
-
-
-def is_worker_running(job_id: str) -> bool:
-    """Check if a worker is running"""
     try:
-        with WorkerClient(job_id) as client:
-            client.ping()
-            return True
+        with WorkerClient(WORKER_SOCKET_PATH) as client:
+            if job_id:
+                # Ask the worker if this specific job is active
+                progress = client.get_progress(job_id)
+                return progress.get("syncing", False)
+            else:
+                # Just check if the server responds
+                client.ping()
+                return True
     except (ConnectionError, Exception):
         return False
 
@@ -189,8 +203,9 @@ def is_worker_running(job_id: str) -> bool:
 __all__ = [
     "WorkerServer",
     "WorkerClient",
-    "get_worker_client",
     "is_worker_running",
-    "get_worker_socket_path",
-    "DEFAULT_WORKER_SOCKET_DIR",
+    "stop_command",
+    "get_progress",
+    "execute_command",
+    "WORKER_SOCKET_PATH",
 ]

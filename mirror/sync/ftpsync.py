@@ -80,7 +80,7 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
         with WorkerClient(socket_path) as client:
             logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
             
-            response = client.start_sync(
+            response = client.execute_command(
                 job_id=package.pkgid,
                 sync_method="ftpsync",
                 commandline=command,

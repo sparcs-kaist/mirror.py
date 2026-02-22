@@ -42,7 +42,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         with WorkerClient(socket_path) as client:
             pkg_logger.info(f"Delegating bandersnatch sync to worker")
             
-            response = client.start_sync(
+            response = client.execute_command(
                 job_id=package.pkgid,
                 sync_method=name,
                 commandline=command,

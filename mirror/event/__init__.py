@@ -53,13 +53,12 @@ class EventManager:
                 if listener in self._listeners[event_name]:
                     self._listeners[event_name].remove(listener)
 
-    def post_event(self, event_name: str, wait: bool = False, *args, **kwargs):
+    def post_event(self, event_name: str, wait: bool, *args, **kwargs):
         """
         Fire an event.
         
-        Optional Keyword Args:
-            wait (bool): If True, blocks until all listeners have completed. 
-                         Defaults to False. Consumed by this method.
+        Args:
+            wait (bool): If True, blocks until all listeners have completed.
         """
 
         with self._lock:
@@ -115,7 +114,8 @@ def post_event(event_name: str, *args, **kwargs):
     Fire an event.
     Use 'wait=True' to block until completion.
     """
-    _manager.post_event(event_name, *args, **kwargs)
+    wait = kwargs.pop('wait', False)
+    _manager.post_event(event_name, wait, *args, **kwargs)
 
 # Decorator for easy registration
 def listener(event_name: str):
