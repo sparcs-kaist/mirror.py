@@ -14,13 +14,22 @@ DEFAULT_CONFIG = {
         },
         "logger": {
             "level": "INFO",
-            "format": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
+            "packagelevel": "INFO",
+            "format": "[%(asctime)s] %(levelname)s # %(message)s",
+            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
 
             "fileformat": {
                 "base": "/var/log/mirror",
+                "folder": "{year}/{month}",
+                "filename": "{year}-{month}-{day}.log",
+                "gzip": True
+            },
+            
+            "packagefileformat": {
+                "base": "/var/log/mirror/packages",
                 "folder": "{year}/{month}/{day}",
-                "filename": "{hour}:{minute}:{second}.{microsecond}.{packageid}.log",
-                "gzip": True,
+                "filename": "{packageid}.{hour}:{minute}:{second}.{microsecond}.log",
+                "gzip": True
             }
         },
         "ftpsync": {

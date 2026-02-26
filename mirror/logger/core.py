@@ -7,7 +7,7 @@ import datetime
 import gzip
 import shutil
 
-from .handler import PromptHandler, GzipTimedRotatingFileHandler
+from .handler import PromptHandler, GzipTimedRotatingFileHandler, DynamicGzipRotatingFileHandler, _time_formatting, compress_file
 
 # --- Module State ---
 psession = PromptSession()
@@ -26,62 +26,18 @@ DEFAULT_FILE_FORMAT = {
     "filename": "{hour}:{minute}:{second}.{microsecond}.{packageid}.log",
     "gzip": True,
 }
+DEFAULT_PACKAGE_FILE_FORMAT = {
+    "base": "/var/log/mirror/packages",
+    "folder": "{year}/{month}/{day}",
+    "filename": "{hour}:{minute}:{second}.{microsecond}.{packageid}.log",
+    "gzip": True,
+}
 
 # --- Initial Handler Setup ---
 logger.handlers = [PromptHandler()]
 logger.setLevel(logging.INFO)
 logger.handlers[0].setLevel(logging.INFO)
 logger.handlers[0].setFormatter(logging.Formatter(DEFAULT_FORMAT))
-
-
-def compress_file(filepath: str | Path) -> Path | None:
-    """
-    Compress a file with gzip.
-
-    Args:
-        filepath: Path to the file to compress
-
-    Returns:
-        Path to the compressed file, or None if compression failed
-    """
-    filepath = Path(filepath)
-    if not filepath.exists():
-        return None
-
-    gzip_path = filepath.with_suffix(filepath.suffix + '.gz')
-
-    try:
-        with open(filepath, 'rb') as f_in:
-            with gzip.open(gzip_path, 'wb') as f_out:
-                shutil.copyfileobj(f_in, f_out)
-        filepath.unlink()
-        return gzip_path
-    except Exception as e:
-        logger.warning(f"Failed to compress file {filepath}: {e}")
-        return None
-
-
-def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None) -> str:
-    """
-    Format time in the log message
-
-    Args:
-        line (str): Log message
-        usetime (datetime.datetime): Time to format
-        pkgid (str): Package ID
-    Returns:
-        str: Formatted log message
-    """
-    return line.format(
-        year=usetime.year,
-        month=usetime.month,
-        day=usetime.day,
-        hour=usetime.hour,
-        minute=usetime.minute,
-        second=usetime.second,
-        microsecond=usetime.microsecond,
-        packageid=pkgid,
-    )
 
 
 def create_logger(name: str, start_time: float) -> logging.Logger:
@@ -98,8 +54,8 @@ def create_logger(name: str, start_time: float) -> logging.Logger:
         mirror.conf.logger["packageformat"] = DEFAULT_PACKAGE_FORMAT
     if "packagelevel" not in mirror.conf.logger:
         mirror.conf.logger["packagelevel"] = DEFAULT_PACKAGE_LEVEL
-    if "fileformat" not in mirror.conf.logger:
-        mirror.conf.logger["fileformat"] = DEFAULT_FILE_FORMAT
+    if "packagefileformat" not in mirror.conf.logger:
+        mirror.conf.logger["packagefileformat"] = DEFAULT_PACKAGE_FILE_FORMAT
 
     pkg_logger = logging.getLogger(f"mirror.package.{name}")
     formatter = logging.Formatter(
@@ -113,11 +69,15 @@ def create_logger(name: str, start_time: float) -> logging.Logger:
     pkg_logger.addHandler(prompthandler)
 
     now = datetime.datetime.fromtimestamp(start_time)
-    folder = basePath / _time_formatting(mirror.conf.logger["fileformat"]["folder"], now, name)
+    pkg_base_path = Path(mirror.conf.logger["packagefileformat"]["base"]).resolve()
+    if not pkg_base_path.exists():
+        pkg_base_path.mkdir(parents=True)
+
+    folder = pkg_base_path / _time_formatting(mirror.conf.logger["packagefileformat"]["folder"], now, name)
     if not folder.exists():
         folder.mkdir(parents=True)
 
-    filename = _time_formatting(mirror.conf.logger["fileformat"]["filename"], now, name)
+    filename = _time_formatting(mirror.conf.logger["packagefileformat"]["filename"], now, name)
     if "/" in filename:
         filename = filename.replace("/", "-")
 
@@ -149,7 +109,7 @@ def close_logger(pkg_logger: logging.Logger, compress: bool | None = None) -> Pa
         Path to the log file (compressed or not), or None if no file handler
     """
     if compress is None:
-        compress = mirror.conf.logger.get("fileformat", {}).get("gzip", True)
+        compress = mirror.conf.logger.get("packagefileformat", {}).get("gzip", True)
 
     log_file_path: Path | None = None
 
@@ -179,24 +139,14 @@ def setup_logger():
     main_logger.handlers[0].setFormatter(formatter)
 
     basePath = Path(mirror.conf.logger["fileformat"]["base"]).resolve()
-    if not basePath.exists():
-        basePath.mkdir(parents=True)
-
-    now = datetime.datetime.now()
-    folder = basePath / _time_formatting(mirror.conf.logger["fileformat"]["folder"], now, None)
-    if not folder.exists():
-        folder.mkdir(parents=True)
-    filename = folder / "master.log"
-
     gzip_enabled = mirror.conf.logger.get("fileformat", {}).get("gzip", True)
 
-    filehandler = GzipTimedRotatingFileHandler(
-        filename=str(filename),
-        when='midnight',
-        interval=1,
-        backupCount=30,
-        encoding='utf-8',
-        gzip_enabled=gzip_enabled
+    filehandler = DynamicGzipRotatingFileHandler(
+        base_path=basePath,
+        folder_template=mirror.conf.logger["fileformat"]["folder"],
+        filename_template=mirror.conf.logger["fileformat"]["filename"],
+        gzip_enabled=gzip_enabled,
+        encoding='utf-8'
     )
     filehandler.setLevel(logging.INFO)
     filehandler.setFormatter(formatter)

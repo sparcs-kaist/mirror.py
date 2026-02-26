@@ -19,6 +19,13 @@
 
             "fileformat": {
                 "base": "/var/log/mirror",
+                "folder": "{year}/{month}",
+                "filename": "{year}-{month}-{day}.log",
+                "gzip": true
+            },
+            
+            "packagefileformat": {
+                "base": "/var/log/mirror/packages",
                 "folder": "{year}/{month}/{day}",
                 "filename": "{hour}:{minute}:{second}.{microsecond}.{packageid}.log",
                 "gzip": true
