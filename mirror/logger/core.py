@@ -7,7 +7,7 @@ import datetime
 import gzip
 import shutil
 
-from .handler import PromptHandler, GzipTimedRotatingFileHandler, DynamicGzipRotatingFileHandler, _time_formatting, compress_file
+from .handler import PromptHandler, DynamicGzipRotatingFileHandler, _time_formatting, compress_file
 
 # --- Module State ---
 psession = PromptSession()

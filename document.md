@@ -173,15 +173,22 @@ mirror/
     -   **Role**: Initializes the logging subsystem, providing custom handlers and default formatting options.
     -   **Classes**:
         -   **`PromptHandler`**: A custom logging handler that formats log records for console output.
-        -   **`GzipTimedRotatingFileHandler`**: A custom rotating file handler that compresses old log files using gzip.
+        -   **`DynamicGzipRotatingFileHandler`**: A custom file handler that rotates when the path (folder or filename) formatted by time templates changes. Used by the main logger to support dynamic folder structures (e.g., `{year}/{month}`) and auto-rotation.
     -   **Constants**: Defines default log levels, formats for console and package-specific logging, and file naming conventions.
     -   **Functions**:
-        -   **`_time_formatting(line, usetime, pkgid)`**: Formats dynamic placeholders in log file paths based on time and package ID.
-        -   **`compress_file(filepath)`**: Compresses a given file using gzip.
-        -   **`create_logger(name, start_time)`**: Creates and configures a dedicated logger for a specific package synchronization, including file and console handlers.
+        -   **`_time_formatting(line, usetime, pkgid)`**: Formats dynamic placeholders in log file paths based on time and package ID. Automatically provides zero-padding (e.g., `{month}` becomes `02`) for standard date/time components.
+        -   **`compress_file(filepath)`**: Compresses a given file using gzip and removes the original.
+        -   **`create_logger(name, start_time)`**: Creates and configures a dedicated logger for a specific package synchronization. Uses standard `logging.FileHandler` to ensure a single sync task is recorded in one file without rotation.
         -   **`close_logger(pkg_logger, compress)`**: Closes all handlers for a package logger and optionally compresses its log file.
-        -   **`setup_logger()`**: Configures the main application logger (`mirror.log`) with console and rotating file handlers, setting up the `basePath` for log files.
+        -   **`setup_logger()`**: Configures the main application logger (`mirror.log`) with console and `DynamicGzipRotatingFileHandler`, allowing the main log to rotate automatically based on the `fileformat` configuration.
     -   **Dependencies**: `logging`, `datetime`, `gzip`, `shutil`, `pathlib.Path`, `prompt_toolkit`.
+
+-   **`handler.py`**
+    -   **Role**: Implementation of custom logging handlers and utility functions.
+    -   **Key Logic**:
+        -   **`DynamicGzipRotatingFileHandler`**: Compares the current log path with a new path generated for each log record. If the path differs (e.g., a new day or month), it closes the current file, compresses it (if enabled), and opens the new path.
+        -   **Zero-Padding**: `_time_formatting` pre-formats `year`, `month`, `day`, `hour`, `minute`, `second`, and `microsecond` as padded strings before applying `.format()`, ensuring consistent file naming without requiring complex format strings in the config.
+
 
 ### 7. Plugin (`mirror/plugin/`)
 

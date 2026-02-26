@@ -1,4 +1,4 @@
-from .handler import PromptHandler, GzipTimedRotatingFileHandler
+from .handler import PromptHandler, DynamicGzipRotatingFileHandler
 from .core import (
     psession,
     input,
@@ -16,7 +16,7 @@ from .core import (
 
 __all__ = [
     "PromptHandler",
-    "GzipTimedRotatingFileHandler",
+    "DynamicGzipRotatingFileHandler",
     "psession",
     "input",
     "logger",
