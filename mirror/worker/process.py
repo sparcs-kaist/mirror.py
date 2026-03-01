@@ -203,11 +203,19 @@ def prune_finished():
         if not w.is_running:
             to_remove.append(wid)
 
-
     for wid in to_remove:
+        w = _jobs.get(wid)
+        if not w:
+            continue
+            
         try:
-            mirror.socket.worker.send_finished_notification(wid)
+            # Get exit status
+            returncode = w.returncode
+            success = (returncode == 0)
+            
+            mirror.socket.worker.send_finished_notification(wid, success, returncode)
             del _jobs[wid]
-        except ConnectionError:
-            # When there are no clients, pass it.
+        except Exception:
+            # mirror.socket.worker might be missing or no clients connected.
+            # Keep the job in registry for next attempt.
             pass

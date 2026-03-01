@@ -26,7 +26,7 @@ class WorkerServer(BaseServer):
             socket_path = WORKER_SOCKET_PATH
         super().__init__(socket_path, role="worker")
 
-    def send_finished_notification(self, job_id: str):
+    def send_finished_notification(self, job_id: str, success: bool, returncode: Optional[int]):
         """Broadcast a notification that a job has finished. Raises Exception if no clients are connected."""
         if self.client_count == 0:
             raise ConnectionError("No clients connected to receive notification")
@@ -34,7 +34,9 @@ class WorkerServer(BaseServer):
         self.broadcast({
             "type": "notification",
             "event": "job_finished",
-            "job_id": job_id
+            "job_id": job_id,
+            "success": success,
+            "returncode": returncode
         })
 
     @expose("ping")
