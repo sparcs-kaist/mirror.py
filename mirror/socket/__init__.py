@@ -12,6 +12,7 @@ import json
 import struct
 import traceback
 import array
+import queue
 from pathlib import Path
 from typing import Optional, Callable, Any
 from dataclasses import dataclass, asdict
@@ -321,6 +322,8 @@ class BaseClient:
         self._sock: Optional[socket.socket] = None
         self._server_info: Optional[HandshakeInfo] = None
         self._connected = False
+        self._response_queue = queue.Queue()
+        self._listener_thread: Optional[threading.Thread] = None
 
     def set_version(self, version: str) -> None:
         """Set application version for handshake"""
@@ -335,6 +338,26 @@ class BaseClient:
             is_server=False,
             role=self.role
         )
+
+    def _listen_loop(self) -> None:
+        """Background thread to listen for server messages"""
+        while self._connected and self._sock:
+            try:
+                message = _recv_message(self._sock)
+                # Check if it's a notification or a response
+                if message.get("type") == "notification":
+                    self.handle_notification(message)
+                else:
+                    self._response_queue.put(message)
+            except (ConnectionError, json.JSONDecodeError, OSError):
+                break
+            except Exception:
+                traceback.print_exc()
+        self._connected = False
+
+    def handle_notification(self, data: dict) -> None:
+        """Handle notification from server. Override in subclasses."""
+        pass
 
     def connect(self) -> HandshakeInfo:
         """
@@ -379,6 +402,11 @@ class BaseClient:
                 raise ConnectionError(f"Handshake rejected: {confirm.get('message')}")
 
             self._connected = True
+            
+            # Start listener thread
+            self._listener_thread = threading.Thread(target=self._listen_loop, daemon=True)
+            self._listener_thread.start()
+            
             return self._server_info
 
         except Exception:
@@ -389,13 +417,14 @@ class BaseClient:
 
     def disconnect(self) -> None:
         """Disconnect from server"""
+        self._connected = False
         if self._sock:
             try:
+                self._sock.shutdown(socket.SHUT_RDWR)
                 self._sock.close()
             except Exception:
                 pass
             self._sock = None
-        self._connected = False
         self._server_info = None
 
     def send_command(self, command: str, **kwargs) -> Any:
@@ -405,16 +434,16 @@ class BaseClient:
 
         _send_message(self._sock, {"command": command, "kwargs": kwargs if kwargs else None})
         
-        response = _recv_message(self._sock)
+        # Wait for response from queue (populated by listener thread)
+        try:
+            response = self._response_queue.get(timeout=30) # Default 30s timeout for RPC
+        except queue.Empty:
+            raise TimeoutError(f"Command '{command}' timed out")
 
         if response.get("status") == 200:
             return response.get("data")
         else:
             error_msg = response.get("message", "Unknown error")
-            data = response.get("data")
-            if data and isinstance(data, dict) and "traceback" in data:
-                 # Optionally include traceback in the exception message for debugging
-                 pass
             raise Exception(f"RPC Error ({response.get('status')}): {error_msg}")
 
     def __getattr__(self, name: str) -> Callable:

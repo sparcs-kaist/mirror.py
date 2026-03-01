@@ -69,6 +69,11 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
     thread = Thread(target=sync_module.execute, args=(package, pkg_logger), daemon=True)
     thread.start()
 
+def on_sync_done(pkgid: str, success: bool, returncode: int|None = None):
+    # search pkgid
+    pass
+
+
 def load_default():
     """Load the default sync moodules"""
     loader(BasicMethodPath)

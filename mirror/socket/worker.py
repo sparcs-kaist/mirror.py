@@ -145,9 +145,15 @@ class WorkerClient(BaseClient):
             socket_path = WORKER_SOCKET_PATH
         super().__init__(socket_path, role="master")
 
-    def on_job_finished(self, job_id: str):
-        """Called when a job_finished notification is received"""
-        pass
+    def handle_notification(self, data: dict) -> None:
+        """Handle notification from worker server"""
+        if data.get("event") == "job_finished":
+            import mirror.sync
+            job_id = data.get("job_id")
+            success = data.get("success", False)
+            returncode = data.get("returncode")
+            # Call sync done handler
+            mirror.sync.on_sync_done(job_id, success, returncode)
 
     def ping(self) -> dict:
         """Health check"""
