@@ -26,6 +26,17 @@ class WorkerServer(BaseServer):
             socket_path = WORKER_SOCKET_PATH
         super().__init__(socket_path, role="worker")
 
+    def send_finished_notification(self, job_id: str):
+        """Broadcast a notification that a job has finished. Raises Exception if no clients are connected."""
+        if self.client_count == 0:
+            raise ConnectionError("No clients connected to receive notification")
+
+        self.broadcast({
+            "type": "notification",
+            "event": "job_finished",
+            "job_id": job_id
+        })
+
     @expose("ping")
     def _handle_ping(self) -> dict:
         """Health check"""
@@ -131,6 +142,10 @@ class WorkerClient(BaseClient):
         if socket_path is None:
             socket_path = WORKER_SOCKET_PATH
         super().__init__(socket_path, role="master")
+
+    def on_job_finished(self, job_id: str):
+        """Called when a job_finished notification is received"""
+        pass
 
     def ping(self) -> dict:
         """Health check"""

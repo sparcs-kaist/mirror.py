@@ -21,6 +21,10 @@ PROTOCOL_VERSION = 1
 APP_NAME = "mirror.py"
 HANDSHAKE_TIMEOUT = 5.0
 
+# Global instances (initialized via init())
+master: Any = None
+worker: Any = None
+
 
 @dataclass
 class HandshakeInfo:
@@ -95,6 +99,8 @@ class BaseServer:
         self.server: Optional[socket.socket] = None
         self._handlers: dict[str, Callable] = {}
         self._version = "unknown"
+        self._connections: list[socket.socket] = []
+        self._connections_lock = threading.Lock()
         self._auto_register_handlers()
 
     def _auto_register_handlers(self):
@@ -179,6 +185,8 @@ class BaseServer:
 
     def _handle_connection(self, conn: socket.socket, client_info: HandshakeInfo) -> None:
         """Handle client connection after successful handshake"""
+        with self._connections_lock:
+            self._connections.append(conn)
         try:
             while self.running:
                 try:
@@ -214,7 +222,30 @@ class BaseServer:
 
                 _send_message(conn, response)
         finally:
+            with self._connections_lock:
+                if conn in self._connections:
+                    self._connections.remove(conn)
             conn.close()
+
+    def broadcast(self, data: dict) -> None:
+        """Send a message to all connected clients (non-RPC notification)"""
+        with self._connections_lock:
+            # Create a copy to avoid holding lock during I/O
+            connections = list(self._connections)
+        
+        for conn in connections:
+            try:
+                _send_message(conn, data)
+            except Exception:
+                # If sending fails, connection might be dead. 
+                # It will be removed by its own handler thread.
+                pass
+
+    @property
+    def client_count(self) -> int:
+        """Number of connected clients"""
+        with self._connections_lock:
+            return len(self._connections)
 
     def start(self) -> None:
         """Start the server"""
@@ -500,6 +531,8 @@ def init(role: str, **kwargs) -> Any:
         if hasattr(mirror, "__version__"):
             server.set_version(mirror.__version__)
         server.start()
+        # Register worker server as mirror.socket.worker
+        setattr(this_module, "worker", server)
         return server
 
     elif role in ("client", "master_client"):
