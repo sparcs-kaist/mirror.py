@@ -58,9 +58,15 @@ class Package:
     
     @dataclass
     class StatusInfo(Options):
-        lastsynclog: str
-        lastsuccesslog: str
-        errorcount: int
+        lastsynclog: str = ""
+        lastsuccesslog: str = ""
+        errorcount: int = 0
+
+        @classmethod
+        def from_dict(cls, data: dict) -> "Package.StatusInfo":
+            known_fields = {"lastsynclog", "lastsuccesslog", "errorcount"}
+            filtered_data = {k: v for k, v in data.items() if k in known_fields}
+            return cls(**filtered_data)
 
     pkgid: str
     name: str
@@ -71,8 +77,8 @@ class Package:
     link: list[Link]
     settings: PackageSettings
     lastsync: float = 0.0
-    errorcount: int = 0
     disabled: bool = False
+    statusinfo: StatusInfo = field(default_factory=StatusInfo)
     
     @staticmethod
     def from_dict(config: dict) -> "Package":
@@ -93,7 +99,7 @@ class Package:
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
             settings=PackageSettings.from_dict(config["settings"]),
             lastsync=config.get("lastsync", 0.0),
-            errorcount=config.get("errorcount", 0)
+            statusinfo=Package.StatusInfo.from_dict(config.get("statusinfo", {})),
         )
 
     def __str__(self) -> str:
@@ -112,7 +118,7 @@ class Package:
         self.timestamp = time.time() * 1000
 
         if status == "ERROR":
-            self.errorcount += 1
+            self.statusinfo.errorcount += 1
         
         mirror.event.post_event("MASTER.PACKAGE_STATUS_UPDATE.POST")
     
@@ -122,6 +128,7 @@ class Package:
         package_dict["syncrate"] = mirror.toolbox.iso_duration_maker(self.syncrate)
         package_dict["link"] = [link.to_dict() for link in self.link]
         package_dict["settings"] = self.settings.to_dict()
+        package_dict["statusinfo"] = self.statusinfo.to_dict()
         return package_dict
 
     def to_json(self) -> str:
@@ -158,6 +165,11 @@ class Packages(Options):
 
     def __repr__(self) -> str:
         return f"Packages(ids={self._keys})"
+
+    def get(self, key: str) -> Package | None:
+        if key in self._keys:
+            return getattr(self, key)
+        return None
 
     def __getitem__(self, key: str) -> Package:
         if key in self._keys:

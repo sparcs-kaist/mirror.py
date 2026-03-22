@@ -203,63 +203,37 @@ mirror/
 ### 8. Socket (`mirror/socket/`)
 
 -   **`__init__.py`**
-    -   **Role**: Provides the foundational classes for inter-process communication (IPC) using Unix domain sockets, defining a length-prefixed JSON protocol.
-    -   **`BaseHandler` (class)**:
-        -   **Description**: Abstract base class for handling socket connections. It reads length-prefixed JSON packets, dynamically executes commands received, and sends back structured responses (either success or error).
-        -   **Methods**: `handle(connection)`: Processes incoming requests.
-        -   **Response Format**: `{"status": int, "result": any}` on success, or `{"status": int, "error": str, "traceback": str}` on failure.
-        -   **Dependencies**: `json`, `socket`, `traceback`, `mirror.logger`.
-    -   **`MirrorSocket` (class)**:
-        -   **Description**: Manages a Unix domain socket server (`socket_path`). It can operate in 'master' or 'worker' roles, accepting concurrent connections and dispatching them to a handler.
+    -   **Role**: Provides the foundational classes for inter-process communication (IPC) using Unix domain sockets, defining a length-prefixed JSON protocol with support for bi-directional asynchronous notifications.
+    -   **Global Variables**:
+        -   `master`: Global instance of `MasterServer` or `MasterClient`.
+        -   `worker`: Global instance of `WorkerServer` or `WorkerClient`.
+    -   **`BaseServer` (class)**:
+        -   **Description**: Base class for socket servers. It manages client connections and supports broadcasting messages to all connected clients.
         -   **Methods**:
-            -   `__init__(socket_path, handler_class)`: Initializes the socket server.
-            -   `start()`: Begins listening for incoming connections in a separate thread.
-            -   `stop()`: Shuts down the socket server cleanly.
-            -   `_accept_loop()`: (Internal) Continuously accepts new connections and dispatches handlers.
-        -   **Dependencies**: `socket`, `threading`, `pathlib.Path`, `mirror.logger`.
-    -   **`MASTER_SOCKET_PATH`**:
-        -   **Description**: Returns the default Unix domain socket path for the master process.
-        -   **Dependencies**: `mirror.RUN_PATH`.
-    -   **`WORKER_SOCKET_PATH`**:
-        -   **Description**: Returns the default Unix domain socket path for worker processes.
-        -   **Dependencies**: `mirror.RUN_PATH`.
-    -   **`init(role, socket_path)`**:
-        -   **Description**: Factory function to initialize and return a `MirrorSocket` instance based on the specified `role` ('master' or 'worker') and an optional `socket_path`.
-        -   **Dependencies**: `mirror.socket.master`, `mirror.socket.worker`.
-    -   **`stop()`**:
-        -   **Description**: Global function to stop any active `MirrorSocket` instance.
-
--   **`client.py`**
-    -   **Role**: Provides a client interface for communicating with `MirrorSocket` servers via Unix domain sockets.
-    -   **`MirrorClient` (class)**:
-        -   **Description**: Establishes a connection to a `MirrorSocket`, sends commands, and receives responses. It supports dynamic method calls that are translated into JSON RPC requests.
+            -   `broadcast(data)`: Sends a non-RPC message to all connected clients.
+            -   `client_count` (property): Returns the number of currently connected clients.
+        -   **Dependencies**: `json`, `socket`, `threading`, `mirror.logger`.
+    -   **`BaseClient` (class)**:
+        -   **Description**: Base class for socket clients. It features a background listener thread to handle asynchronous notifications from the server while supporting synchronous RPC commands.
         -   **Methods**:
-            -   `__init__(socket_path)`: Connects to the specified socket.
-            -   `_send_request(command, kwargs)`: Sends a JSON RPC request and waits for a response.
-            -   `__getattr__(name)`: Enables dynamic method calls (e.g., `client.start_sync(id=1)`).
-        -   **Dependencies**: `json`, `socket`, `mirror.logger`.
-
--   **`master.py`**
-    -   **Role**: Defines the handler and client for the master process's socket interface.
-    -   **`MasterHandler` (class)**:
-        -   **Description**: Implements the `BaseHandler` for the master process. It processes incoming commands, such as `ping`.
-        -   **Commands**: `ping` (returns a simple "pong" response).
-        -   **Dependencies**: `mirror.socket`, `mirror.logger`.
-    -   **`MasterClient` (class)**:
-        -   **Description**: Provides a client-side interface for other processes (e.g., worker) to send requests to the master process.
-        -   **Dependencies**: `mirror.socket.client`.
+            -   `send_command(command, **kwargs)`: Sends an RPC command and waits for a response using a thread-safe queue.
+            -   `handle_notification(data)`: Hook method called when a notification is received from the server.
+            -   `_listen_loop()`: (Internal) Background thread that receives and dispatches server messages.
+        -   **Dependencies**: `json`, `socket`, `threading`, `queue`, `mirror.logger`.
+    -   **`MASTER_SOCKET_PATH`**: Returns the default path for the master socket.
+    -   **`WORKER_SOCKET_PATH`**: Returns the default path for the worker socket.
+    -   **`init(role, **kwargs)`**: Initializes and starts a server or connects a client, registering it to the module-level `master` or `worker` variables.
 
 -   **`worker.py`**
-    -   **Role**: Defines the handler and client for the worker process's socket interface, enabling it to receive and execute tasks from the master.
-    -   **`WorkerHandler` (class)**:
-        -   **Description**: Implements the `BaseHandler` for the worker process. It processes commands like `start_sync`.
-        -   **Commands**: `start_sync(id, command)`: Initiates a synchronization task for a given package.
-        -   **Dependencies**: `mirror.socket`, `mirror.logger`, `mirror.sync`.
+    -   **Role**: Defines the specialized server and client for worker process communication.
+    -   **`WorkerServer` (class)**:
+        -   **Description**: Extends `BaseServer` to handle worker-specific tasks.
+        -   **Methods**:
+            -   `send_finished_notification(job_id, success, returncode)`: Broadcasts a `job_finished` event to all connected clients. Raises `ConnectionError` if no clients are connected.
     -   **`WorkerClient` (class)**:
-        -   **Description**: Provides a client-side interface for the master process to send requests to a worker process.
-        -   **Dependencies**: `mirror.socket.client`.
-    -   **`is_worker_running(job_id)`**:
-        -   **Description**: Checks if a worker process is reachable and responsive via its socket.
+        -   **Description**: Extends `BaseClient` to manage worker tasks from the master process.
+        -   **Methods**:
+            -   `handle_notification(data)`: Overridden to process `job_finished` events, triggering `mirror.sync.on_sync_done`.
 
 ### 9. Structure (`mirror/structure/`)
 

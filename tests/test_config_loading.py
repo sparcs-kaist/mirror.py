@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import mirror
 import mirror.config
 import mirror.structure
+import mirror.logger
 
 # Setup temporary directory for tests
 @pytest.fixture(scope="module")
@@ -123,6 +124,9 @@ def test_mirror_config_loading(temp_config_env):
 
     # --- Call config loading function ---
     mirror.config.load(config_path)
+    
+    # Initialize logger for tests as mirror.config uses it
+    mirror.logger.setup_logger()
 
     # --- Verify mirror.conf ---
     assert mirror.conf.name == dummy_config_content["mirrorname"]

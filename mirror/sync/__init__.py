@@ -1,10 +1,11 @@
 import mirror
 import mirror.structure
+import mirror.logger
 
 import time
 import logging
 
-from typing import Callable
+from typing import Callable, Optional
 import importlib.util
 from threading import Thread
 from pathlib import Path
@@ -69,8 +70,26 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
     thread = Thread(target=sync_module.execute, args=(package, pkg_logger), daemon=True)
     thread.start()
 
-def on_sync_done(pkgid: str, success: bool, returncode: int|None = None):
-    # search pkgid
+def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
+    package = mirror.packages.get(pkgid)
+    if not package:
+        raise ValueError(f"Unknown package: {pkgid}")
+    
+    pkglogger = mirror.logger.get(pkgid)
+
+    if success:
+        pkglogger.info("Sync done successfully")
+        pkglogger.info(f"Returncode: {returncode}")
+        mirror.logger.close_logger(pkglogger)
+        package.set_status("ACTIVE")
+    else:
+        pkglogger.error("Sync failed")
+        pkglogger.error(f"Returncode: {returncode}")
+        mirror.logger.close_logger(pkglogger)
+        package.set_status("ERROR")
+        
+        
+
     pass
 
 

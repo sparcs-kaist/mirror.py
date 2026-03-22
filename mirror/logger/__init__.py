@@ -12,6 +12,7 @@ from .core import (
     create_logger,
     close_logger,
     setup_logger,
+    get,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "create_logger",
     "close_logger",
     "setup_logger",
+    "get",
 ]

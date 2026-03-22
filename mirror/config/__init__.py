@@ -81,6 +81,7 @@ def load(conf_path: Path):
         status_obj = loader_dict.get("status", {})
         status_info = status_obj.get("statusinfo", {})
         loader_dict["status"] = status_obj.get("status", "UNKNOWN")
+        loader_dict["statusinfo"] = status_info
         loader_dict["errorcount"] = status_info.get("errorcount", 0)
         loader_dict["lastsync"] = status_info.get("lastsync", 0.0)
         loader_packages[pkg_id] = loader_dict

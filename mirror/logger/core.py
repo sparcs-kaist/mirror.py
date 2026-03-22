@@ -158,3 +158,10 @@ def setup_logger():
         main_logger.handlers[1].setLevel(logging.DEBUG)
     
     mirror.log = main_logger
+
+def get(pkgid: str):
+    """
+    Get the logger for a specific package.
+    """
+    return logging.getLogger(f"mirror.package.{pkgid}")
+    
