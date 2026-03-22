@@ -77,14 +77,7 @@ def load(conf_path: Path):
     # 4. Prepare for in-memory loading
     loader_packages = {}
     for pkg_id, pkg_data in full_stat_to_save.get("packages", {}).items():
-        loader_dict = pkg_data.copy()
-        status_obj = loader_dict.get("status", {})
-        status_info = status_obj.get("statusinfo", {})
-        loader_dict["status"] = status_obj.get("status", "UNKNOWN")
-        loader_dict["statusinfo"] = status_info
-        loader_dict["errorcount"] = status_info.get("errorcount", 0)
-        loader_dict["lastsync"] = status_info.get("lastsync", 0.0)
-        loader_packages[pkg_id] = loader_dict
+        loader_packages[pkg_id] = pkg_data
 
     # 5. Load into application
     mirror.conf = mirror.structure.Config.load_from_dict(config_dict)

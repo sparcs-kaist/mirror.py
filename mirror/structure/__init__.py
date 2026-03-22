@@ -3,7 +3,7 @@ import mirror.toolbox
 import mirror.event
 
 from dataclasses import dataclass, asdict, field
-from typing import Literal
+from typing import Literal, Optional
 from pathlib import Path
 import json
 import time
@@ -58,13 +58,14 @@ class Package:
     
     @dataclass
     class StatusInfo(Options):
-        lastsynclog: str = ""
-        lastsuccesslog: str = ""
+        lasterrorlog: Optional[str] = None
+        lastsuccesslog: Optional[str] = None
+        runninglog: Optional[str] = None
         errorcount: int = 0
 
         @classmethod
         def from_dict(cls, data: dict) -> "Package.StatusInfo":
-            known_fields = {"lastsynclog", "lastsuccesslog", "errorcount"}
+            known_fields = {"lasterrorlog", "lastsuccesslog", "runninglog", "errorcount"}
             filtered_data = {k: v for k, v in data.items() if k in known_fields}
             return cls(**filtered_data)
 
@@ -89,17 +90,29 @@ class Package:
         if synctype not in mirror.sync.methods:
             raise ValueError(f"Sync type not in {mirror.sync.methods}")
         
+        # Handle status and statusinfo from stat object
+        status_obj = config.get("status", "UNKNOWN")
+        if isinstance(status_obj, dict):
+            status = status_obj.get("status", "UNKNOWN")
+            statusinfo_dict = status_obj.get("statusinfo", {})
+        else:
+            status = status_obj
+            statusinfo_dict = config.get("statusinfo", {})
+        
+        # Pull lastsync from statusinfo if present (matching mirror/config/__init__.py behavior)
+        lastsync = statusinfo_dict.get("lastsync", config.get("lastsync", 0.0))
+        
         return Package(
             pkgid=config["id"],
             name=config["name"],
-            status=config.get("status", "UNKNOWN"),
+            status=status,
             href=config["href"],
             synctype=synctype,
             syncrate=iso_duration_parser(config["syncrate"]),
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
             settings=PackageSettings.from_dict(config["settings"]),
-            lastsync=config.get("lastsync", 0.0),
-            statusinfo=Package.StatusInfo.from_dict(config.get("statusinfo", {})),
+            lastsync=lastsync,
+            statusinfo=Package.StatusInfo.from_dict(statusinfo_dict),
         )
 
     def __str__(self) -> str:
@@ -128,7 +141,16 @@ class Package:
         package_dict["syncrate"] = mirror.toolbox.iso_duration_maker(self.syncrate)
         package_dict["link"] = [link.to_dict() for link in self.link]
         package_dict["settings"] = self.settings.to_dict()
-        package_dict["statusinfo"] = self.statusinfo.to_dict()
+        
+        # stat format: status is an object containing status and statusinfo
+        package_dict["status"] = {
+            "status": self.status,
+            "statusinfo": self.statusinfo.to_dict()
+        }
+        # Remove flat statusinfo from asdict if present
+        if "statusinfo" in package_dict:
+            del package_dict["statusinfo"]
+            
         return package_dict
 
     def to_json(self) -> str:
