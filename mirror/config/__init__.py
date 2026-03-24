@@ -1,4 +1,5 @@
 import mirror
+import mirror.event
 import mirror.structure
 import mirror.config.config
 import mirror.config.stat
@@ -135,3 +136,24 @@ def generate_and_save_web_status():
         mirror.log.info(f"Web status successfully generated and saved to {STATUS_PATH}")
     except Exception as e:
         mirror.log.error(f"Failed to save web status to {STATUS_PATH}: {e}")
+
+def save_stat_data():
+    """Saves the current package states to the persistent stat file."""
+    if not STAT_DATA_PATH:
+        mirror.log.error("Cannot save stat data, path not set.")
+        return
+
+    full_stat = {
+        "mirrorname": mirror.conf.name,
+        "packages": mirror.packages.to_dict()
+    }
+    try:
+        STAT_DATA_PATH.write_text(json.dumps(full_stat, indent=4))
+    except Exception as e:
+        mirror.log.error(f"Failed to save stat data to {STAT_DATA_PATH}: {e}")
+
+@mirror.event.listener("MASTER.PACKAGE_STATUS_UPDATE.POST")
+def _on_package_status_update():
+    """Automatically save status and stats when a package status changes."""
+    generate_and_save_web_status()
+    save_stat_data()
