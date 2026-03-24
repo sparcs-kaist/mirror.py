@@ -1,7 +1,7 @@
 import threading
 import logging
 from concurrent.futures import ThreadPoolExecutor, wait as wait_futures
-from typing import Callable, Any, Optional
+from typing import Callable, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -11,26 +11,31 @@ class EventManager:
     Supports synchronous and asynchronous (threaded) listeners.
     """
     def __init__(self, max_workers: int = 20):
-        # Dictionary mapping event names to lists of listeners
-        self._listeners: dict[str, list[Callable]] = {}
+        # Dictionary mapping event names to lists of tuples (priority, listener)
+        self._listeners: dict[str, list[Tuple[int, Callable]]] = {}
         self._lock = threading.Lock()
         # Thread pool for asynchronous execution
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="EventWorker")
 
-    def on(self, event_name: str, listener: Callable):
+    def on(self, event_name: str, listener: Callable, priority: int = 50):
         """
-        Register a listener for a specific event.
+        Register a listener for a specific event with a given priority.
+        Lower number means higher priority (executes earlier).
         """
         with self._lock:
             if event_name not in self._listeners:
                 self._listeners[event_name] = []
-            if listener not in self._listeners[event_name]:
-                self._listeners[event_name].append(listener)
-                logger.debug(f"Registered listener {listener.__name__} for event '{event_name}'")
+            
+            # Check if listener is already registered to avoid duplicates
+            if not any(cb == listener for _, cb in self._listeners[event_name]):
+                self._listeners[event_name].append((priority, listener))
+                # Sort listeners by priority (ascending)
+                self._listeners[event_name].sort(key=lambda x: x[0])
+                logger.debug(f"Registered listener {listener.__name__} for event '{event_name}' with priority {priority}")
 
-    def once(self, event_name: str, listener: Callable):
+    def once(self, event_name: str, listener: Callable, priority: int = 50):
         """
-        Register a listener that runs only once.
+        Register a listener that runs only once with a given priority.
         """
         def wrapper(*args, **kwargs):
             try:
@@ -42,7 +47,7 @@ class EventManager:
         
         # Preserve original name for debugging purposes
         wrapper.__name__ = getattr(listener, "__name__", "unknown_listener")
-        self.on(event_name, wrapper)
+        self.on(event_name, wrapper, priority)
 
     def off(self, event_name: str, listener: Callable):
         """
@@ -50,8 +55,10 @@ class EventManager:
         """
         with self._lock:
             if event_name in self._listeners:
-                if listener in self._listeners[event_name]:
-                    self._listeners[event_name].remove(listener)
+                # Rebuild list without the listener
+                self._listeners[event_name] = [
+                    (p, cb) for p, cb in self._listeners[event_name] if cb != listener
+                ]
 
     def post_event(self, event_name: str, wait: bool, *args, **kwargs):
         """
@@ -71,7 +78,8 @@ class EventManager:
         logger.debug(f"Event '{event_name}' fired. Triggering {len(listeners)} listeners.")
 
         futures = []
-        for listener in listeners:
+        # listeners list is already sorted by priority during 'on' registration
+        for _, listener in listeners:
             future = self._execute_listener(listener, event_name, *args, **kwargs)
             if wait:
                 futures.append(future)
@@ -97,13 +105,18 @@ class EventManager:
 _manager = EventManager()
 
 # Public API wrappers
-def on(event_name: str, listener: Callable):
+def on(event_name: str, listener: Optional[Callable] = None, priority: int = 50):
     """Register a listener for an event."""
-    _manager.on(event_name, listener)
+    if listener is None:
+        def decorator(func):
+            _manager.on(event_name, func, priority)
+            return func
+        return decorator
+    _manager.on(event_name, listener, priority)
 
-def once(event_name: str, listener: Callable):
+def once(event_name: str, listener: Callable, priority: int = 50):
     """Register a listener that runs only once."""
-    _manager.once(event_name, listener)
+    _manager.once(event_name, listener, priority)
 
 def off(event_name: str, listener: Callable):
     """Unregister a listener."""
@@ -118,10 +131,10 @@ def post_event(event_name: str, *args, **kwargs):
     _manager.post_event(event_name, wait, *args, **kwargs)
 
 # Decorator for easy registration
-def listener(event_name: str):
+def listener(event_name: str, priority: int = 50):
     """Decorator to register a function as an event listener."""
     def decorator(func):
-        on(event_name, func)
+        on(event_name, func, priority)
         return func
     return decorator
 
