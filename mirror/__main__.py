@@ -15,7 +15,7 @@ def main():
     pass
 
 @main.command("setup")
-def setup(config):
+def setup():
     """
     Setup the mirror environment.
     """
