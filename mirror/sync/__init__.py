@@ -80,15 +80,13 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
     if success:
         pkglogger.info("Sync done successfully")
         pkglogger.info(f"Returncode: {returncode}")
-        mirror.logger.close_logger(pkglogger)
-        package.set_status("ACTIVE")
     else:
         pkglogger.error("Sync failed")
         pkglogger.error(f"Returncode: {returncode}")
-        mirror.logger.close_logger(pkglogger)
-        package.set_status("ERROR")
         
-        
+    logpath = mirror.logger.get_log_path(pkglogger)
+    mirror.logger.close_logger(pkglogger)
+    package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
 
     pass
 

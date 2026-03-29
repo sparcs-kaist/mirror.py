@@ -118,7 +118,7 @@ class Package:
     def __str__(self) -> str:
         return self.pkgid
 
-    def set_status(self, status: Literal["ACTIVE", "SYNC", "ERROR", "UNKNOWN"]) -> None:
+    def set_status(self, status: Literal["ACTIVE", "SYNC", "ERROR", "UNKNOWN"], logfile: Optional[Path] = None) -> None:
         if status == self.status: return
         status_list = ('ACTIVE', 'SYNC', 'ERROR', 'UNKNOWN')
         if status not in status_list:
@@ -132,6 +132,13 @@ class Package:
 
         if status == "ERROR":
             self.statusinfo.errorcount += 1
+        
+        if logfile:
+            if status == "ACTIVE":
+                self.statusinfo.lastsuccesslog = str(logfile)
+                self.statusinfo.lasterrorlog = None
+            elif status == "ERROR":
+                self.statusinfo.lasterrorlog = str(logfile)
         
         mirror.event.post_event("MASTER.PACKAGE_STATUS_UPDATE.POST")
     
