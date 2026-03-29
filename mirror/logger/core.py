@@ -159,6 +159,15 @@ def setup_logger():
     
     mirror.log = main_logger
 
+def get_log_path(pkg_logger: logging.Logger) -> Path | None:
+    """
+    Get the log file path from a package logger.
+    """
+    for handler in pkg_logger.handlers:
+        if isinstance(handler, logging.FileHandler):
+            return Path(handler.baseFilename)
+    return None
+
 def get(pkgid: str):
     """
     Get the logger for a specific package.
