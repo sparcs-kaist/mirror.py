@@ -22,7 +22,6 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         pkg_logger (logging.Logger): Logger object for this sync session
     """
     # Set status to SYNC as soon as we enter execute
-    package.set_status("SYNC")
     pkg_logger.info(f"Starting {module}.{name} for {package.name}")
 
     try:
@@ -31,8 +30,8 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         dst = Path(package.settings.dst)
         ffts_val = package.settings.options.get("ffts", False)
 
-        user = str(package.settings.get("user", ""))
-        password = str(package.settings.get("password", ""))
+        user = str(package.settings.options.get("user", ""))
+        password = str(package.settings.options.get("password", ""))
         
         # 2. FFTS Check
         if ffts_val:
@@ -57,7 +56,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
                 logpath = Path(handler.baseFilename)
                 break
 
-        mirror.socket.worker.execute_command(package.name, command, env, logpath)
+        mirror.socket.worker.execute_command(job_id=package.pkgid, commandline=command, env=env, log_path=logpath)
 
     except AttributeError as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: value not found")
@@ -66,9 +65,6 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
     except Exception as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: {e}")
         package.set_status("ERROR")
-    finally:
-        #mirror.logger.close_logger(pkg_logger)
-        pass
 
 def rsync(logger: logging.Logger, pkgid: str, src: str, dst: Path, user: str, password: str):
     """
