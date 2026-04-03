@@ -3,7 +3,6 @@ import click
 import mirror
 import mirror.command
 
-
 from mirror import __version__
 
 @click.version_option(prog_name="mirror", version=__version__)
