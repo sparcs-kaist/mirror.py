@@ -70,16 +70,19 @@ def daemon(config):
                         continue
                     else:
                         mirror.log.warning(f"Package {package.pkgid} marked as syncing but no worker found.")
+                        pkg_logger = mirror.logger.get(package.pkgid)
+                        if pkg_logger.handlers:
+                            mirror.logger.close_logger(pkg_logger)
                         package.set_status("ERROR")
                 elif mirror.socket.worker.is_worker_running(package.pkgid):
-                    mirror.log.error(f"Package is synging while status is {package.status}. Changed the status to syncing.")
+                    mirror.log.error(f"Package is syncing while status is {package.status}. Changed the status to syncing.")
                     package.set_status("SYNC")
                     continue
 
                 if time.time() - package.lastsync > package.syncrate:
                     mirror.log.info(f"Package {package.pkgid} requires sync (Last sync: {package.lastsync}, Rate: {package.syncrate})")
                     mirror.sync.start(package)
-                elif package.status == "ERROR" and time.time() - mirror.conf.errorcontinuetime > package.lastsync:
+                elif package.status == "ERROR" and time.time() - package.lastsync > mirror.conf.errorcontinuetime:
                     mirror.log.info(f"Package {package.pkgid} is in {package.status} state. Retrying sync.")
                     mirror.sync.start(package)
             
