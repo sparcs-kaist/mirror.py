@@ -196,7 +196,7 @@ def prune_finished():
     Jobs are only removed if the notification is successfully sent 
     (which implies at least one client is connected).
     """
-    import mirror.socket
+    import mirror.socket.worker
     
     to_remove = []
     for wid, w in _jobs.items():
