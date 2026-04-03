@@ -71,10 +71,12 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
     thread.start()
 
 def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
+    import mirror.sync
+
     package = mirror.packages.get(pkgid)
     if not package:
         raise ValueError(f"Unknown package: {pkgid}")
-    
+
     pkglogger = mirror.logger.get(pkgid)
 
     if success:
@@ -83,12 +85,18 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
     else:
         pkglogger.error("Sync failed")
         pkglogger.error(f"Returncode: {returncode}")
-        
+
+    # Call plugin-specific on_sync_done if defined
+    sync_module = getattr(mirror.sync, package.synctype, None)
+    if sync_module and hasattr(sync_module, "on_sync_done"):
+        try:
+            sync_module.on_sync_done(package, pkglogger, success, returncode)
+        except Exception as e:
+            pkglogger.error(f"Plugin on_sync_done failed: {e}")
+
     logpath = mirror.logger.get_log_path(pkglogger)
     mirror.logger.close_logger(pkglogger)
     package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
-
-    pass
 
 
 def load_default():
