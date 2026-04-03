@@ -79,6 +79,7 @@ class Package:
     settings: PackageSettings
     lastsync: float = 0.0
     disabled: bool = False
+    timestamp: float = 0.0
     statusinfo: StatusInfo = field(default_factory=StatusInfo)
     
     @staticmethod
@@ -174,16 +175,6 @@ class Package:
         if not path.exists():
             raise FileNotFoundError(f"{path} does not exist")
 
-class Sync:
-    pkgid: str
-    synctype: str
-    logPath: Path | str
-    options: Options
-    settings: PackageSettings
-
-    def __init__(self, pkg: "Package"):
-        pkgid = pkg.pkgid
-        synctype = pkg.synctype
 
 @dataclass
 class Packages(Options):
@@ -299,27 +290,3 @@ class Config:
     def save(self) -> None:
         mirror.confPath.write_text(self.to_json())
 
-class Packet:
-    mode: int
-    sender: str
-    to: str
-    command: str
-
-    def load(self, data: dict) -> None:
-        self.mode = data["mode"]
-        self.sender = data["sender"]
-        self.to = data["to"]
-        self.command = data["command"]
-
-        return
-
-    def to_dict(self) -> dict:
-        return {
-            "mode": self.mode,
-            "sender": self.sender,
-            "to": self.to,
-            "command": self.command,
-        }
-    
-    def to_json(self, **kwargs) -> str:
-        return json.dumps(self.to_dict(), **kwargs)
