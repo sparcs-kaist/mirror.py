@@ -1,5 +1,7 @@
 import mirror
 import mirror.structure
+import mirror.socket.worker
+import mirror.logger
 
 from tempfile import TemporaryDirectory
 from base64 import b64decode
@@ -45,7 +47,6 @@ def setup_ftpsync(path: Path, package: mirror.structure.Package):
 
 def execute(package: mirror.structure.Package, logger: logging.Logger):
     """Sync package"""
-    from mirror.socket.worker import WorkerClient
     import time
     import os
 
@@ -57,8 +58,9 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
     # Note: Using a fixed-prefix path in /tmp so worker can access it
     tmp_base = Path("/tmp/mirror_ftpsync")
     tmp_base.mkdir(exist_ok=True)
-    tmp_dir = Path(TemporaryDirectory(dir=tmp_base).name)
-    
+    _tmp_handle = TemporaryDirectory(dir=tmp_base)
+    tmp_dir = Path(_tmp_handle.name)
+
     try:
         # 1. Setup ftpsync environment (scripts and config)
         logger.info(f"Setting up ftpsync environment in {tmp_dir}")
@@ -69,33 +71,29 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
         command = [str(tmp_dir / "bin" / "ftpsync")]
 
         # 3. Delegate to Worker
-        socket_path = Path("/run/mirror/worker.sock")
-        
         log_path = None
         for handler in logger.handlers:
             if isinstance(handler, logging.FileHandler):
                 log_path = handler.baseFilename
                 break
 
-        with WorkerClient(socket_path) as client:
-            logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
-            
-            response = client.execute_command(
-                job_id=package.pkgid,
-                sync_method="ftpsync",
-                commandline=command,
-                env={}, 
-                uid=os.getuid(),
-                gid=os.getgid(),
-                log_path=log_path
-            )
+        logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
+        response = mirror.socket.worker.execute_command(
+            job_id=package.pkgid,
+            sync_method="ftpsync",
+            commandline=command,
+            env={},
+            uid=os.getuid(),
+            gid=os.getgid(),
+            log_path=log_path
+        )
 
-            if response.get("status") == "started":
-                logger.info(f"Worker started ftpsync (PID: {response.get('job_pid')})")
-                package.lastsync = time.time()
-                package.set_status("ACTIVE")
-            else:
-                raise RuntimeError(f"Worker failed to start ftpsync: {response.get('message')}")
+        if response.get("status") == "started":
+            logger.info(f"Worker started ftpsync (PID: {response.get('job_pid')})")
+            package.lastsync = time.time()
+            package.set_status("ACTIVE")
+        else:
+            raise RuntimeError(f"Worker failed to start ftpsync: {response.get('message')}")
 
     except Exception as e:
         logger.error(f"ftpsync for {package.pkgid} failed: {e}")
@@ -104,9 +102,6 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
         # However, since start_sync is asynchronous, we might need a better cleanup strategy.
         # For now, we leave it for the system /tmp cleanup or manual intervention if it fails.
     finally:
-        # Note: We don't close_logger here because it might be closed by the caller 
-        # but mirror.logger.close_logger(logger) is used in rsync.py
-        import mirror.logger
         mirror.logger.close_logger(logger)
 
 def _check_git() -> bool:

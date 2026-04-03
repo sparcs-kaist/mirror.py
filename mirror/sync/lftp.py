@@ -1,5 +1,6 @@
 import mirror
 import mirror.structure
+import mirror.socket.worker
 import mirror.logger
 import os
 import time
@@ -18,16 +19,14 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         package (mirror.structure.Package): Package object
         pkg_logger (logging.Logger): Logger object for this sync session
     """
-    from mirror.socket.worker import WorkerClient
-
     package.set_status("SYNC")
     pkg_logger.info(f"Starting {module}.{name} for {package.name}")
 
     try:
         # 1. Prepare commandline
-        src = package.settings.get("src", "")
-        dst = package.settings.get("dst", "")
-        
+        src = package.settings.src
+        dst = package.settings.dst
+
         # Using raw string to avoid invalid escape sequence warnings
         lftp_script = (
             f"set ftp:anon-pass mirror@{src}; "
@@ -44,33 +43,29 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         ]
 
         # 2. Delegate to Worker
-        socket_path = Path("/run/mirror/worker.sock")
-        
         log_path = None
         for handler in pkg_logger.handlers:
             if isinstance(handler, logging.FileHandler):
                 log_path = handler.baseFilename
                 break
 
-        with WorkerClient(socket_path) as client:
-            pkg_logger.info(f"Delegating lftp sync to worker: {' '.join(command)}")
-            
-            response = client.execute_command(
-                job_id=package.pkgid,
-                sync_method=name,
-                commandline=command,
-                env={},
-                uid=os.getuid(),
-                gid=os.getgid(),
-                log_path=log_path
-            )
+        pkg_logger.info(f"Delegating lftp sync to worker: {' '.join(command)}")
+        response = mirror.socket.worker.execute_command(
+            job_id=package.pkgid,
+            sync_method=name,
+            commandline=command,
+            env={},
+            uid=os.getuid(),
+            gid=os.getgid(),
+            log_path=log_path
+        )
 
-            if response.get("status") == "started":
-                pkg_logger.info(f"Worker started lftp sync (PID: {response.get('job_pid')})")
-                package.lastsync = time.time()
-                package.set_status("ACTIVE")
-            else:
-                raise RuntimeError(f"Worker failed to start lftp sync: {response.get('message')}")
+        if response.get("status") == "started":
+            pkg_logger.info(f"Worker started lftp sync (PID: {response.get('job_pid')})")
+            package.lastsync = time.time()
+            package.set_status("ACTIVE")
+        else:
+            raise RuntimeError(f"Worker failed to start lftp sync: {response.get('message')}")
 
     except Exception as e:
         pkg_logger.error(f"lftp sync for {package.pkgid} failed: {e}")
