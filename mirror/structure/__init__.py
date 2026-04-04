@@ -126,6 +126,8 @@ class Package:
             mirror.log.error(f"Invalid status: {status}")
             if mirror.debug: raise ValueError(f"Invalid status: {status}")
             return
+
+        if self.status == status: return
         
         mirror.event.post_event("MASTER.PACKAGE_STATUS_UPDATE.PRE")
         self.status = status
@@ -233,11 +235,12 @@ class Config:
 
     logfolder: Path
     webroot: Path
+    statusfile: Path
     ftpsync: FTPSync
 
     uid: int
     gid: int
-    
+
     maintainer: dict
 
     localtimezone: str
@@ -253,6 +256,7 @@ class Config:
             errorcontinuetime=config["settings"].get("errorcontinuetime", 60),
             logfolder=Path(config["settings"]["logfolder"]),
             webroot=Path(config["settings"]["webroot"]),
+            statusfile=Path(config["settings"]["statusfile"]),
             uid=config["settings"].get("uid", 0),
             gid=config["settings"].get("gid", 0),
             ftpsync=Config.FTPSync(**config["settings"]["ftpsync"]),
@@ -272,12 +276,16 @@ class Config:
     def to_dict(self) -> dict:
         return {
             "mirrorname": self.name,
+            "hostname": self.hostname,
             "settings": {
-                "logfolder": self.logfolder,
-                "webroot": self.webroot,
+                "logfolder": str(self.logfolder),
+                "webroot": str(self.webroot),
+                "statusfile": str(self.statusfile),
+                "localtimezone": self.localtimezone,
+                "errorcontinuetime": self.errorcontinuetime,
+                "maintainer": self.maintainer,
                 "gid": self.gid,
                 "uid": self.uid,
-                "localtimezone": self.localtimezone,
                 "ftpsync": self.ftpsync.to_dict(),
                 "logger": self.logger,
                 "plugins": self.plugins,

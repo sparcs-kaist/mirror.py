@@ -1,16 +1,15 @@
 DEFAULT_CONFIG = {
     "mirrorname": "My Mirror",
+    "hostname": "ftp.kaist.ac.kr",
     "settings": {
         "logfolder": "/mirror/logs",
         "webroot": "/var/www/mirror",
         "statusfile": "/var/www/mirror/status.json",
-        "gid": 1000,
-        "uid": 1000,
         "localtimezone": "Asia/Seoul",
         "errorcontinuetime": 60,
         "maintainer": {
             "name": "Roul",
-            "email": "op@roul.me"
+            "email": "op@ftp.kaist.ac.kr"
         },
         "logger": {
             "level": "INFO",
@@ -38,8 +37,6 @@ DEFAULT_CONFIG = {
             "country": "KR", # only ftpsync
             "location": "Seoul", # only ftpsync
             "throughput": "1G", # only ftpsync
-            "include": "", # only ftpsync
-            "exclude": "", # only ftpsync
         },
         "plugins": [
             "/mirror/plugin/someof.py",
