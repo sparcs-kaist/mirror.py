@@ -16,16 +16,18 @@ def _load_module(name, path):
 
 _socket_dir = Path(__file__).parent.parent / "mirror" / "socket"
 
-# Load modules in order
+# Load modules in dependency order
+_protocol_module = _load_module("mirror.socket.protocol", _socket_dir / "protocol.py")
+_base_module = _load_module("mirror.socket.base", _socket_dir / "base.py")
 _init_module = _load_module("mirror.socket", _socket_dir / "__init__.py")
 _master_module = _load_module("mirror.socket.master", _socket_dir / "master.py")
 _worker_module = _load_module("mirror.socket.worker", _socket_dir / "worker.py")
 
-BaseServer = _init_module.BaseServer
-BaseClient = _init_module.BaseClient
-HandshakeInfo = _init_module.HandshakeInfo
-PROTOCOL_VERSION = _init_module.PROTOCOL_VERSION
-APP_NAME = _init_module.APP_NAME
+BaseServer = _base_module.BaseServer
+BaseClient = _base_module.BaseClient
+HandshakeInfo = _protocol_module.HandshakeInfo
+PROTOCOL_VERSION = _protocol_module.PROTOCOL_VERSION
+APP_NAME = _protocol_module.APP_NAME
 
 MasterServer = _master_module.MasterServer
 MasterClient = _master_module.MasterClient
@@ -138,8 +140,20 @@ class TestMasterServer:
 
     def test_master_list_packages(self):
         """Test list_packages command"""
+        from unittest.mock import MagicMock
+        import mirror
+
         with tempfile.TemporaryDirectory() as tmpdir:
             socket_path = Path(tmpdir) / "master.sock"
+
+            pkg = MagicMock()
+            pkg.to_dict.return_value = {"id": "test-pkg", "name": "Test Package"}
+
+            mock_packages = MagicMock()
+            mock_packages.values.return_value = [pkg]
+
+            original = getattr(mirror, 'packages', None)
+            mirror.packages = mock_packages
 
             server = MasterServer(socket_path)
             server.start()
@@ -150,13 +164,40 @@ class TestMasterServer:
                     result = client.list_packages()
                     assert "packages" in result
                     assert isinstance(result["packages"], list)
+                    assert len(result["packages"]) == 1
+                    assert result["packages"][0]["id"] == "test-pkg"
             finally:
                 server.stop()
+                mirror.packages = original
 
     def test_master_package_ops(self):
         """Test package operations (start_sync, stop_sync, get_package)"""
+        from unittest.mock import MagicMock
+        import mirror
+
         with tempfile.TemporaryDirectory() as tmpdir:
             socket_path = Path(tmpdir) / "master.sock"
+
+            pkg = MagicMock()
+            pkg.is_disabled.return_value = False
+            pkg.is_syncing.return_value = False
+            pkg.to_dict.return_value = {"id": "pkg1", "name": "Package 1"}
+
+            mock_packages = MagicMock()
+            mock_packages.get.return_value = pkg
+
+            mock_sync = MagicMock()
+            mock_worker = MagicMock()
+
+            original_packages = getattr(mirror, 'packages', None)
+            original_sync = sys.modules.get('mirror.sync')
+            original_worker = sys.modules.get('mirror.socket.worker')
+
+            mirror.packages = mock_packages
+            sys.modules['mirror.sync'] = mock_sync
+            mirror.sync = mock_sync
+            sys.modules['mirror.socket.worker'] = mock_worker
+            mirror.socket.worker = mock_worker
 
             server = MasterServer(socket_path)
             server.start()
@@ -168,17 +209,31 @@ class TestMasterServer:
                     result = client.start_sync("pkg1")
                     assert result["package_id"] == "pkg1"
                     assert result["status"] == "started"
+                    mock_sync.start.assert_called_once()
+
+                    # set syncing state for stop test
+                    pkg.is_syncing.return_value = True
 
                     # stop_sync
                     result = client.stop_sync("pkg1")
                     assert result["package_id"] == "pkg1"
                     assert result["status"] == "stopped"
+                    mock_worker.stop_command.assert_called_once_with(job_id="pkg1")
 
                     # get_package
                     result = client.get_package("pkg1")
-                    assert result["package_id"] == "pkg1"
+                    assert result["id"] == "pkg1"
             finally:
                 server.stop()
+                mirror.packages = original_packages
+                if original_sync is not None:
+                    sys.modules['mirror.sync'] = original_sync
+                else:
+                    sys.modules.pop('mirror.sync', None)
+                if original_worker is not None:
+                    sys.modules['mirror.socket.worker'] = original_worker
+                else:
+                    sys.modules.pop('mirror.socket.worker', None)
 
 
 class TestWorkerServer:
@@ -204,11 +259,11 @@ class TestWorkerServer:
             """Test start_sync command"""
             with tempfile.TemporaryDirectory() as tmpdir:
                 socket_path = Path(tmpdir) / "worker.sock"
-        
+
                 server = WorkerServer(socket_path)
                 server.start()
                 time.sleep(0.1)
-        
+
                 try:
                     with WorkerClient(socket_path) as client:
                         result = client.start_sync(
@@ -223,6 +278,7 @@ class TestWorkerServer:
                         assert result["status"] == "started"
                 finally:
                     server.stop()
+
     def test_worker_status(self):
         """Test status command"""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -260,7 +316,7 @@ class TestWorkerServer:
                         uid=os.getuid(),
                         gid=os.getgid()
                     )
-                    
+
                     result = client.stop_sync()
                     assert result["job_id"] == "test-job-stop"
                     assert result["status"] == "stopped"

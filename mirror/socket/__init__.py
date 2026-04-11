@@ -1,55 +1,33 @@
 """
 Mirror.py Socket Communication Module
 
-Provides base server and client classes for IPC communication
+Provides Unix socket IPC between master daemon and worker processes
 with automatic handshake protocol for version and role exchange.
 """
 
 from typing import Any
 
-# Re-export from worker_base for backwards compatibility
-from .worker_base import (
-    BaseServer,
-    BaseClient,
-    HandshakeInfo,
-    PROTOCOL_VERSION,
-    APP_NAME,
-    HANDSHAKE_TIMEOUT,
-    expose,
-    _send_message,
-    _recv_message,
-)
+from .protocol import HandshakeInfo, PROTOCOL_VERSION, APP_NAME, HANDSHAKE_TIMEOUT, expose
+from .base import BaseServer, BaseClient
 
 
-def stop() -> None:
-    """
-    Stops all running servers and disconnects any clients.
-    This function is intended to be called for a clean shutdown.
-    """
-    from . import master, worker
-    master.stop_instance()
-    worker.stop_instance()
-
-
-def init(role: str, **kwargs) -> Any:
-    """
-    Initialize and start a socket server or connect a client.
+def init(role: str, **kwargs: Any) -> Any:
+    """Initialize a socket server or client by role
 
     Args:
-        role: "master", "worker" for servers.
-              "client", "master_client" for MasterClient.
-              "worker_client" for WorkerClient.
-        **kwargs: Additional arguments passed to the constructor.
+        role(str): "master" or "worker" for servers,
+                   "client"/"master_client" for MasterClient,
+                   "worker_client" for WorkerClient
+        **kwargs: Arguments passed to the constructor
 
-    Returns:
-        The initialized server or connected client instance.
+    Return:
+        instance(Any): Initialized server or connected client
     """
     from . import master, worker
 
     if role == "master":
         server = master.init_instance("server", **kwargs)
 
-        # Try to connect to worker if alive
         try:
             worker.init_instance("client")
         except Exception:
@@ -70,12 +48,21 @@ def init(role: str, **kwargs) -> Any:
         raise ValueError(f"Invalid role: {role}")
 
 
+def stop() -> None:
+    """Stop all running servers and disconnect clients"""
+    from . import master, worker
+
+    master.stop_instance()
+    worker.stop_instance()
+
+
 __all__ = [
     "BaseServer",
     "BaseClient",
     "HandshakeInfo",
     "PROTOCOL_VERSION",
     "APP_NAME",
+    "HANDSHAKE_TIMEOUT",
     "expose",
     "init",
     "stop",
