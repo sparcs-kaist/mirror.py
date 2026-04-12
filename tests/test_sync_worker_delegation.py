@@ -95,8 +95,9 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         ftpsync_module.execute(self.ftp_pkg, mock_logger)
 
         # 3. Verify
-        # Check if status was set to SYNC
-        self.ftp_pkg.set_status.assert_any_call("SYNC")
+        # execute() should not call set_status — sync.start() handles SYNC,
+        # on_sync_done() handles ACTIVE/ERROR
+        self.ftp_pkg.set_status.assert_not_called()
 
         # Check if setup_ftpsync was called to prepare the environment
         mock_setup_ftpsync.assert_called_once()
