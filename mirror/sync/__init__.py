@@ -96,6 +96,7 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
 
     logpath = mirror.logger.get_log_path(pkglogger)
     mirror.logger.close_logger(pkglogger)
+    package.lastsync = time.time()
     package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
 
 
