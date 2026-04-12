@@ -47,30 +47,21 @@ def setup_ftpsync(path: Path, package: mirror.structure.Package):
 
 def execute(package: mirror.structure.Package, logger: logging.Logger):
     """Sync package"""
-    import time
     import os
 
-    # Set status to SYNC as soon as we enter execute
-    package.set_status("SYNC")
     logger.info(f"Starting ftpsync for {package.name}")
 
-    # Temporary directory for ftpsync scripts and config
-    # Note: Using a fixed-prefix path in /tmp so worker can access it
     tmp_base = Path("/tmp/mirror_ftpsync")
     tmp_base.mkdir(exist_ok=True)
     _tmp_handle = TemporaryDirectory(dir=tmp_base)
     tmp_dir = Path(_tmp_handle.name)
 
     try:
-        # 1. Setup ftpsync environment (scripts and config)
         logger.info(f"Setting up ftpsync environment in {tmp_dir}")
         setup_ftpsync(tmp_dir, package)
 
-        # 2. Prepare commandline
-        # The main script is located in the bin directory we just set up
         command = [str(tmp_dir / "bin" / "ftpsync")]
 
-        # 3. Delegate to Worker
         log_path = None
         for handler in logger.handlers:
             if isinstance(handler, logging.FileHandler):
@@ -78,31 +69,23 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
                 break
 
         logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
-        response = mirror.socket.worker.execute_command(
+
+        package._ftpsync_tmp = _tmp_handle
+
+        mirror.socket.worker.execute_command(
             job_id=package.pkgid,
             sync_method="ftpsync",
             commandline=command,
             env={},
             uid=os.getuid(),
             gid=os.getgid(),
-            log_path=log_path
+            log_path=log_path,
         )
-
-        if response.get("status") == "started":
-            logger.info(f"Worker started ftpsync (PID: {response.get('job_pid')})")
-            package.lastsync = time.time()
-            package.set_status("ACTIVE")
-        else:
-            raise RuntimeError(f"Worker failed to start ftpsync: {response.get('message')}")
 
     except Exception as e:
         logger.error(f"ftpsync for {package.pkgid} failed: {e}")
-        package.set_status("ERROR")
-        # Cleanup temp dir on failure (on success, it might be needed by the worker process)
-        # However, since start_sync is asynchronous, we might need a better cleanup strategy.
-        # For now, we leave it for the system /tmp cleanup or manual intervention if it fails.
-    finally:
         mirror.logger.close_logger(logger)
+        package.set_status("ERROR")
 
 def _check_git() -> bool:
     """Check if git command is available"""
