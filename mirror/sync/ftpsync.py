@@ -120,29 +120,6 @@ def _extract_archvsync(path: Path) -> bool:
     except Exception:
         return False
 
-def ftpsync(package: mirror.structure.Package) -> None:
-    """Sync package"""
-
-    package.set_status("SYNC")
-
-    os.setgid(mirror.conf.gid)
-    os.setuid(mirror.conf.uid)
-
-    logger = logging.getLogger(f"mirror.package.{package.name}")
-    tmp = Path(TemporaryDirectory().name)
-    tmp.mkdir()
-
-    setup_ftpsync(tmp, package)
-
-    command = [
-        f"{tmp}/bin/ftpsync",
-    ]
-    result = subprocess.run(command, shell=True, check=True)
-    if result.returncode == 0:
-        package.set_status("ACTIVE")
-    else:
-        package.set_status("ERROR")
-
 def _config(package: mirror.structure.Package) -> str:
     """Create config file"""
     opts = package.settings.options
