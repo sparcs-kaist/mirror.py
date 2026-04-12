@@ -87,6 +87,26 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
         mirror.logger.close_logger(logger)
         package.set_status("ERROR")
 
+
+def on_sync_done(package: mirror.structure.Package, logger: logging.Logger, success: bool, returncode):
+    """Clean up ftpsync temporary directory after sync completes
+
+    Args:
+        package(mirror.structure.Package): Package object
+        logger(logging.Logger): Logger for this sync session
+        success(bool): Whether the sync succeeded
+        returncode: Process return code
+    """
+    tmp_handle = getattr(package, "_ftpsync_tmp", None)
+    if tmp_handle is not None:
+        try:
+            tmp_handle.cleanup()
+        except Exception as e:
+            logger.warning(f"Failed to clean up ftpsync temp dir: {e}")
+        finally:
+            package._ftpsync_tmp = None
+
+
 def _check_git() -> bool:
     """Check if git command is available"""
     return shutil.which("git") is not None
