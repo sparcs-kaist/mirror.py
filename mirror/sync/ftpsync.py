@@ -148,7 +148,13 @@ def _clone_archvsync(path: Path) -> bool:
         return False
 
 def _extract_archvsync(path: Path) -> bool:
-    """Extract the bundled archvsync tar.gz into path.
+    """Materialize the bundled archvsync ftpsync script into path.
+
+    The bundled artifact is a single self-contained bash script (the archvsync
+    `ftpsync` command), not a tar archive. The script is written into
+    `path/archvsync/bin/ftpsync` so the layout matches what `git clone
+    archvsync` would produce, allowing `setup_ftpsync` to consume either source
+    interchangeably.
 
     Args:
         path(Path): Directory to extract into.
@@ -163,12 +169,14 @@ def _extract_archvsync(path: Path) -> bool:
         if sha256(script).hexdigest() != ARCHVSYNC_HASH:
             raise ValueError("Invalid hash")
 
-        tar_buffer = io.BytesIO(script)
-        with tarfile.open(fileobj=tar_buffer, mode="r:gz") as tar:
-            tar.extractall(path=path, filter="data")
+        bin_dir = path / "archvsync" / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        ftpsync_path = bin_dir / "ftpsync"
+        ftpsync_path.write_bytes(script)
+        ftpsync_path.chmod(0o755)
 
         return True
-    except (ValueError, tarfile.TarError, OSError) as exc:
+    except (ValueError, OSError, ImportError) as exc:
         logger = logging.getLogger("mirror")
         logger.warning("archvsync extraction failed: %s", exc)
         return False
