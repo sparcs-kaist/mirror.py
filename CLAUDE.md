@@ -66,12 +66,26 @@ Worker server:
 
 ## Path Layout
 
-| Path | Purpose |
-|------|---------|
-| `/etc/mirror/config.json` | Main configuration |
-| `/var/lib/mirror/stat.json` | Persistent package state |
-| `/var/run/mirror/` | Sockets (master.sock, worker.sock), PID files |
-| `/var/log/mirror/` | Daemon logs, per-package logs under `packages/` |
+| Path | Purpose | Writable by daemon? |
+|------|---------|---------------------|
+| `/etc/mirror/config.json` | Main configuration | **No — read-only at runtime** |
+| `/var/lib/mirror/stat.json` | Persistent package state | Yes (atomic rewrite on status change) |
+| `/var/run/mirror/` | Sockets (master.sock, worker.sock), PID files | Yes |
+| `/var/log/mirror/` | Daemon logs, per-package logs under `packages/` | Yes |
+| `/var/www/mirror/status.json` | Web status JSON for the UI | Yes |
+
+### Config invariant
+
+`/etc/mirror/config.json` is **read-only** during daemon and worker runtime.
+Only `mirror setup` ever writes it (initial provisioning). Runtime state — sync
+status, error counts, log paths, timestamps — lives exclusively in `stat.json`.
+When adding a new persisted field:
+
+- ✅ extend `Package.StatusInfo` (or another stat-side dataclass) and emit it via
+  `Package.to_dict()` so `save_stat_data()` picks it up automatically.
+- ✅ surface it in `generate_and_save_web_status()` if the UI needs it.
+- ❌ never call `mirror.confPath.write_text(...)` or otherwise mutate the
+  user-supplied config.json. There is intentionally no `Config.save()`.
 
 ## Development
 

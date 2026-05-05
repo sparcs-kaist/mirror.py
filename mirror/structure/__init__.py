@@ -365,7 +365,3 @@ class Config:
         """Serialize Config to a JSON string."""
         return json.dumps(self.to_dict())
 
-    def save(self) -> None:
-        """Persist the config to disk at the loaded config path."""
-        mirror.confPath.write_text(self.to_json())
-
