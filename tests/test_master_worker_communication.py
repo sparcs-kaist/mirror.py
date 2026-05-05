@@ -96,3 +96,123 @@ class TestMasterWorkerCommunication(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_supervisor_reconnects_after_worker_restart(tmp_path):
+    """The WorkerClientSupervisor must reconnect after the worker server restarts."""
+    import threading
+    import time
+    from mirror.socket.worker import WorkerServer, WorkerClientSupervisor
+    import mirror.socket.worker as worker_module
+
+    sock = tmp_path / "supervisor.sock"
+
+    server1 = WorkerServer(sock)
+    server1.start()
+
+    supervisor = WorkerClientSupervisor(socket_path=sock)
+    supervisor.set_version("test")
+    supervisor.start()
+
+    try:
+        # Wait for initial connect (poll up to 5s).
+        for _ in range(50):
+            if supervisor.is_connected:
+                break
+            time.sleep(0.1)
+        assert supervisor.is_connected, "initial connect did not succeed"
+
+        # Stop the server and ensure the supervisor flips disconnected.
+        server1.stop()
+        for _ in range(50):
+            if not supervisor.is_connected:
+                break
+            time.sleep(0.1)
+        assert not supervisor.is_connected, "supervisor did not detect disconnect"
+
+        # Restart server; supervisor should reconnect within ~5s.
+        # IMPORTANT: it backs off up to 30s, so for the test we wait long enough
+        # for at least one retry. Initial backoff is 1s, so ~5s is plenty
+        # if we restart immediately after first failure.
+        server2 = WorkerServer(sock)
+        server2.start()
+        try:
+            for _ in range(60):
+                if supervisor.is_connected:
+                    break
+                time.sleep(0.5)
+            assert supervisor.is_connected, "supervisor did not reconnect"
+        finally:
+            server2.stop()
+    finally:
+        supervisor.stop()
+
+
+def test_supervisor_fires_reconnect_event_only_after_initial(tmp_path):
+    """MASTER.WORKER_RECONNECTED must fire on reconnect, not on initial connect."""
+    import threading
+    import time
+    from mirror.socket.worker import WorkerServer, WorkerClientSupervisor
+    import mirror.event as event_mod
+
+    sock = tmp_path / "reconnect_event.sock"
+
+    seen = []
+    def _listener(*args, **kwargs):
+        seen.append(("MASTER.WORKER_RECONNECTED", args, kwargs))
+
+    event_mod.on("MASTER.WORKER_RECONNECTED", _listener)
+    try:
+        server1 = WorkerServer(sock)
+        server1.start()
+
+        supervisor = WorkerClientSupervisor(socket_path=sock)
+        supervisor.set_version("test")
+        supervisor.start()
+
+        try:
+            for _ in range(50):
+                if supervisor.is_connected:
+                    break
+                time.sleep(0.1)
+            assert supervisor.is_connected
+            time.sleep(0.5)
+            assert seen == [], "event fired on initial connect"
+
+            server1.stop()
+            for _ in range(50):
+                if not supervisor.is_connected:
+                    break
+                time.sleep(0.1)
+
+            server2 = WorkerServer(sock)
+            server2.start()
+            try:
+                for _ in range(60):
+                    if supervisor.is_connected:
+                        break
+                    time.sleep(0.5)
+                assert supervisor.is_connected
+                # give event listener a moment
+                time.sleep(0.5)
+                assert len(seen) >= 1, "expected reconnect event"
+            finally:
+                server2.stop()
+        finally:
+            supervisor.stop()
+    finally:
+        event_mod.off("MASTER.WORKER_RECONNECTED", _listener)
+
+
+def test_supervisor_stops_cleanly(tmp_path):
+    """supervisor.stop() must terminate the thread within the join timeout."""
+    import time
+    from mirror.socket.worker import WorkerClientSupervisor
+
+    # Point at a non-existent socket so it loops in backoff.
+    supervisor = WorkerClientSupervisor(socket_path=tmp_path / "nope.sock")
+    supervisor.start()
+    time.sleep(0.5)
+    supervisor.stop(join_timeout=10.0)
+    assert supervisor._thread is not None
+    assert not supervisor._thread.is_alive()

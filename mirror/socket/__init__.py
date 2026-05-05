@@ -27,12 +27,7 @@ def init(role: str, **kwargs: Any) -> Any:
 
     if role == "master":
         server = master.init_instance("server", **kwargs)
-
-        try:
-            worker.init_instance("client")
-        except Exception:
-            pass
-
+        worker.init_instance("client")  # spawns the reconnect supervisor
         return server
 
     elif role == "worker":

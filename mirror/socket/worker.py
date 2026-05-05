@@ -6,7 +6,10 @@ module-level instance management, and convenience functions.
 """
 
 import os
+import socket
 import logging
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +24,9 @@ WORKER_SOCKET_PATH = mirror.RUN_PATH / "worker.sock"
 
 # Module-level instance (initialized via init_instance)
 _instance: Optional["WorkerServer | WorkerClient"] = None
+
+# Module-level supervisor (set when role == "client")
+_supervisor: Optional["WorkerClientSupervisor"] = None
 
 
 # --- Classes ---
@@ -56,6 +62,18 @@ class WorkerServer(BaseServer):
             "success": success,
             "returncode": returncode,
         })
+
+    def stop(self) -> None:
+        """Stop the server and close all existing connections."""
+        with self._connections_lock:
+            connections = list(self._connections)
+        for conn in connections:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+                conn.close()
+            except Exception:
+                pass
+        super().stop()
 
     @expose("ping")
     def _handle_ping(self) -> dict:
@@ -225,40 +243,133 @@ class WorkerClient(BaseClient):
         return self.send_command("get_progress", job_id=job_id)
 
 
+class WorkerClientSupervisor:
+    """Daemon thread that keeps a WorkerClient connected to the worker server.
+
+    Polls `_instance.is_connected` once per second. If the client has
+    disconnected (the listener loop will have flipped `_connected = False`
+    on its own), a fresh `WorkerClient` is constructed and connected.
+    Reconnect attempts use exponential backoff (1, 2, 4, 8, 16, 30 seconds,
+    capped at 30). On a *subsequent* successful connect (i.e. not the very
+    first one), the supervisor fires the `MASTER.WORKER_RECONNECTED` event.
+
+    Args:
+        socket_path(Path | str, optional): Worker socket path.
+    """
+
+    _BACKOFF = [1, 2, 4, 8, 16, 30]
+
+    def __init__(self, socket_path: Optional[Path | str] = None):
+        self._socket_path = socket_path
+        self._stop_event = threading.Event()
+        self._has_connected_once = False
+        self._thread: Optional[threading.Thread] = None
+        self._app_version = "unknown"
+
+    def set_version(self, version: str) -> None:
+        """Set the app version used for handshake on each connect attempt."""
+        self._app_version = version
+
+    def start(self) -> None:
+        """Spawn the supervisor thread (daemon)."""
+        self._thread = threading.Thread(
+            target=self._run, name="WorkerClientSupervisor", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self, join_timeout: float = 5.0) -> None:
+        """Signal the supervisor to stop and wait for the thread to exit."""
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=join_timeout)
+
+    @property
+    def is_connected(self) -> bool:
+        """Return whether the managed instance currently reports connected."""
+        global _instance
+        return isinstance(_instance, WorkerClient) and _instance.is_connected
+
+    def _try_connect(self) -> bool:
+        """Try to connect a fresh client; replace `_instance` on success."""
+        global _instance
+        client = WorkerClient(self._socket_path)
+        client.set_version(self._app_version)
+        try:
+            client.connect()
+        except Exception as exc:
+            logger.debug("WorkerClientSupervisor connect failed: %s", exc)
+            return False
+        _instance = client
+        return True
+
+    def _run(self) -> None:
+        attempt = 0
+        while not self._stop_event.is_set():
+            if self.is_connected:
+                attempt = 0
+                if self._stop_event.wait(1.0):
+                    break
+                continue
+
+            if self._try_connect():
+                if self._has_connected_once:
+                    try:
+                        import mirror.event
+                        mirror.event.post_event("MASTER.WORKER_RECONNECTED")
+                    except Exception:
+                        logger.debug("Failed to post MASTER.WORKER_RECONNECTED", exc_info=True)
+                self._has_connected_once = True
+                attempt = 0
+                continue
+
+            delay = self._BACKOFF[min(attempt, len(self._BACKOFF) - 1)]
+            attempt += 1
+            if self._stop_event.wait(delay):
+                break
+
+
 # --- Instance management ---
 
 
-def init_instance(role: str, **kwargs) -> WorkerServer | WorkerClient:
-    """Initialize and store the module-level worker instance
+def init_instance(role: str, **kwargs) -> "WorkerServer | WorkerClient | WorkerClientSupervisor":
+    """Initialize and store the module-level worker instance.
 
     Args:
-        role(str): "server" for WorkerServer, "client" for WorkerClient
-        **kwargs: Arguments passed to the constructor
+        role(str): "server" for WorkerServer, "client" for a supervised WorkerClient.
+        **kwargs: Arguments passed to the constructor (socket_path).
 
     Return:
-        instance(WorkerServer | WorkerClient): Initialized instance
+        instance: WorkerServer for "server" role, or the WorkerClientSupervisor
+            for "client" role (the supervisor manages the actual WorkerClient
+            stored in module global `_instance`).
     """
-    global _instance
+    global _instance, _supervisor
 
     if role == "server":
         _instance = WorkerServer(**kwargs)
         if hasattr(mirror, "__version__"):
             _instance.set_version(mirror.__version__)
         _instance.start()
-    elif role == "client":
-        _instance = WorkerClient(**kwargs)
-        if hasattr(mirror, "__version__"):
-            _instance.set_version(mirror.__version__)
-        _instance.connect()
-    else:
-        raise ValueError(f"Invalid worker role: {role}")
+        return _instance
 
-    return _instance
+    if role == "client":
+        _supervisor = WorkerClientSupervisor(socket_path=kwargs.get("socket_path"))
+        if hasattr(mirror, "__version__"):
+            _supervisor.set_version(mirror.__version__)
+        _supervisor.start()
+        return _supervisor
+
+    raise ValueError(f"Invalid worker role: {role}")
 
 
 def stop_instance() -> None:
-    """Stop the module-level worker instance"""
-    global _instance
+    """Stop the supervisor and/or server, then drop module-level state."""
+    global _instance, _supervisor
+
+    if _supervisor is not None:
+        _supervisor.stop()
+        _supervisor = None
+
     if _instance is None:
         return
 
@@ -360,6 +471,7 @@ def is_worker_running(job_id: Optional[str] = None) -> bool:
 __all__ = [
     "WorkerServer",
     "WorkerClient",
+    "WorkerClientSupervisor",
     "WORKER_SOCKET_PATH",
     "init_instance",
     "stop_instance",
