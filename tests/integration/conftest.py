@@ -6,7 +6,6 @@ Integration tests talk to containerized services and do NOT import mirror.* dire
 
 import hashlib
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -171,48 +170,24 @@ def mirror_stack(docker_services, integration_tmp: Path) -> MirrorStack:
     """
     stack = MirrorStack(integration_tmp)
 
-    _reset_host_dirs(integration_tmp)
+    # Stop master before cleanup so we don't race with in-flight syncs that
+    # hold open file descriptors under /var/lib/mirror. Worker keeps running
+    # so that worker.sock stays bound and master can reconnect on start.
+    stack.stop_process("master")
 
+    # Cleanup is done entirely from inside the container because mirror runs
+    # as root and produces root-owned files; host-side rmtree as the test user
+    # would fail with EPERM. This preserves the bind-mount inodes since we
+    # only remove children, not the mount points themselves.
     stack.docker_exec(
         "sh", "-c",
-        "rm -rf /srv/publish/* /var/lib/mirror/stat.json /var/log/mirror/packages/*"
+        "rm -rf /srv/publish/* /srv/publish/.[!.]* "
+        "/var/lib/mirror/* /var/lib/mirror/.[!.]* "
+        "/var/log/mirror/packages/* "
+        "2>/dev/null; true"
     )
 
-    stack.restart_process("master")
+    stack.start_process("master")
     stack.wait_for_master_ready()
 
     yield stack
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _reset_host_dirs(integration_tmp: Path) -> None:
-    """Clear the contents of publish, state, and log subdirectories.
-
-    The directories themselves are kept so docker bind-mounts remain attached
-    to the same inode that the container observed at startup.
-
-    Args:
-        integration_tmp(Path): Root of the host-side bind-mount tree.
-    """
-    for subdir in ("publish", "state", "log"):
-        target = integration_tmp / subdir
-        _clear_dir_contents(target)
-
-
-def _clear_dir_contents(d: Path) -> None:
-    """Remove all children of a directory without removing the directory itself.
-
-    Args:
-        d(Path): Directory whose contents should be cleared.
-    """
-    if not d.exists():
-        return
-    for child in d.iterdir():
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()

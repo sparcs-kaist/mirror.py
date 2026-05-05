@@ -60,33 +60,42 @@ def daemon(config: str) -> None:
     try:
         while True:
             for package in mirror.packages.values():
-                if package.is_disabled():
-                    mirror.log.debug(f"Package {package.pkgid} is disabled. Skipping.")
-                    continue
-                
-                if package.is_syncing():
-                    if mirror.socket.worker.is_worker_running(package.pkgid):
+                try:
+                    if package.is_disabled():
+                        mirror.log.debug(f"Package {package.pkgid} is disabled. Skipping.")
                         continue
-                    elif time.time() - package.lastsync < 60: # Because of ffts check time
-                        continue
-                    else:
+
+                    if package.is_syncing():
+                        # Source of truth for an active sync is the in-progress
+                        # set in mirror.sync; the worker may not yet have been
+                        # called (e.g. ftpsync setup is still running) so
+                        # is_worker_running can return False even when the sync
+                        # is healthy.
+                        if package.pkgid in mirror.sync._in_progress:
+                            continue
+                        if mirror.socket.worker.is_worker_running(package.pkgid):
+                            continue
                         mirror.log.warning(f"Package {package.pkgid} marked as syncing but no worker found.")
                         pkg_logger = mirror.logger.get(package.pkgid)
                         if pkg_logger.handlers:
                             mirror.logger.close_logger(pkg_logger)
                         package.set_status("ERROR")
-                elif mirror.socket.worker.is_worker_running(package.pkgid):
-                    mirror.log.error(f"Package is syncing while status is {package.status}. Changed the status to syncing.")
-                    package.set_status("SYNC")
-                    continue
+                        continue
+                    elif mirror.socket.worker.is_worker_running(package.pkgid):
+                        mirror.log.error(f"Package is syncing while status is {package.status}. Changed the status to syncing.")
+                        package.set_status("SYNC")
+                        continue
 
-                if time.time() - package.lastsync > package.syncrate:
-                    mirror.log.info(f"Package {package.pkgid} requires sync (Last sync: {package.lastsync}, Rate: {package.syncrate})")
-                    mirror.sync.start(package)
-                elif package.status == "ERROR" and time.time() - package.lastsync > mirror.conf.errorcontinuetime:
-                    mirror.log.info(f"Package {package.pkgid} is in {package.status} state. Retrying sync.")
-                    mirror.sync.start(package)
-            
+                    if time.time() - package.lastsync > package.syncrate:
+                        mirror.log.info(f"Package {package.pkgid} requires sync (Last sync: {package.lastsync}, Rate: {package.syncrate})")
+                        mirror.sync.start(package)
+                    elif package.status == "ERROR" and time.time() - package.lastsync > mirror.conf.errorcontinuetime:
+                        mirror.log.info(f"Package {package.pkgid} is in {package.status} state. Retrying sync.")
+                        mirror.sync.start(package)
+                except Exception as e:
+                    # A single package failing must not crash the whole daemon.
+                    mirror.log.error(f"Package {package.pkgid} loop iteration failed: {e}")
+
             time.sleep(1)
     except Exception as e:
         mirror.log.error(f"Daemon failed: {e}")
