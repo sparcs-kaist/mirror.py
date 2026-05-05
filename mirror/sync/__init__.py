@@ -7,45 +7,12 @@ import logging
 import threading
 
 from typing import Callable, Optional
-import importlib.util
 from threading import Thread
-from pathlib import Path
 
-BasicMethodPath = Path(__file__).parent
 methods = []
 
 _start_lock = threading.Lock()
 _in_progress: set[str] = set()
-
-def setup() -> None:
-    """Initialize the sync subsystem by loading default sync modules."""
-    load_default()
-
-def load_sync_methods(methodPath: Path) -> None:
-    """Load sync modules from the given directory path.
-
-    Args:
-        methodPath(Path): Directory containing sync module .py files.
-    """
-    import mirror.sync
-    global methods
-    methodsFullPath = [method for method in methodPath.glob("*.py") if method.stem != "__init__"]
-    for method in methodsFullPath:
-        if method.stem.startswith("_"):
-            continue
-
-        module_name = f"mirror.sync.{method.stem}"
-        spec = importlib.util.spec_from_file_location(module_name, str(method))
-        if spec and spec.loader:
-            this = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(this)
-
-            if getattr(this, "_LOAD", True) is False:
-                continue
-
-            setattr(mirror.sync, method.stem, this)
-            if method.stem not in methods:
-                methods.append(method.stem)
 
 def get_module(method: str) -> Callable:
     """Return the loaded sync module for the given method name.
@@ -96,11 +63,14 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
         pkg_logger.info(f"Time: {time.ctime(start_time)}")
         pkg_logger.info(f"Trigger: {trigger}")
 
-        sync_module = getattr(mirror.sync, method)
+        import mirror.plugin
+        sync_record = mirror.plugin.get_record(method)
+        if sync_record is None or sync_record.execute is None:
+            raise RuntimeError(f"Sync plug-in '{method}' has no execute callable")
 
         def _runner() -> None:
             try:
-                sync_module.execute(package, pkg_logger)
+                sync_record.execute(package, pkg_logger)
             except Exception as exc:
                 pkg_logger.error(f"Unhandled exception in sync runner for {pkgid}: {exc}")
                 # If execute() failed before worker delegation, on_sync_done
@@ -148,10 +118,12 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
         pkglogger.error(f"Returncode: {returncode}")
 
     # Call plugin-specific on_sync_done if defined
-    sync_module = getattr(mirror.sync, package.synctype, None)
-    if sync_module and hasattr(sync_module, "on_sync_done"):
+    import mirror.plugin
+    sync_record = mirror.plugin.get_record(package.synctype)
+    on_done_hook = getattr(sync_record, "on_sync_done", None) if sync_record else None
+    if on_done_hook is not None:
         try:
-            sync_module.on_sync_done(package, pkglogger, success, returncode)
+            on_done_hook(package, pkglogger, success, returncode)
         except Exception as e:
             pkglogger.error(f"Plugin on_sync_done failed: {e}")
 
@@ -165,10 +137,6 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
     with _start_lock:
         _in_progress.discard(pkgid)
 
-
-def load_default() -> None:
-    """Load the default sync modules from the package directory."""
-    load_sync_methods(BasicMethodPath)
 
 def execute(package: "mirror.structure.Package", logger: logging.Logger) -> None:
     """Module-level execute placeholder; sync modules override this."""

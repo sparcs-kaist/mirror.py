@@ -18,7 +18,5 @@ STATE_PATH = Path("/var/lib/mirror/")
 RUN_PATH = Path("/var/run/mirror/")
 
 import mirror.sync
-mirror.sync.load_default()
-
-# import mirror.plugin
-#mirror.plugin.plugin_loader()
+import mirror.plugin
+mirror.plugin.load_builtin_plugins()
