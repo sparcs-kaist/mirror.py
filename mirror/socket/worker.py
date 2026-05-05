@@ -475,7 +475,7 @@ def is_worker_running(job_id: Optional[str] = None) -> bool:
         alive(bool): True if worker responds (and job is running, if specified)
     """
     try:
-        with WorkerClient(WORKER_SOCKET_PATH) as client:
+        with WorkerClient(_default_worker_socket_path()) as client:
             if job_id:
                 progress = client.get_progress(job_id)
                 return progress.get("syncing", False)

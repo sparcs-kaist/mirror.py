@@ -34,7 +34,7 @@ def load(conf_path: Path):
     config = config_dict.get("settings", {})
     stat_path_str = config.get("statfile")
     status_path_str = config.get("statusfile")
-    SOCKET_PATH = config.get("socket_path", "/tmp/mirror_worker.sock")
+    SOCKET_PATH = config.get("socket_path") or None
 
 
     if not stat_path_str or not status_path_str:

@@ -85,6 +85,7 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
             raise RuntimeError(f"Package {pkgid} sync already in progress")
         _in_progress.add(pkgid)
 
+    started = False
     try:
         start_time = time.time()
         pkg_logger = mirror.logger.create_logger(pkgid, start_time)
@@ -97,20 +98,31 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
 
         sync_module = getattr(mirror.sync, method)
 
-        def _runner():
+        def _runner() -> None:
             try:
                 sync_module.execute(package, pkg_logger)
-            except Exception as e:
-                pkg_logger.error(f"Unhandled exception in sync runner for {pkgid}: {e}")
+            except Exception as exc:
+                pkg_logger.error(f"Unhandled exception in sync runner for {pkgid}: {exc}")
+                # If execute() failed before worker delegation, on_sync_done
+                # will not be called by the worker; ensure cleanup here too.
+                try:
+                    on_sync_done(pkgid, success=False, returncode=None)
+                except Exception:
+                    with _start_lock:
+                        _in_progress.discard(pkgid)
+            finally:
+                # Belt-and-suspenders: guarantee removal even if on_sync_done
+                # itself raised (set.discard is idempotent).
                 with _start_lock:
                     _in_progress.discard(pkgid)
 
         thread = Thread(target=_runner, daemon=True)
         thread.start()
-    except Exception:
-        with _start_lock:
-            _in_progress.discard(pkgid)
-        raise
+        started = True
+    finally:
+        if not started:
+            with _start_lock:
+                _in_progress.discard(pkgid)
 
 def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
     """Handle sync completion: log result, call per-module hook, update package status.

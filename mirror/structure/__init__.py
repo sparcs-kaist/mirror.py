@@ -199,22 +199,33 @@ class Packages(Options):
         Raises:
             ValueError: If a pkgid collides with a Packages attribute or method name.
         """
-        reserved = self._reserved_attrs()
         for pkgid in pkgs.keys():
-            if pkgid in reserved or pkgid.startswith("_"):
-                raise ValueError(
-                    f"Invalid package id '{pkgid}': collides with a reserved attribute"
-                )
+            self._validate_id(pkgid)
         self._keys = list(pkgs.keys())
         for key in pkgs:
             setattr(self, key, Package.from_dict(pkgs[key]))
+
+    @classmethod
+    def _validate_id(cls, pkgid: str) -> None:
+        """Reject pkgids that collide with reserved attributes or start with '_'.
+
+        Args:
+            pkgid(str): Candidate package identifier.
+
+        Raises:
+            ValueError: If the pkgid collides with a reserved attribute name.
+        """
+        if pkgid in cls._reserved_attrs() or pkgid.startswith("_"):
+            raise ValueError(
+                f"Invalid package id '{pkgid}': collides with a reserved attribute"
+            )
 
     @staticmethod
     def _reserved_attrs() -> set[str]:
         """Return attribute and method names a pkgid must not collide with."""
         return {
             "get", "items", "keys", "values", "to_dict",
-            "_keys", "_reserved_attrs",
+            "_keys", "_reserved_attrs", "_validate_id",
         }
 
     def __repr__(self) -> str:
