@@ -1,5 +1,6 @@
 import mirror
 import mirror.event
+import mirror.plugin
 import mirror.structure
 import mirror.config.config
 import mirror.config.stat
@@ -86,6 +87,7 @@ def load(conf_path: Path):
 
     # 5. Load into application
     mirror.conf = mirror.structure.Config.load_from_dict(config_dict)
+    mirror.plugin.load_external_plugins(mirror.conf.plugins)
     mirror.packages = mirror.structure.Packages(loader_packages)
     
     # 6. Load the web status file
@@ -139,6 +141,17 @@ def generate_and_save_web_status():
             "errorcount": package.statusinfo.errorcount,
             "links": [link.to_dict() for link in package.link],
         }
+        if mirror.plugin._status_web_hooks:
+            plugin_extras = {}
+            for plugin_name, hook in mirror.plugin._status_web_hooks:
+                try:
+                    contributed = hook(package)
+                    if contributed:
+                        plugin_extras[plugin_name] = contributed
+                except Exception as e:
+                    mirror.log.warning(f"Status plug-in {plugin_name} extend_web_status_fields failed: {e}")
+            if plugin_extras:
+                web_status[pkg_id]["plugins"] = plugin_extras
 
     try:
         STATUS_PATH.write_text(json.dumps(web_status, indent=4))
@@ -152,9 +165,26 @@ def save_stat_data():
         mirror.log.error("Cannot save stat data, path not set.")
         return
 
+    packages_dict = {}
+    for pkg_id in mirror.packages.keys():
+        package = mirror.packages.get(pkg_id)
+        pkg_dict = package.to_dict()
+        if mirror.plugin._status_stat_hooks:
+            plugin_extras = {}
+            for plugin_name, hook in mirror.plugin._status_stat_hooks:
+                try:
+                    contributed = hook(package)
+                    if contributed:
+                        plugin_extras[plugin_name] = contributed
+                except Exception as e:
+                    mirror.log.warning(f"Status plug-in {plugin_name} extend_stat_fields failed: {e}")
+            if plugin_extras:
+                pkg_dict["status"]["statusinfo"]["plugins"] = plugin_extras
+        packages_dict[pkg_id] = pkg_dict
+
     full_stat = {
         "mirrorname": mirror.conf.name,
-        "packages": mirror.packages.to_dict()
+        "packages": packages_dict,
     }
     try:
         STAT_DATA_PATH.write_text(json.dumps(full_stat, indent=4))
