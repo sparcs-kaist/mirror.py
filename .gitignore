@@ -131,6 +131,9 @@ dmypy.json
 # Temporary files defined by DoyunShin
 ___*
 
+# Integration test build artifacts
+tests/integration/docker/mirror/dist/
+
 # Claude Code session files
 .claude/
 

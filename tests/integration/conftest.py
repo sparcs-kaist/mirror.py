@@ -4,8 +4,10 @@ All fixtures in this file are scoped to the tests/integration/ subdirectory only
 Integration tests talk to containerized services and do NOT import mirror.* directly.
 """
 
+import hashlib
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -26,6 +28,54 @@ def project_root() -> Path:
         root(Path): Project root directory.
     """
     return Path(__file__).parent.parent.parent
+
+
+@pytest.fixture(scope="session")
+def built_wheel(project_root: Path) -> Path:
+    """Build the current source tree as a wheel for the mirror Docker image.
+
+    Uses whatever version is declared in pyproject.toml — no version rewriting.
+    Idempotent: skips rebuild if a wheel matching the current source SHA already
+    exists in the dist directory.
+
+    Args:
+        project_root(Path): Absolute path to the project root.
+
+    Return:
+        wheel_path(Path): Path to the wheel inside the mirror image build context.
+    """
+    dist_dir = project_root / "tests" / "integration" / "docker" / "mirror" / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+    sha_marker = dist_dir / ".source.sha"
+
+    hasher = hashlib.sha256()
+    for path in sorted((project_root / "mirror").rglob("*.py")):
+        hasher.update(path.read_bytes())
+    hasher.update((project_root / "pyproject.toml").read_bytes())
+    current_sha = hasher.hexdigest()
+
+    existing = next(dist_dir.glob("mirror_py-*.whl"), None)
+    if (
+        existing is not None
+        and sha_marker.exists()
+        and sha_marker.read_text().strip() == current_sha
+    ):
+        return existing
+
+    for old in dist_dir.glob("mirror_py-*.whl"):
+        old.unlink()
+
+    subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(dist_dir)],
+        cwd=project_root,
+        check=True,
+    )
+
+    sha_marker.write_text(current_sha)
+    wheel = next(dist_dir.glob("mirror_py-*.whl"), None)
+    if wheel is None:
+        raise FileNotFoundError(f"uv build succeeded but no wheel found in {dist_dir}")
+    return wheel
 
 
 @pytest.fixture(scope="session")
@@ -50,15 +100,16 @@ def integration_tmp(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def docker_compose_file(project_root: Path, integration_tmp: Path) -> str:
+def docker_compose_file(project_root: Path, built_wheel: Path, integration_tmp: Path) -> str:
     """Absolute path to docker-compose.yml.
 
-    Depends on integration_tmp so INTEGRATION_TMP is set before pytest-docker
-    invokes compose up. The mirror image installs mirror.py from PyPI at build
-    time, so no local wheel build is required.
+    Depends on built_wheel so the local wheel is in the build context before
+    compose builds the mirror image, and on integration_tmp so INTEGRATION_TMP
+    is set before pytest-docker invokes compose up.
 
     Args:
         project_root(Path): Absolute path to the project root.
+        built_wheel(Path): Path to the locally-built wheel.
         integration_tmp(Path): Temp dir (ensures env var is set first).
 
     Return:

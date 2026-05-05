@@ -9,14 +9,14 @@ uv pip install -e ".[dev]"
 uv run pytest -m integration -v
 ```
 
-The mirror image installs `mirror.py` from PyPI at the version pinned in
-`docker/mirror/Dockerfile` (`MIRROR_PY_VERSION` build arg). The version under
-test is therefore the actually-published artifact, not the local working tree —
-to test in-progress changes, bump the version, push a tag, wait for the
-`pypi.yaml` workflow to publish, and update the Dockerfile pin.
+The mirror image installs a wheel built **from the current source tree** by a
+session-scoped fixture (`built_wheel` in `conftest.py`). This means tests
+exercise in-progress changes immediately — no PyPI round-trip needed. The
+wheel is placed in `docker/mirror/dist/` (gitignored) and rebuilt only when
+the source SHA changes.
 
-First run builds three Docker images (~30s–1min). Subsequent runs reuse cached
-images.
+First run builds the wheel and three Docker images (~1–2 min). Subsequent
+runs reuse both the wheel and cached images.
 
 ## Container topology
 
@@ -74,20 +74,21 @@ All test interactions go through the `mirror_stack` fixture (defined in `conftes
 
 ## Package source
 
-The mirror image installs `mirror.py` from PyPI rather than a locally-built
-wheel. The exact version is pinned via the `MIRROR_PY_VERSION` build arg in
-`docker/mirror/Dockerfile`:
+The mirror image installs a locally-built wheel from `docker/mirror/dist/`:
 
 ```dockerfile
-ARG MIRROR_PY_VERSION=1.0.0rc4
-RUN pip install --no-cache-dir "mirror.py==${MIRROR_PY_VERSION}"
+COPY dist/mirror_py-*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/mirror_py-*.whl
 ```
 
-Publishing flow: bump `pyproject.toml` and `mirror/__init__.py` versions
-together, push a `v<version>` tag, and the `.github/workflows/pypi.yaml`
-workflow builds and publishes via PyPI Trusted Publisher (OIDC). After PyPI
-shows the new version, update the `MIRROR_PY_VERSION` pin in the Dockerfile
-to test against it.
+`conftest.py:built_wheel` (session-scoped) runs `uv build --wheel` against the
+current source tree and places the artifact in `dist/`. The build is gated by
+a SHA of `mirror/**` plus `pyproject.toml`, so unchanged source skips rebuild.
+
+Public releases are independent: a `v*` tag push triggers
+`.github/workflows/pypi.yaml`, which uses PyPI Trusted Publisher (OIDC) to
+upload the artifact. The integration suite does NOT pull from PyPI — local
+testing always uses the working-tree build.
 
 ## Per-test isolation
 
@@ -165,7 +166,7 @@ tests/integration/
 ├── docker/
 │   ├── rsync-fixture/       # Dockerfile + rsyncd.conf + data/
 │   ├── ftpsync-fixture/     # Dockerfile + rsyncd.conf + data/
-│   └── mirror/              # Dockerfile + supervisord.conf + config.json
+│   └── mirror/              # Dockerfile + supervisord.conf + config.json + dist/ (gitignored)
 ├── fixtures/
 │   └── tree_v2/             # Alternate rsync content for FFTS-changed test
 └── test_*.py                # 9 test files, 14 tests total
