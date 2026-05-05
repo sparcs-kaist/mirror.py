@@ -43,6 +43,10 @@ def load(conf_path: Path):
     STAT_DATA_PATH = Path(stat_path_str)
     STATUS_PATH = Path(status_path_str)
 
+    # Ensure STATE_PATH exists with restrictive permissions for ftpsync tempdirs.
+    if not mirror.STATE_PATH.exists():
+        mirror.STATE_PATH.mkdir(parents=True, mode=0o700, exist_ok=True)
+
     # 2. Load stat file and synchronize with config
     stat_dict = json.loads(STAT_DATA_PATH.read_text()) if STAT_DATA_PATH.exists() else {"packages": {}}
     config_packages = config_dict.get("packages", {})

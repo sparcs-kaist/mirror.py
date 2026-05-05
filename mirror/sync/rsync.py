@@ -68,10 +68,10 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
     except AttributeError as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: value not found")
         pkg_logger.error(e)
-        package.set_status("ERROR")
+        mirror.sync.on_sync_done(package.pkgid, success=False, returncode=None)
     except Exception as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: {e}")
-        package.set_status("ERROR")
+        mirror.sync.on_sync_done(package.pkgid, success=False, returncode=None)
 
 def rsync(logger: logging.Logger, pkgid: str, src: str, dst: Path, user: str, password: str):
     """

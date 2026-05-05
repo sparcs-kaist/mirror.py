@@ -1,6 +1,7 @@
 import mirror
 import mirror.structure
 import mirror.socket.worker
+import mirror.sync
 import mirror.logger
 
 from tempfile import TemporaryDirectory
@@ -16,6 +17,8 @@ import io
 import os
 
 ARCHVSYNC_REPO = "https://salsa.debian.org/mirror-team/archvsync.git"
+
+_ftpsync_handles: dict[str, "TemporaryDirectory"] = {}
 
 def setup(path: Path, package: mirror.structure.Package):
     pass
@@ -47,15 +50,19 @@ def setup_ftpsync(path: Path, package: mirror.structure.Package):
     (path / "etc" / "ftpsync.conf").write_text(_config(package))
 
 def execute(package: mirror.structure.Package, logger: logging.Logger):
-    """Sync package"""
+    """Sync package via ftpsync subprocess.
+
+    Args:
+        package(mirror.structure.Package): Package to sync.
+        logger(logging.Logger): Per-sync session logger.
+    """
     import os
 
     logger.info(f"Starting ftpsync for {package.name}")
 
-    tmp_base = Path("/tmp/mirror_ftpsync")
-    tmp_base.mkdir(exist_ok=True)
-    _tmp_handle = TemporaryDirectory(dir=tmp_base)
-    tmp_dir = Path(_tmp_handle.name)
+    handle = TemporaryDirectory(prefix="mirror_ftpsync_", dir=mirror.STATE_PATH)
+    tmp_dir = Path(handle.name)
+    _ftpsync_handles[package.pkgid] = handle
 
     try:
         logger.info(f"Setting up ftpsync environment in {tmp_dir}")
@@ -64,14 +71,12 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
         command = [str(tmp_dir / "bin" / "ftpsync")]
 
         log_path = None
-        for handler in logger.handlers:
-            if isinstance(handler, logging.FileHandler):
-                log_path = handler.baseFilename
+        for h in logger.handlers:
+            if isinstance(h, logging.FileHandler):
+                log_path = h.baseFilename
                 break
 
         logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
-
-        package._ftpsync_tmp = _tmp_handle
 
         mirror.socket.worker.execute_command(
             job_id=package.pkgid,
@@ -85,27 +90,32 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
 
     except Exception as e:
         logger.error(f"ftpsync for {package.pkgid} failed: {e}")
-        mirror.logger.close_logger(logger)
-        package.set_status("ERROR")
+        # Clean up temp dir; on_sync_done won't be called on this path because
+        # the worker job was never created.
+        h = _ftpsync_handles.pop(package.pkgid, None)
+        if h is not None:
+            try:
+                h.cleanup()
+            except Exception as cleanup_exc:
+                logger.warning(f"Failed to clean up ftpsync temp dir: {cleanup_exc}")
+        mirror.sync.on_sync_done(package.pkgid, success=False, returncode=None)
 
 
 def on_sync_done(package: mirror.structure.Package, logger: logging.Logger, success: bool, returncode):
-    """Clean up ftpsync temporary directory after sync completes
+    """Clean up ftpsync temporary directory after sync completes.
 
     Args:
-        package(mirror.structure.Package): Package object
-        logger(logging.Logger): Logger for this sync session
-        success(bool): Whether the sync succeeded
-        returncode: Process return code
+        package(mirror.structure.Package): Package object.
+        logger(logging.Logger): Logger for this sync session.
+        success(bool): Whether the sync succeeded.
+        returncode: Process return code.
     """
-    tmp_handle = getattr(package, "_ftpsync_tmp", None)
-    if tmp_handle is not None:
+    handle = _ftpsync_handles.pop(package.pkgid, None)
+    if handle is not None:
         try:
-            tmp_handle.cleanup()
+            handle.cleanup()
         except Exception as e:
             logger.warning(f"Failed to clean up ftpsync temp dir: {e}")
-        finally:
-            package._ftpsync_tmp = None
 
 
 def _check_git() -> bool:
@@ -135,7 +145,7 @@ def _extract_archvsync(path: Path) -> bool:
 
         tar_buffer = io.BytesIO(script)
         with tarfile.open(fileobj=tar_buffer, mode="r:gz") as tar:
-            tar.extractall(path=path)
+            tar.extractall(path=path, filter="data")
 
         return True
     except Exception:

@@ -4,6 +4,7 @@ import mirror.logger
 
 import time
 import logging
+import threading
 
 from typing import Callable, Optional
 import importlib.util
@@ -12,6 +13,9 @@ from pathlib import Path
 
 BasicMethodPath = Path(__file__).parent
 methods = []
+
+_start_lock = threading.Lock()
+_in_progress: set[str] = set()
 
 def setup():
     load_default()
@@ -44,11 +48,17 @@ def get_module(method: str) -> Callable:
     return getattr(mirror.sync, method)
 
 def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
-    """
-    Start sync for a package.
+    """Start sync for a package.
+
+    Rejects if a sync for the same pkgid is already in progress.
 
     Args:
-        package: Package object to sync
+        package(mirror.structure.Package): Package to sync.
+        trigger(str): Source of the trigger ("auto", "manual", etc.).
+
+    Raises:
+        ValueError: If sync method is unknown.
+        RuntimeError: If a sync for this pkgid is already in progress.
     """
     import mirror.sync
     import mirror.logger
@@ -57,18 +67,38 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
     if method not in methods:
         raise ValueError(f"Unknown sync method: {method}")
 
-    start_time = time.time()
-    pkg_logger = mirror.logger.create_logger(package.pkgid, start_time)
+    pkgid = package.pkgid
+    with _start_lock:
+        if pkgid in _in_progress:
+            raise RuntimeError(f"Package {pkgid} sync already in progress")
+        _in_progress.add(pkgid)
 
-    package.set_status("SYNC")
-    mirror.log.info(f"Starting sync for {package.name} ({method})")
-    pkg_logger.info(f"Starting sync for {package.name} ({method})")
-    pkg_logger.info(f"Time: {time.ctime(start_time)}")
-    pkg_logger.info(f"Trigger: {trigger}")
+    try:
+        start_time = time.time()
+        pkg_logger = mirror.logger.create_logger(pkgid, start_time)
 
-    sync_module = getattr(mirror.sync, method)
-    thread = Thread(target=sync_module.execute, args=(package, pkg_logger), daemon=True)
-    thread.start()
+        package.set_status("SYNC")
+        mirror.log.info(f"Starting sync for {package.name} ({method})")
+        pkg_logger.info(f"Starting sync for {package.name} ({method})")
+        pkg_logger.info(f"Time: {time.ctime(start_time)}")
+        pkg_logger.info(f"Trigger: {trigger}")
+
+        sync_module = getattr(mirror.sync, method)
+
+        def _runner():
+            try:
+                sync_module.execute(package, pkg_logger)
+            except Exception as e:
+                pkg_logger.error(f"Unhandled exception in sync runner for {pkgid}: {e}")
+                with _start_lock:
+                    _in_progress.discard(pkgid)
+
+        thread = Thread(target=_runner, daemon=True)
+        thread.start()
+    except Exception:
+        with _start_lock:
+            _in_progress.discard(pkgid)
+        raise
 
 def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
     import mirror.sync
@@ -98,6 +128,9 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
     mirror.logger.close_logger(pkglogger)
     package.lastsync = time.time()
     package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
+
+    with _start_lock:
+        _in_progress.discard(pkgid)
 
 
 def load_default():
