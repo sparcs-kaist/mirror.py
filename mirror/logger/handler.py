@@ -2,11 +2,15 @@ from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import ANSI
 import logging
 import gzip
+import re
 import shutil
 import os
+import sys
 import time
 import datetime
 from pathlib import Path
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None = None) -> str:
@@ -61,11 +65,28 @@ def compress_file(filepath: str | Path) -> Path | None:
 
 
 class PromptHandler(logging.StreamHandler):
-    """Handler that outputs to prompt_toolkit formatted text."""
+    """Log handler that prints via prompt_toolkit ANSI when the terminal
+    supports it, and falls back to plain text otherwise.
+    """
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
-        print_formatted_text(ANSI(msg))
+        if self._supports_ansi():
+            print_formatted_text(ANSI(msg))
+        else:
+            sys.stdout.write(_ANSI_ESCAPE_RE.sub("", msg) + "\n")
+            sys.stdout.flush()
+
+    @staticmethod
+    def _supports_ansi() -> bool:
+        """Return True when stdout is a TTY and TERM is not 'dumb'."""
+        try:
+            isatty = sys.stdout.isatty()
+        except Exception:
+            isatty = False
+        if not isatty:
+            return False
+        return os.environ.get("TERM", "").lower() != "dumb"
 
 
 class DynamicGzipRotatingFileHandler(logging.FileHandler):

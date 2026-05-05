@@ -142,7 +142,10 @@ class BaseServer:
             with self._connections_lock:
                 if conn in self._connections:
                     self._connections.remove(conn)
-            conn.close()
+            try:
+                conn.close()
+            except OSError as exc:
+                logger.debug("Failed to close connection: %s", exc)
 
     def _dispatch_command(self, command: str, kwargs: Optional[dict]) -> dict:
         """Route a command to its handler and build the response"""
@@ -177,8 +180,8 @@ class BaseServer:
         for conn in connections:
             try:
                 send_message(conn, data)
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("broadcast send failed: %s", exc)
 
     @property
     def client_count(self) -> int:
@@ -236,13 +239,13 @@ class BaseServer:
         if self.server:
             try:
                 self.server.close()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("Failed to close server socket: %s", exc)
         if self.socket_path.exists():
             try:
                 self.socket_path.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("Failed to unlink socket path %s: %s", self.socket_path, exc)
 
 
 class BaseClient:
@@ -367,8 +370,8 @@ class BaseClient:
             try:
                 self._sock.shutdown(socket.SHUT_RDWR)
                 self._sock.close()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("Failed to shut down client socket: %s", exc)
             self._sock = None
         self._server_info = None
 

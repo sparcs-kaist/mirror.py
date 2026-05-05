@@ -148,7 +148,9 @@ def _extract_archvsync(path: Path) -> bool:
             tar.extractall(path=path, filter="data")
 
         return True
-    except Exception:
+    except (ValueError, tarfile.TarError, OSError) as exc:
+        logger = logging.getLogger("mirror")
+        logger.warning("archvsync extraction failed: %s", exc)
         return False
 
 def _config(package: mirror.structure.Package) -> str:
