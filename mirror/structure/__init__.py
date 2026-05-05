@@ -7,22 +7,6 @@ from typing import Literal, Optional
 from pathlib import Path
 import json
 import time
-import logging
-
-
-class SyncExecuter:
-    def __init__(self, package: "Package") -> None:
-        self.package = package
-        self.settings = package.settings
-    
-    def sync(self) -> None:
-        pass
-
-class Worker:
-    def __init__(self, package: "Package", execute, logger: logging.Logger) -> None:
-        self.package = package
-        self.logger = logger
-        self.sync = SyncExecuter(package)
 
 @dataclass
 class Options:
@@ -187,12 +171,33 @@ class Package:
             raise FileNotFoundError(f"{path} does not exist")
 
 
-@dataclass
 class Packages(Options):
     def __init__(self, pkgs: dict) -> None:
+        """Build the package collection from a config dict.
+
+        Args:
+            pkgs(dict): Mapping of pkgid -> package config dict.
+
+        Raises:
+            ValueError: If a pkgid collides with a Packages attribute or method name.
+        """
+        reserved = self._reserved_attrs()
+        for pkgid in pkgs.keys():
+            if pkgid in reserved or pkgid.startswith("_"):
+                raise ValueError(
+                    f"Invalid package id '{pkgid}': collides with a reserved attribute"
+                )
         self._keys = list(pkgs.keys())
         for key in pkgs:
             setattr(self, key, Package.from_dict(pkgs[key]))
+
+    @staticmethod
+    def _reserved_attrs() -> set[str]:
+        """Return attribute and method names a pkgid must not collide with."""
+        return {
+            "get", "items", "keys", "values", "to_dict",
+            "_keys", "_reserved_attrs",
+        }
 
     def __repr__(self) -> str:
         return f"Packages(ids={self._keys})"

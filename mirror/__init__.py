@@ -8,7 +8,7 @@ packages: mirror.structure.Packages
 confPath: Path
 publishPath: Path
 log: logging.Logger
-worker: dict[str, mirror.structure.Worker]
+worker: dict
 status: dict
 debug: bool = False
 exit: bool = False
