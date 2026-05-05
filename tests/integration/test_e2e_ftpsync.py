@@ -56,16 +56,15 @@ def test_basic_ftpsync_sync(mirror_stack):
 
 @pytest.mark.integration
 @pytest.mark.dependency(depends=["ftpsync_preflight"])
+@pytest.mark.skip(
+    reason="Cannot test offline fallback by disconnecting from compose network — "
+    "that also makes the ftpsync-fixture unreachable. Distinguishing 'block git "
+    "but allow internal rsync' would require iptables manipulation inside the "
+    "mirror container or separate compose networks per direction. The base64 "
+    "fallback should be unit-tested at mirror.sync.ftpsync._extract_archvsync."
+)
 def test_ftpsync_offline_fallback(mirror_stack):
-    """ftpsync falls back to embedded base64 script when git clone cannot reach upstream.
-
-    Disconnects the mirror container from the compose network on the host so
-    git clone fails, clears the cached ftpsync clone, then triggers a sync and
-    asserts ACTIVE — proving the base64 fallback in mirror/sync/_ftpsync_script.py
-    was used.
-
-    Marked xfail if network disconnection is not possible in the test environment.
-    """
+    """ftpsync falls back to embedded base64 script when git clone cannot reach upstream."""
     network = "mirror_integration_default"
     container = "mirror"
 

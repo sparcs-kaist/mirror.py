@@ -61,7 +61,9 @@ def test_ffts_changed_triggers_full_sync(mirror_stack):
     """
     mirror_stack.wait_for_status("rsync-test", "ACTIVE", timeout=30)
 
-    v1_dir = Path("tests/integration/fixtures/tree_v1")
+    # The v1 baseline lives in the rsync-fixture build context itself; tree_v2
+    # is the changed-state overlay used to provoke FFTS to re-sync.
+    v1_dir = Path("tests/integration/docker/rsync-fixture/data")
     v2_dir = Path("tests/integration/fixtures/tree_v2")
 
     lastsync_before = mirror_stack.package_lastsync("rsync-test")
