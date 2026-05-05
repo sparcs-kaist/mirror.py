@@ -3,25 +3,16 @@ import tempfile
 import time
 import sys
 import os
-import importlib.util
 from pathlib import Path
 
-# Load socket modules directly to avoid circular import
-def _load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-_socket_dir = Path(__file__).parent.parent / "mirror" / "socket"
-
-# Load modules in dependency order
-_protocol_module = _load_module("mirror.socket.protocol", _socket_dir / "protocol.py")
-_base_module = _load_module("mirror.socket.base", _socket_dir / "base.py")
-_init_module = _load_module("mirror.socket", _socket_dir / "__init__.py")
-_master_module = _load_module("mirror.socket.master", _socket_dir / "master.py")
-_worker_module = _load_module("mirror.socket.worker", _socket_dir / "worker.py")
+# Use normal imports — earlier code used a `_load_module` helper that
+# overwrote `sys.modules['mirror.socket.*']`, causing contamination for
+# subsequent tests that patched those modules.
+import mirror.socket.protocol as _protocol_module
+import mirror.socket.base as _base_module
+import mirror.socket as _init_module
+import mirror.socket.master as _master_module
+import mirror.socket.worker as _worker_module
 
 BaseServer = _base_module.BaseServer
 BaseClient = _base_module.BaseClient

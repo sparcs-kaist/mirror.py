@@ -2,10 +2,37 @@ import os
 import sys
 import pytest
 from pathlib import Path
+import mirror
 import mirror.sync
 
 # 전역 상수로 설정
 EXPECTED_SYNC_METHODS = {"rsync", "ftpsync"}
+
+
+@pytest.fixture(autouse=True)
+def restore_sync_module_state():
+    """Defend against sys.modules contamination from other tests.
+
+    `tests/test_socket.py` (and others) historically swapped
+    `sys.modules["mirror.sync"]` with mocks; cleanup was best-effort. We
+    re-bind from sys.modules to undo any leftover swap. We avoid calling
+    `load_sync_methods()` proactively because that creates fresh module
+    objects on `mirror.sync.<name>` while leaving `sys.modules['mirror.sync.<name>']`
+    pointing to the older instances — the divergence breaks `mock.patch`
+    targets in sibling tests. Only repopulate when `methods` is empty.
+    """
+    real_sync = sys.modules.get("mirror.sync")
+    if real_sync is not None:
+        mirror.sync = real_sync
+    snapshot = list(mirror.sync.methods)
+    if not snapshot:
+        mirror.sync.load_sync_methods(mirror.sync.BasicMethodPath)
+        snapshot = list(mirror.sync.methods)
+    yield
+    mirror.sync.methods[:] = snapshot
+    sys.modules.pop("mock_sync", None)
+    if hasattr(mirror.sync, "mock_sync"):
+        delattr(mirror.sync, "mock_sync")
 
 def test_default_methods_detection():
     """Check if .py files in the default sync directory are correctly included in the methods list"""

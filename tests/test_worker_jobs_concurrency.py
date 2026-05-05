@@ -3,7 +3,22 @@ import threading
 import subprocess
 from unittest.mock import patch
 
+import pytest
+
 from mirror.worker import process
+
+
+@pytest.fixture(autouse=True)
+def isolate_jobs_state():
+    """Clear `_jobs` before and after each test to defend against contamination
+    from sibling tests (notably `tests/test_socket.py`'s module-load tricks
+    that mutate `sys.modules` and can leave stale entries behind).
+    """
+    with process._jobs_lock:
+        process._jobs.clear()
+    yield
+    with process._jobs_lock:
+        process._jobs.clear()
 
 
 class _FakePopen:
