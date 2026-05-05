@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rsync git supervisor ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-ARG MIRROR_PY_VERSION=1.0.0rc5
+ARG MIRROR_PY_VERSION=1.0.0rc6
 RUN pip install --no-cache-dir "mirror.py==${MIRROR_PY_VERSION}"
 
 RUN mkdir -p /etc/mirror /var/run/mirror /var/lib/mirror /var/log/mirror /var/log/mirror/packages /srv/publish /var/www/mirror
