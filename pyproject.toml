@@ -13,7 +13,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-docker>=3",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: end-to-end tests that require Docker (deselected by default)",
+    "unit: fast in-process unit tests (default selection)",
+    "dependency: test ordering dependency (used by pytest-dependency if installed)",
+]
+addopts = "-m 'not integration'"
 
 [project.scripts]
 mirror = "mirror.__main__:main"
