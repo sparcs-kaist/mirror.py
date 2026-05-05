@@ -1,48 +1,484 @@
+"""Entry-points based plug-in framework for mirror.py.
+
+Loading splits into two phases:
+  Phase A (load_builtin_plugins): imports and registers the five built-in sync
+    modules at package-import time so mirror.sync.methods is populated before
+    package validation runs.
+  Phase B (load_external_plugins): called from mirror.config.load() after the
+    config dict has been parsed; disables config-disabled built-ins and
+    discovers + registers third-party plug-ins via importlib.metadata.
+"""
+
+from __future__ import annotations
+
+import importlib
+import importlib.metadata
+import logging
+from dataclasses import dataclass, field
+from typing import Callable, Literal, Optional
+
 import mirror
 
-from pathlib import Path
-import importlib.util
+log = logging.getLogger("mirror")
 
-loadable_module = ["sync", "logger", "plugin",]
+# ---------------------------------------------------------------------------
+# PluginRecord
+# ---------------------------------------------------------------------------
 
-def _load_module_from_path(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, str(path))
-    if spec and spec.loader:
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    return None
+@dataclass
+class PluginRecord:
+    """Typed descriptor for a registered plug-in.
 
-def plugin_loader():
-    """Load the plugins"""
-    for plugin in mirror.conf.plugins:
-        pluginPath = Path(plugin).resolve()
-        if not pluginPath.exists():
-            raise FileNotFoundError(f"Plugin {plugin} does not exist!")
+    Args:
+        name(str): Globally unique plug-in name.
+        type(str): One of "sync", "event", or "status".
+        execute(Callable, optional): Sync execute callable. Sync plug-ins only.
+        on_sync_done(Callable, optional): Post-sync hook. Sync plug-ins only.
+        setup(Callable, optional): Setup callable (required for event plug-ins).
+        extend_stat_fields(Callable, optional): Returns extra stat.json fields for a package.
+        extend_web_status_fields(Callable, optional): Returns extra web status fields for a package.
+    """
 
-        # Load temporarily to check attributes
-        this = _load_module_from_path("", pluginPath)
-        if this is None:
-             raise ImportError(f"Failed to load plugin {plugin}")
+    name: str
+    type: Literal["sync", "event", "status"]
+    execute: Optional[Callable] = field(default=None)
+    on_sync_done: Optional[Callable] = field(default=None)
+    setup: Optional[Callable] = field(default=None)
+    extend_stat_fields: Optional[Callable] = field(default=None)
+    extend_web_status_fields: Optional[Callable] = field(default=None)
 
-        check = ["setup", "module", "name", "entry"]
-        for attr in check:
-            if not hasattr(this, attr):
-                raise AttributeError(f"Plugin {plugin} does not have attribute {attr}!")
-        
+
+# ---------------------------------------------------------------------------
+# Factory helpers
+# ---------------------------------------------------------------------------
+
+def sync_plugin(
+    name: str,
+    execute: Callable,
+    on_sync_done: Optional[Callable] = None,
+    setup: Optional[Callable] = None,
+) -> PluginRecord:
+    """Build a PluginRecord for a sync plug-in with contract validation.
+
+    Args:
+        name(str): Unique plug-in name.
+        execute(Callable): Sync execute callable — must be provided and callable.
+        on_sync_done(Callable, optional): Post-sync hook callable.
+        setup(Callable, optional): Optional setup callable.
+
+    Return:
+        record(PluginRecord): Validated sync PluginRecord.
+
+    Raises:
+        TypeError: If execute is missing or not callable.
+    """
+    if execute is None or not callable(execute):
+        raise TypeError(
+            f"sync_plugin '{name}': execute must be a callable, got {type(execute)!r}"
+        )
+    if on_sync_done is not None and not callable(on_sync_done):
+        raise TypeError(
+            f"sync_plugin '{name}': on_sync_done must be callable or None, got {type(on_sync_done)!r}"
+        )
+    if setup is not None and not callable(setup):
+        raise TypeError(
+            f"sync_plugin '{name}': setup must be callable or None, got {type(setup)!r}"
+        )
+    return PluginRecord(
+        name=name,
+        type="sync",
+        execute=execute,
+        on_sync_done=on_sync_done,
+        setup=setup,
+    )
+
+
+def event_plugin(name: str, setup: Callable) -> PluginRecord:
+    """Build a PluginRecord for an event plug-in with contract validation.
+
+    Args:
+        name(str): Unique plug-in name.
+        setup(Callable): Required setup callable that registers event listeners.
+
+    Return:
+        record(PluginRecord): Validated event PluginRecord.
+
+    Raises:
+        TypeError: If setup is missing or not callable.
+    """
+    if setup is None or not callable(setup):
+        raise TypeError(
+            f"event_plugin '{name}': setup is required and must be callable, got {type(setup)!r}"
+        )
+    return PluginRecord(name=name, type="event", setup=setup)
+
+
+def status_plugin(
+    name: str,
+    extend_stat_fields: Optional[Callable] = None,
+    extend_web_status_fields: Optional[Callable] = None,
+    setup: Optional[Callable] = None,
+) -> PluginRecord:
+    """Build a PluginRecord for a status plug-in with contract validation.
+
+    Args:
+        name(str): Unique plug-in name.
+        extend_stat_fields(Callable, optional): Returns extra stat.json fields for a package.
+        extend_web_status_fields(Callable, optional): Returns extra web status fields for a package.
+        setup(Callable, optional): Optional setup callable.
+
+    Return:
+        record(PluginRecord): Validated status PluginRecord.
+
+    Raises:
+        TypeError: If neither extend_stat_fields nor extend_web_status_fields is provided,
+            or if any callable argument is not actually callable.
+    """
+    if extend_stat_fields is None and extend_web_status_fields is None:
+        raise TypeError(
+            f"status_plugin '{name}': at least one of extend_stat_fields or "
+            "extend_web_status_fields must be provided"
+        )
+    if extend_stat_fields is not None and not callable(extend_stat_fields):
+        raise TypeError(
+            f"status_plugin '{name}': extend_stat_fields must be callable, "
+            f"got {type(extend_stat_fields)!r}"
+        )
+    if extend_web_status_fields is not None and not callable(extend_web_status_fields):
+        raise TypeError(
+            f"status_plugin '{name}': extend_web_status_fields must be callable, "
+            f"got {type(extend_web_status_fields)!r}"
+        )
+    if setup is not None and not callable(setup):
+        raise TypeError(
+            f"status_plugin '{name}': setup must be callable or None, got {type(setup)!r}"
+        )
+    return PluginRecord(
+        name=name,
+        type="status",
+        extend_stat_fields=extend_stat_fields,
+        extend_web_status_fields=extend_web_status_fields,
+        setup=setup,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Module-level state
+# ---------------------------------------------------------------------------
+
+_registry: dict[str, PluginRecord] = {}
+_BUILTIN_NAMES: set[str] = set()
+_status_stat_hooks: list[tuple[str, Callable]] = []
+_status_web_hooks: list[tuple[str, Callable]] = []
+
+# Hard-coded built-in entry-point references (module_path:attr)
+_BUILTIN_ENTRY_POINTS: list[tuple[str, str]] = [
+    ("mirror.sync.rsync", "plugin"),
+    ("mirror.sync.ftpsync", "plugin"),
+    ("mirror.sync.lftp", "plugin"),
+    ("mirror.sync.bandersnatch", "plugin"),
+    ("mirror.sync.local", "plugin"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Internal registration helpers
+# ---------------------------------------------------------------------------
+
+def _register_sync(record: PluginRecord) -> None:
+    """Register a sync plug-in into the registry and mirror.sync namespace.
+
+    Args:
+        record(PluginRecord): A validated sync PluginRecord.
+
+    Raises:
+        ValueError: If a plug-in with the same name is already registered.
+    """
+    import mirror.sync
+
+    if record.name in _registry:
+        raise ValueError(
+            f"Plug-in name '{record.name}' is already registered "
+            f"(type={_registry[record.name].type!r})"
+        )
+    _registry[record.name] = record
+    if record.name not in mirror.sync.methods:
+        mirror.sync.methods.append(record.name)
+    # Intentionally do NOT setattr(mirror.sync, name, record): that would shadow
+    # the underlying sync module (e.g. mirror.sync.rsync) and break callers that
+    # access module-level helpers via mock.patch("mirror.sync.rsync.fn", ...).
+    # Sync runtime code looks up records via mirror.plugin.get_record(name).
+
+
+def _register_event(record: PluginRecord) -> None:
+    """Register an event plug-in and immediately call its setup().
+
+    Args:
+        record(PluginRecord): A validated event PluginRecord.
+
+    Raises:
+        ValueError: If a plug-in with the same name is already registered.
+    """
+    if record.name in _registry:
+        raise ValueError(
+            f"Plug-in name '{record.name}' is already registered "
+            f"(type={_registry[record.name].type!r})"
+        )
+    _registry[record.name] = record
+    record.setup()
+
+
+def _register_status(record: PluginRecord) -> None:
+    """Register a status plug-in and append its hooks to the hook lists.
+
+    Args:
+        record(PluginRecord): A validated status PluginRecord.
+
+    Raises:
+        ValueError: If a plug-in with the same name is already registered.
+    """
+    if record.name in _registry:
+        raise ValueError(
+            f"Plug-in name '{record.name}' is already registered "
+            f"(type={_registry[record.name].type!r})"
+        )
+    _registry[record.name] = record
+    if record.extend_stat_fields is not None:
+        _status_stat_hooks.append((record.name, record.extend_stat_fields))
+    if record.extend_web_status_fields is not None:
+        _status_web_hooks.append((record.name, record.extend_web_status_fields))
+
+
+_REGISTER_DISPATCH: dict[str, Callable[[PluginRecord], None]] = {
+    "sync": _register_sync,
+    "event": _register_event,
+    "status": _register_status,
+}
+
+
+# ---------------------------------------------------------------------------
+# Phase A — built-in plug-ins
+# ---------------------------------------------------------------------------
+
+def load_builtin_plugins() -> None:
+    """Phase A: import and register all five built-in sync plug-ins.
+
+    Hard-codes the five canonical sync module references so that
+    mirror.sync.methods is fully populated before package validation runs.
+    ImportError for any individual module is logged as a warning and skipped;
+    a successful import that yields a malformed PluginRecord raises immediately
+    (that is a programmer error, not a deployment error).
+    """
+    global _BUILTIN_NAMES
+
+    for module_path, attr in _BUILTIN_ENTRY_POINTS:
         try:
-            if this.module not in loadable_module:
-                raise AttributeError(f"Plugin {plugin} does not have a valid module!")
-            
-            _ = getattr(mirror, this.module) # Check module exists.
-            
-        except AttributeError:
-            raise AttributeError(f"Plugin mirror does not have module {this.module}!")
-        
-        # Load properly with correct name
-        this = _load_module_from_path(f"mirror.{this.module}.{this.name}", pluginPath)
-        if this:
-            setattr(getattr(mirror, this.module), this.name, this)
-            this.setup()
+            mod = importlib.import_module(module_path)
+        except ImportError as exc:
+            log.warning(
+                "Built-in plug-in module %r could not be imported: %s", module_path, exc
+            )
+            continue
 
-        pass
+        factory = getattr(mod, attr, None)
+        if factory is None or not callable(factory):
+            raise RuntimeError(
+                f"Built-in plug-in {module_path!r} has no callable attribute {attr!r}"
+            )
+
+        record = factory()
+        if not isinstance(record, PluginRecord):
+            raise RuntimeError(
+                f"Built-in plug-in {module_path}:{attr}() must return a PluginRecord, "
+                f"got {type(record)!r}"
+            )
+
+        _REGISTER_DISPATCH[record.type](record)
+        _BUILTIN_NAMES.add(record.name)
+
+        if record.setup is not None and record.type != "event":
+            # event plug-ins have setup() called inside _register_event;
+            # for sync/status built-ins with an optional setup(), call it now.
+            try:
+                record.setup()
+            except Exception as exc:
+                log.warning(
+                    "Built-in plug-in %r setup() raised: %s", record.name, exc
+                )
+
+
+# ---------------------------------------------------------------------------
+# Phase B — external plug-ins + config-based disabling
+# ---------------------------------------------------------------------------
+
+def load_external_plugins(plugin_settings: dict) -> None:
+    """Phase B: disable built-ins per config and load third-party plug-ins.
+
+    Must be called after mirror.conf is populated (i.e., from mirror.config.load())
+    and before mirror.packages is constructed.
+
+    Args:
+        plugin_settings(dict): Mapping of plug-in name to PluginSettings (or
+            equivalent with .enabled bool and .config dict).  If this is a
+            plain list (legacy format) a deprecation warning is logged and the
+            function returns without doing anything.
+    """
+    import mirror.sync
+
+    # Backward-compat: old config had plugins as list[str] of file paths.
+    if isinstance(plugin_settings, list):
+        log.warning(
+            "Deprecated: 'plugins' config is a list of file paths, which is no longer "
+            "supported. Update your config to use the dict format: "
+            "{\"<name>\": {\"enabled\": true, \"config\": {}}}. "
+            "No plug-ins loaded from this config."
+        )
+        return
+
+    # Pass 1: disable built-ins that the operator turned off.
+    for name, settings in plugin_settings.items():
+        enabled = getattr(settings, "enabled", True)
+        if enabled:
+            continue
+        if name not in _BUILTIN_NAMES:
+            continue
+        # Remove from registry.
+        record = _registry.pop(name, None)
+        if record is None:
+            continue
+        # Remove from sync.methods and sync namespace.
+        if record.type == "sync":
+            if name in mirror.sync.methods:
+                mirror.sync.methods.remove(name)
+            if hasattr(mirror.sync, name):
+                delattr(mirror.sync, name)
+        # Remove from status hook lists.
+        if record.type == "status":
+            _status_stat_hooks[:] = [
+                (n, h) for n, h in _status_stat_hooks if n != name
+            ]
+            _status_web_hooks[:] = [
+                (n, h) for n, h in _status_web_hooks if n != name
+            ]
+        log.info("Disabled built-in plug-in %r per config.", name)
+
+    # Pass 2: discover and load external (non-built-in) plug-ins.
+    newly_registered: list[PluginRecord] = []
+
+    for group in ("mirror.sync", "mirror.event", "mirror.status"):
+        try:
+            eps = importlib.metadata.entry_points(group=group)
+        except Exception as exc:
+            log.warning("Failed to query entry-point group %r: %s", group, exc)
+            continue
+
+        for ep in eps:
+            if ep.name in _BUILTIN_NAMES:
+                # Built-ins are already loaded in phase A; skip them here.
+                continue
+
+            settings = plugin_settings.get(ep.name, None)
+            enabled = getattr(settings, "enabled", True) if settings is not None else True
+
+            if not enabled:
+                log.info(
+                    "Skipping disabled external plug-in %r (group=%s).", ep.name, group
+                )
+                continue
+
+            try:
+                factory = ep.load()
+            except Exception as exc:
+                log.warning(
+                    "Failed to load entry point %r from group %r: %s",
+                    ep.name, group, exc,
+                )
+                continue
+
+            if not callable(factory):
+                log.warning(
+                    "Entry point %r (group=%r) is not callable; skipping.",
+                    ep.name, group,
+                )
+                continue
+
+            try:
+                record = factory()
+            except Exception as exc:
+                log.warning(
+                    "Entry point %r (group=%r) factory() raised: %s",
+                    ep.name, group, exc,
+                )
+                continue
+
+            if not isinstance(record, PluginRecord):
+                log.warning(
+                    "Entry point %r (group=%r) factory() returned %r, expected PluginRecord; "
+                    "skipping.",
+                    ep.name, group, type(record),
+                )
+                continue
+
+            try:
+                _REGISTER_DISPATCH[record.type](record)
+            except (ValueError, KeyError) as exc:
+                log.warning(
+                    "Failed to register external plug-in %r: %s", ep.name, exc
+                )
+                continue
+
+            newly_registered.append(record)
+
+    # Finalize: call setup() on newly registered non-event plug-ins that have one.
+    # (event plug-ins had setup() called inside _register_event already.)
+    for record in newly_registered:
+        if record.type == "event":
+            continue
+        if record.setup is None:
+            continue
+        try:
+            record.setup()
+        except Exception as exc:
+            log.warning(
+                "External plug-in %r setup() raised: %s", record.name, exc
+            )
+
+
+# ---------------------------------------------------------------------------
+# Public utility
+# ---------------------------------------------------------------------------
+
+def get_record(name: str) -> "PluginRecord | None":
+    """Return the registered PluginRecord for the given plug-in name, or None.
+
+    Args:
+        name(str): Plug-in name to look up.
+
+    Return:
+        record(PluginRecord | None): The registered record, or None if absent.
+    """
+    return _registry.get(name)
+
+
+def get_config(name: str) -> dict:
+    """Return the per-plug-in config dict for a registered plug-in.
+
+    Args:
+        name(str): Registered plug-in name.
+
+    Return:
+        config(dict): The plug-in's config dict, or an empty dict if not configured.
+
+    Raises:
+        KeyError: If name is not in the registry (plug-in not loaded).
+    """
+    if name not in _registry:
+        raise KeyError(f"No plug-in named {name!r} is registered")
+
+    plugins_map = getattr(mirror.conf, "plugins", {}) if hasattr(mirror, "conf") else {}
+    if isinstance(plugins_map, list):
+        return {}
+    settings = plugins_map.get(name, None)
+    if settings is None:
+        return {}
+    return getattr(settings, "config", {}) or {}

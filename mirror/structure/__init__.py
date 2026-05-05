@@ -273,6 +273,26 @@ class Packages(Options):
         return {key: getattr(self, key).to_dict() for key in self._keys}
 
 @dataclass
+class PluginSettings(Options):
+    enabled: bool = True
+    config: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PluginSettings":
+        """Build PluginSettings from a config dict, ignoring unknown keys.
+
+        Args:
+            data(dict): Raw plugin settings dictionary.
+
+        Return:
+            settings(PluginSettings): Populated instance.
+        """
+        known = {"enabled", "config"}
+        filtered = {k: v for k, v in data.items() if k in known}
+        return cls(**filtered)
+
+
+@dataclass
 class Config:
     @dataclass
     class FTPSync(Options):
@@ -301,7 +321,37 @@ class Config:
 
     localtimezone: str
     logger: dict
-    plugins: list[str]
+    plugins: dict[str, PluginSettings] = field(default_factory=dict)
+
+    @staticmethod
+    def _parse_plugins(raw: object) -> "dict[str, PluginSettings]":
+        """Parse the raw plugins config value into a dict of PluginSettings.
+
+        Handles three shapes:
+        - dict: coerce each value through PluginSettings.from_dict.
+        - list: log a deprecation warning and return an empty dict.
+        - missing/None: return an empty dict.
+
+        Args:
+            raw(object): The raw value read from config["settings"]["plugins"].
+
+        Return:
+            plugins(dict[str, PluginSettings]): Parsed plugin settings map.
+        """
+        if raw is None:
+            return {}
+        if isinstance(raw, list):
+            mirror.log.warning(
+                "Legacy 'plugins' list-of-strings shape detected; the entry-points-based"
+                " plug-in system supersedes file-path entries. Migrate config to dict shape."
+            )
+            return {}
+        if isinstance(raw, dict):
+            return {name: PluginSettings.from_dict(value) for name, value in raw.items()}
+        mirror.log.warning(
+            f"Unexpected 'plugins' value type {type(raw).__name__!r}; ignoring."
+        )
+        return {}
 
     @staticmethod
     def load_from_dict(config: dict) -> "Config":
@@ -313,6 +363,7 @@ class Config:
         Return:
             conf(Config): Populated Config instance.
         """
+        raw_plugins = config["settings"].get("plugins")
         return Config(
             name=config.get("mirrorname", ""),
             hostname=config.get("hostname", ""),
@@ -327,7 +378,7 @@ class Config:
             maintainer=config["settings"].get("maintainer", {}),
             localtimezone=config["settings"]["localtimezone"],
             logger=config["settings"]["logger"],
-            plugins=config["settings"]["plugins"],
+            plugins=Config._parse_plugins(raw_plugins),
         )
 
     def _path_check(self, path: Path) -> None:
@@ -357,7 +408,7 @@ class Config:
                 "uid": self.uid,
                 "ftpsync": self.ftpsync.to_dict(),
                 "logger": self.logger,
-                "plugins": self.plugins,
+                "plugins": {name: ps.to_dict() for name, ps in self.plugins.items()},
             }
         }
 
