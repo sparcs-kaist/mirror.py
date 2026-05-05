@@ -37,5 +37,67 @@ def test_event_system():
     time.sleep(0.5)
     assert ("pkg_456", "fail") not in results
 
+def test_post_event_passes_payload_positional_args():
+    """Listeners must receive positional payload args from post_event."""
+    from mirror.event import on, off, post_event
+
+    received = []
+    def listener(*args, **kwargs):
+        received.append((args, kwargs))
+
+    on("test.payload", listener)
+    try:
+        post_event("test.payload", "pkg", "ACTIVE", wait=True)
+    finally:
+        off("test.payload", listener)
+
+    assert received == [(("pkg", "ACTIVE"), {})]
+
+
+def test_pre_listener_observes_pre_mutation_status():
+    """Package.set_status must fire PRE before mutating .status (wait=True)."""
+    from unittest.mock import MagicMock
+    from mirror.structure import Package
+    from mirror.event import on, off
+
+    pkg = Package.__new__(Package)
+    pkg.pkgid = "evt_test"
+    pkg.name = "EvtTest"
+    pkg.status = "UNKNOWN"
+    pkg.timestamp = 0.0
+    pkg.statusinfo = Package.StatusInfo()
+    pkg.disabled = False
+
+    pre_observed = []
+    post_observed = []
+
+    def pre_listener(p, new_status, **kwargs):
+        # PRE must run BEFORE .status was mutated to new_status
+        pre_observed.append((p.status, new_status))
+
+    def post_listener(p, new_status, **kwargs):
+        post_observed.append((p.status, new_status))
+
+    on("MASTER.PACKAGE_STATUS_UPDATE.PRE", pre_listener)
+    on("MASTER.PACKAGE_STATUS_UPDATE.POST", post_listener)
+    try:
+        pkg.set_status("ACTIVE")
+    finally:
+        off("MASTER.PACKAGE_STATUS_UPDATE.PRE", pre_listener)
+        off("MASTER.PACKAGE_STATUS_UPDATE.POST", post_listener)
+
+    assert pre_observed == [("UNKNOWN", "ACTIVE")], (
+        f"PRE should observe pre-mutation status; got {pre_observed}"
+    )
+    # POST runs async by default; give it a moment then check
+    import time as _t
+    for _ in range(20):
+        if post_observed:
+            break
+        _t.sleep(0.05)
+    # POST observes the new status
+    assert post_observed and post_observed[0][1] == "ACTIVE"
+
+
 if __name__ == "__main__":
     test_event_system()

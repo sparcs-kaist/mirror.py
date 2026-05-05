@@ -153,7 +153,7 @@ def save_stat_data():
         mirror.log.error(f"Failed to save stat data to {STAT_DATA_PATH}: {e}")
 
 @mirror.event.listener("MASTER.PACKAGE_STATUS_UPDATE.POST")
-def _on_package_status_update():
+def _on_package_status_update(*args, **kwargs):
     """Automatically save status and stats when a package status changes."""
     generate_and_save_web_status()
     save_stat_data()

@@ -129,21 +129,30 @@ class Package:
 
         if self.status == status: return
         
-        mirror.event.post_event("MASTER.PACKAGE_STATUS_UPDATE.PRE")
+        mirror.event.post_event(
+            "MASTER.PACKAGE_STATUS_UPDATE.PRE",
+            self,
+            status,
+            wait=True,
+        )
         self.status = status
         self.timestamp = time.time() * 1000
 
         if status == "ERROR":
             self.statusinfo.errorcount += 1
-        
+
         if logfile:
             if status == "ACTIVE":
                 self.statusinfo.lastsuccesslog = str(logfile)
                 self.statusinfo.lasterrorlog = None
             elif status == "ERROR":
                 self.statusinfo.lasterrorlog = str(logfile)
-        
-        mirror.event.post_event("MASTER.PACKAGE_STATUS_UPDATE.POST")
+
+        mirror.event.post_event(
+            "MASTER.PACKAGE_STATUS_UPDATE.POST",
+            self,
+            status,
+        )
     
     def to_dict(self) -> dict:
         package_dict = asdict(self)

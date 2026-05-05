@@ -60,12 +60,14 @@ class EventManager:
                     (p, cb) for p, cb in self._listeners[event_name] if cb != listener
                 ]
 
-    def post_event(self, event_name: str, wait: bool, *args, **kwargs):
-        """
-        Fire an event.
-        
+    def post_event(self, event_name: str, *args, wait: bool = False, **kwargs) -> None:
+        """Fire an event, executing all registered listeners.
+
         Args:
-            wait (bool): If True, blocks until all listeners have completed.
+            event_name(str): Name of the event to fire.
+            *args: Positional payload forwarded to listeners.
+            wait(bool, keyword-only): If True, block until all listeners complete.
+            **kwargs: Keyword payload forwarded to listeners.
         """
 
         with self._lock:
@@ -122,13 +124,16 @@ def off(event_name: str, listener: Callable):
     """Unregister a listener."""
     _manager.off(event_name, listener)
 
-def post_event(event_name: str, *args, **kwargs):
+def post_event(event_name: str, *args, wait: bool = False, **kwargs) -> None:
+    """Fire an event via the global manager.
+
+    Args:
+        event_name(str): Name of the event to fire.
+        *args: Positional payload forwarded to listeners.
+        wait(bool, keyword-only): If True, block until all listeners complete.
+        **kwargs: Keyword payload forwarded to listeners.
     """
-    Fire an event.
-    Use 'wait=True' to block until completion.
-    """
-    wait = kwargs.pop('wait', False)
-    _manager.post_event(event_name, wait, *args, **kwargs)
+    _manager.post_event(event_name, *args, wait=wait, **kwargs)
 
 # Decorator for easy registration
 def listener(event_name: str, priority: int = 50):
