@@ -147,7 +147,7 @@ def test_mirror_config_loading(temp_config_env):
     assert pkg.name == dummy_config_content["packages"][pkg_id]["name"]
     assert pkg.href == dummy_config_content["packages"][pkg_id]["href"]
     assert pkg.synctype == dummy_config_content["packages"][pkg_id]["synctype"]
-    assert pkg.syncrate == mirror.toolbox.iso_duration_parser(dummy_config_content["packages"][pkg_id]["syncrate"]) # Compare parsed values
+    assert pkg.syncrate == mirror.toolbox.parse_iso_duration(dummy_config_content["packages"][pkg_id]["syncrate"])
     assert pkg.settings.src == dummy_config_content["packages"][pkg_id]["settings"]["src"]
     
     # --- Verify Stat file ---
@@ -232,15 +232,15 @@ def test_socket_path_from_config_overrides_default(tmp_path, monkeypatch):
                 pass
 
 
-# Define mirror.toolbox.iso_duration_parser temporarily as it's needed (in case the actual module is not loaded)
-if not hasattr(mirror, 'toolbox') or not hasattr(mirror.toolbox, 'iso_duration_parser'):
+# Define mirror.toolbox.parse_iso_duration temporarily as it's needed (in case the actual module is not loaded)
+if not hasattr(mirror, 'toolbox') or not hasattr(mirror.toolbox, 'parse_iso_duration'):
     class MockToolbox:
-        def iso_duration_parser(self, duration_str):
+        def parse_iso_duration(self, duration_str):
             # Handle simple PT1H -> 3600 (seconds) conversion only
             if duration_str == "PT1H":
                 return 3600
-            return 0 # Assume other values are 0 for now
-        def iso_duration_maker(self, seconds):
+            return 0
+        def format_iso_duration(self, seconds):
             if seconds == 3600:
                 return "PT1H"
             return ""

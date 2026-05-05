@@ -46,8 +46,8 @@ class Job:
                 f"Job {job_id}: negative nice ({nice}) requires root EUID"
             )
 
-    def start(self):
-        """Start the worker process."""
+    def start(self) -> None:
+        """Spawn the subprocess with the configured command, uid, gid, and niceness."""
 
         def preexec():
             # Apply niceness before changing identity so the setuid
@@ -148,8 +148,12 @@ class Job:
             return self.process.returncode
         return None
 
-    def stop(self, timeout: int = 5):
-        """Stop the worker process."""
+    def stop(self, timeout: int = 5) -> None:
+        """Terminate the worker process, killing it if it does not stop in time.
+
+        Args:
+            timeout(int, optional): Seconds to wait before sending SIGKILL. Defaults to 5.
+        """
         if self.process and self.is_running:
             self.process.terminate()
             try:
@@ -161,6 +165,11 @@ class Job:
             self.end_time = time.time()
 
     def info(self) -> dict:
+        """Return a snapshot dict of the job's current state.
+
+        Return:
+            data(dict): Job metadata including id, pid, running status, and uptime.
+        """
         return {
             "id": self.id,
             "pid": self.pid,

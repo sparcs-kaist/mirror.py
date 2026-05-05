@@ -2,15 +2,17 @@ import json
 import os
 import platform
 from pathlib import Path
+from prompt_toolkit.shortcuts import print_formatted_text
 from mirror.config.config import DEFAULT_CONFIG
 
-def setup():
+def setup() -> None:
+    """Provision directories and systemd units for the mirror daemon."""
     if platform.system() != 'Linux':
-        print('This command can only be run on Linux.')
+        print_formatted_text('This command can only be run on Linux.')
         return
 
     if os.geteuid() != 0:
-        print('This command must be run as root.')
+        print_formatted_text('This command must be run as root.')
         return
 
     try:
@@ -62,4 +64,4 @@ WantedBy=multi-user.target
         (systemd_path / 'mirror-worker.service').write_text(mirror_worker_service)
             
     except Exception as e:
-        print(f"An error occurred during setup: {e}")
+        print_formatted_text(f"An error occurred during setup: {e}")

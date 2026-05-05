@@ -128,7 +128,7 @@ def generate_and_save_web_status():
             "id": package.pkgid,
             "status": package.status,
             "synctype": package.synctype,
-            "syncrate": mirror.toolbox.iso_duration_maker(package.syncrate),
+            "syncrate": mirror.toolbox.format_iso_duration(package.syncrate),
             "syncurl": package.settings.src,
             "href": package.href,
             "lastsync": package.lastsync,

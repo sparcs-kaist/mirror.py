@@ -29,26 +29,20 @@ def mock_dependencies():
             def error(self, msg): pass
         mirror.logger = MockLogger()
 
-    # 2. Mock Toolbox (especially iso_duration_parser)
+    # 2. Mock Toolbox (especially parse_iso_duration)
     # config-example.json contains non-standard values like "" and "PUSH"
     # Actual parser might raise errors.
-    original_parser = None
-    if hasattr(mirror, 'toolbox') and hasattr(mirror.toolbox, 'iso_duration_parser'):
-        original_parser = mirror.toolbox.iso_duration_parser
-        
     class MockToolbox:
-        def iso_duration_parser(self, duration_str):
+        def parse_iso_duration(self, duration_str):
             if duration_str == "":
                 return 0
             if duration_str == "PUSH":
-                return -1 # PUSH is treated as a special value
-            # Otherwise, attempt simple parsing or call actual parser (handle simply here)
-            # PT10M -> 600
+                return -1
             if duration_str == "PT10M":
                 return 600
             return 0
-            
-        def iso_duration_maker(self, seconds):
+
+        def format_iso_duration(self, seconds):
             if seconds == -1:
                 return "PUSH"
             if seconds == 0:
@@ -56,7 +50,7 @@ def mock_dependencies():
             if seconds == 600:
                 return "PT10M"
             return ""
-            
+
     mirror.toolbox = MockToolbox()
 
     # 3. Mock Sync Methods
@@ -64,13 +58,10 @@ def mock_dependencies():
     if not hasattr(mirror, 'sync'):
         class MockSync: pass
         mirror.sync = MockSync()
-    
+
     mirror.sync.methods = ['local', 'ftpsync', 'rsync']
 
     yield
-
-    # Teardown (optional restoration)
-    # if original_parser: mirror.toolbox.iso_duration_parser = original_parser
 
 @pytest.fixture
 def setup_example_env(tmp_path):

@@ -5,9 +5,11 @@ from .process import Job, create, get, get_all, prune_finished
 
 logger = logging.getLogger(__name__)
 
-def manage(interval: int = 1):
-    """
-    Background manager that monitors and prunes finished workers.
+def manage(interval: int = 1) -> None:
+    """Run the worker manager loop, pruning finished jobs at each interval.
+
+    Args:
+        interval(int, optional): Sleep duration in seconds between prune cycles. Defaults to 1.
     """
     logger.info("Worker manager started.")
     while True:

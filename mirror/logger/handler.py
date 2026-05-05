@@ -14,16 +14,15 @@ _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
 def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None = None) -> str:
-    """
-    Format time in the log message or path.
-    Pre-formats components with zero-padding (e.g., month as '02').
+    """Format a template string with zero-padded time components.
 
     Args:
-        line (str): Template string
-        usetime (datetime.datetime): Time to format
-        pkgid (str): Package ID (optional)
-    Returns:
-        str: Formatted string
+        line(str): Template string with placeholders like {year}, {month}, etc.
+        usetime(datetime.datetime): Timestamp to format from.
+        pkgid(str, optional): Package ID substituted into {packageid} placeholder.
+
+    Return:
+        formatted(str): Template with all placeholders replaced.
     """
     return line.format(
         year=f"{usetime.year:04d}",
@@ -38,14 +37,13 @@ def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None = 
 
 
 def compress_file(filepath: str | Path) -> Path | None:
-    """
-    Compress a file with gzip and remove the original.
+    """Compress a file with gzip and remove the original.
 
     Args:
-        filepath: Path to the file to compress
+        filepath(str | Path): Path to the file to compress.
 
-    Returns:
-        Path to the compressed file, or None if compression failed
+    Return:
+        gz_path(Path | None): Path to the .gz file, or None if compression failed.
     """
     filepath = Path(filepath)
     if not filepath.exists():

@@ -41,7 +41,7 @@ name = "mock_module"
     mock_file.write_text(mock_content)
     
     # Execute loader
-    mirror.sync.loader(custom_sync_dir)
+    mirror.sync.load_sync_methods(custom_sync_dir)
     
     # Check loading
     assert hasattr(mirror.sync, "mock_sync")

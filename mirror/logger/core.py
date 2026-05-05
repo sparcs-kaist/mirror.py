@@ -41,14 +41,14 @@ logger.handlers[0].setFormatter(logging.Formatter(DEFAULT_FORMAT))
 
 
 def create_logger(name: str, start_time: float) -> logging.Logger:
-    """
-    Create Logger for package sync.
+    """Create a per-package logger for a sync session.
 
     Args:
-        name: Package name
-        start_time: Start time of the sync
-    Returns:
-        logging.Logger: Logger object
+        name(str): Package name used to identify the logger and format paths.
+        start_time(float): Unix timestamp of when the sync started.
+
+    Return:
+        pkg_logger(logging.Logger): Configured logger with file and prompt handlers.
     """
     if "packageformat" not in mirror.conf.logger:
         mirror.conf.logger["packageformat"] = DEFAULT_PACKAGE_FORMAT
@@ -95,18 +95,14 @@ def create_logger(name: str, start_time: float) -> logging.Logger:
 
 
 def close_logger(pkg_logger: logging.Logger, compress: bool | None = None) -> Path | None:
-    """
-    Close a package logger and optionally compress the log file.
-
-    This function should be called when package sync is complete.
-    It closes all handlers and compresses the log file if configured.
+    """Close a package logger and optionally compress the log file.
 
     Args:
-        pkg_logger: The logger to close
-        compress: Override compression setting (uses config if None)
+        pkg_logger(logging.Logger): The logger to close.
+        compress(bool, optional): Override gzip setting. Uses config value if None.
 
-    Returns:
-        Path to the log file (compressed or not), or None if no file handler
+    Return:
+        log_path(Path | None): Path to the (compressed) log file, or None if no file handler.
     """
     if compress is None:
         compress = mirror.conf.logger.get("packagefileformat", {}).get("gzip", True)
@@ -129,7 +125,7 @@ def close_logger(pkg_logger: logging.Logger, compress: bool | None = None) -> Pa
     return log_file_path
 
 
-def setup_logger():
+def setup_logger() -> None:
     """Configure the main application logger with file and console handlers."""
     global basePath
 
@@ -160,17 +156,27 @@ def setup_logger():
     mirror.log = main_logger
 
 def get_log_path(pkg_logger: logging.Logger) -> Path | None:
-    """
-    Get the log file path from a package logger.
+    """Return the file path used by the logger's FileHandler, or None.
+
+    Args:
+        pkg_logger(logging.Logger): Package logger to inspect.
+
+    Return:
+        path(Path | None): Log file path, or None if no FileHandler is attached.
     """
     for handler in pkg_logger.handlers:
         if isinstance(handler, logging.FileHandler):
             return Path(handler.baseFilename)
     return None
 
-def get(pkgid: str):
-    """
-    Get the logger for a specific package.
+def get(pkgid: str) -> logging.Logger:
+    """Return the logger for the given package ID.
+
+    Args:
+        pkgid(str): Package identifier.
+
+    Return:
+        logger(logging.Logger): Logger scoped to this package.
     """
     return logging.getLogger(f"mirror.package.{pkgid}")
     

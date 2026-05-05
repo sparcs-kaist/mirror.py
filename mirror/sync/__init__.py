@@ -17,11 +17,16 @@ methods = []
 _start_lock = threading.Lock()
 _in_progress: set[str] = set()
 
-def setup():
+def setup() -> None:
+    """Initialize the sync subsystem by loading default sync modules."""
     load_default()
 
-def loader(methodPath: Path) -> None:
-    """Load the sync moodules"""
+def load_sync_methods(methodPath: Path) -> None:
+    """Load sync modules from the given directory path.
+
+    Args:
+        methodPath(Path): Directory containing sync module .py files.
+    """
     import mirror.sync
     global methods
     methodsFullPath = [method for method in methodPath.glob("*.py") if method.stem != "__init__"]
@@ -43,7 +48,14 @@ def loader(methodPath: Path) -> None:
                 methods.append(method.stem)
 
 def get_module(method: str) -> Callable:
-    """Get the sync moodule"""
+    """Return the loaded sync module for the given method name.
+
+    Args:
+        method(str): Sync method name (e.g. "rsync", "ftpsync").
+
+    Return:
+        module(Callable): The loaded sync module object.
+    """
     import mirror.sync
     return getattr(mirror.sync, method)
 
@@ -100,7 +112,14 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
             _in_progress.discard(pkgid)
         raise
 
-def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
+def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
+    """Handle sync completion: log result, call per-module hook, update package status.
+
+    Args:
+        pkgid(str): Package identifier.
+        success(bool): Whether the sync succeeded.
+        returncode(int, optional): Process return code, or None if unavailable.
+    """
     import mirror.sync
 
     package = mirror.packages.get(pkgid)
@@ -133,8 +152,10 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
         _in_progress.discard(pkgid)
 
 
-def load_default():
-    """Load the default sync moodules"""
-    loader(BasicMethodPath)
+def load_default() -> None:
+    """Load the default sync modules from the package directory."""
+    load_sync_methods(BasicMethodPath)
 
-def execute(package: "mirror.structure.Package", logger: logging.Logger): ...
+def execute(package: "mirror.structure.Package", logger: logging.Logger) -> None:
+    """Module-level execute placeholder; sync modules override this."""
+    ...

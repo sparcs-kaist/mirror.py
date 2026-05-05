@@ -3,10 +3,16 @@ import os
 import shutil
 import subprocess
 
-def iso_duration_parser(iso8601: str) -> int: # ISO 8601 Parser
-    """
-    ISO8601 Durations Parser.
+def parse_iso_duration(iso8601: str) -> int:
+    """Parse an ISO 8601 duration string into total seconds.
+
     Only supports days, hours, minutes, and seconds.
+
+    Args:
+        iso8601(str): ISO 8601 duration string (e.g. "P1DT2H3M4S") or "PUSH" or "".
+
+    Return:
+        seconds(int): Total duration in seconds. Returns -1 for "PUSH", 0 for "".
     """
     if not iso8601:
         return 0
@@ -26,10 +32,16 @@ def iso_duration_parser(iso8601: str) -> int: # ISO 8601 Parser
         int(match['minutes'] or 0)*60 + \
         int(match['seconds'] or 0)
 
-def iso_duration_maker(duration: int) -> str:
-    """
-    ISO8601 Durations Maker.
-    Only supports days, hours, minutes, and seconds. (MAX: 31 days)
+def format_iso_duration(duration: int) -> str:
+    """Format total seconds into an ISO 8601 duration string.
+
+    Only supports days, hours, minutes, and seconds (max 31 days).
+
+    Args:
+        duration(int): Duration in seconds. Use -1 for "PUSH".
+
+    Return:
+        iso8601(str): ISO 8601 duration string, "PUSH" for -1, or "" for 0.
     """
     if duration == -1:
         return "PUSH"
@@ -40,7 +52,7 @@ def iso_duration_maker(duration: int) -> str:
         raise ValueError("Duration must be less than 31 days.")
     
     if duration == 0:
-        return "" # Return empty string to maintain compatibility with "" in config-example.json
+        return ""
 
     iso8601 = "P"
     
@@ -68,14 +80,15 @@ def iso_duration_maker(duration: int) -> str:
             
     return iso8601
 
-def set_rsync_user(url: str, user: str):
-    """
-    Set rsync user
+def set_rsync_user(url: str, user: str) -> str:
+    """Embed a username into an rsync URL.
+
     Args:
-        url (str): URL to set
-        user (str): User to set
-    Returns:
-        str: URL with user
+        url(str): Rsync source URL (rsync:// or :: form).
+        user(str): Username to embed.
+
+    Return:
+        url_with_user(str): URL with the username inserted.
     """
 
     if not user:
@@ -88,7 +101,7 @@ def set_rsync_user(url: str, user: str):
     else:
         raise ValueError("Invalid URL")
 
-def checkPermission() -> bool:
+def has_root_or_sudo() -> bool:
     """Check that user has root or passwordless sudo permission.
 
     Return:

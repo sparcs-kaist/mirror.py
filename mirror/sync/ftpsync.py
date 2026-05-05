@@ -20,11 +20,17 @@ ARCHVSYNC_REPO = "https://salsa.debian.org/mirror-team/archvsync.git"
 
 _ftpsync_handles: dict[str, "TemporaryDirectory"] = {}
 
-def setup(path: Path, package: mirror.structure.Package):
+def setup(path: Path, package: mirror.structure.Package) -> None:
+    """Prepare the sync environment (no-op for ftpsync top-level setup)."""
     pass
 
-def setup_ftpsync(path: Path, package: mirror.structure.Package):
-    """Setup archvsync and package config"""
+def setup_ftpsync(path: Path, package: mirror.structure.Package) -> None:
+    """Set up archvsync binary and ftpsync.conf in a temporary directory.
+
+    Args:
+        path(Path): Temporary working directory for this sync session.
+        package(mirror.structure.Package): Package whose settings drive the config.
+    """
     (path / "bin").mkdir(exist_ok=True)
     (path / "etc").mkdir(exist_ok=True)
 
@@ -119,11 +125,18 @@ def on_sync_done(package: mirror.structure.Package, logger: logging.Logger, succ
 
 
 def _check_git() -> bool:
-    """Check if git command is available"""
+    """Return True if git is available on PATH."""
     return shutil.which("git") is not None
 
 def _clone_archvsync(path: Path) -> bool:
-    """Clone archvsync repository to path"""
+    """Clone the archvsync repository into path/archvsync.
+
+    Args:
+        path(Path): Parent directory for the clone.
+
+    Return:
+        ok(bool): True if the clone succeeded.
+    """
     try:
         result = subprocess.run(
             ["git", "clone", "--depth", "1", ARCHVSYNC_REPO, str(path / "archvsync")],
@@ -135,7 +148,14 @@ def _clone_archvsync(path: Path) -> bool:
         return False
 
 def _extract_archvsync(path: Path) -> bool:
-    """Extract archvsync from base64 encoded tar.gz"""
+    """Extract the bundled archvsync tar.gz into path.
+
+    Args:
+        path(Path): Directory to extract into.
+
+    Return:
+        ok(bool): True if extraction succeeded.
+    """
     try:
         from mirror.sync._ftpsync_script import ARCHVSYNC_HASH, ARCHVSYNC_SCRIPT
 
@@ -154,7 +174,14 @@ def _extract_archvsync(path: Path) -> bool:
         return False
 
 def _config(package: mirror.structure.Package) -> str:
-    """Build ftpsync config text with shell-safe quoting."""
+    """Build ftpsync.conf content with shell-safe quoting.
+
+    Args:
+        package(mirror.structure.Package): Package whose options populate the config.
+
+    Return:
+        config_text(str): Newline-separated KEY=VALUE lines for ftpsync.conf.
+    """
     opts = package.settings.options
 
     def _q(key: str, value) -> str:

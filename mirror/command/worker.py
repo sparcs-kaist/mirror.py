@@ -3,16 +3,19 @@ import json
 import signal
 import logging
 from pathlib import Path
+from typing import Optional
 
 import mirror
 import mirror.socket
 import mirror.worker
 
 
-def worker(config, socket_path=None):
-    """
-    Runs the mirror worker.
-    'config' is the path to the main JSON configuration file.
+def worker(config: str, socket_path: Optional[str] = None) -> None:
+    """Run the mirror worker server.
+
+    Args:
+        config(str): Path to the main JSON configuration file.
+        socket_path(str, optional): Override path for the worker Unix socket.
     """
     log_level = logging.INFO
     if config:

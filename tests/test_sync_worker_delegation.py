@@ -132,7 +132,7 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         pkg_logger = MagicMock()
         pkg_logger.handlers = []
 
-        with patch.object(rsync_mod, "ffts", return_value=False) as ffts_mock, \
+        with patch.object(rsync_mod, "check_ffts_update", return_value=False) as ffts_mock, \
              patch("mirror.sync.on_sync_done") as on_done, \
              patch("mirror.socket.worker.execute_command") as exec_cmd:
             rsync_mod.execute(pkg, pkg_logger)

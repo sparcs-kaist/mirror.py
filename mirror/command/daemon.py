@@ -9,13 +9,14 @@ import mirror.event
 import time
 import signal
 import sys
-import os # Added os import
+import os
 from pathlib import Path
 
-def daemon(config):
-    """
-    Runs the mirror daemon.
-    'config' is the path to the main JSON configuration file.
+def daemon(config: str) -> None:
+    """Run the mirror master daemon.
+
+    Args:
+        config(str): Path to the main JSON configuration file.
     """
     # Load all configurations from the single config file path.
     mirror.config.load(Path(config))

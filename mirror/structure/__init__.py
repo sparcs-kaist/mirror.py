@@ -11,12 +11,15 @@ import time
 @dataclass
 class Options:
     def get(self, key: str, default=None):
+        """Return attribute value by name, or default if not present."""
         return getattr(self, key, default)
 
     def to_dict(self) -> dict:
+        """Serialize dataclass fields to a dictionary."""
         return asdict(self)
-    
+
     def to_json(self) -> str:
+        """Serialize dataclass fields to a JSON string."""
         return json.dumps(self.to_dict())
 
 @dataclass
@@ -28,7 +31,14 @@ class PackageSettings(Options):
 
     @classmethod
     def from_dict(cls, data: dict) -> "PackageSettings":
-        # Filter data to only include known fields
+        """Build PackageSettings from a config dict, ignoring unknown keys.
+
+        Args:
+            data(dict): Raw package settings dictionary.
+
+        Return:
+            settings(PackageSettings): Populated instance.
+        """
         known_fields = {"hidden", "src", "dst", "options"}
         filtered_data = {k: v for k, v in data.items() if k in known_fields}
         return cls(**filtered_data)
@@ -69,12 +79,12 @@ class Package:
     @staticmethod
     def from_dict(config: dict) -> "Package":
         import mirror.sync
-        from mirror.toolbox import iso_duration_parser
+        from mirror.toolbox import parse_iso_duration
         # Validation
         synctype = config["synctype"]
         if synctype not in mirror.sync.methods:
             raise ValueError(f"Sync type not in {mirror.sync.methods}")
-        
+
         # Handle status and statusinfo from stat object
         status_obj = config.get("status", "UNKNOWN")
         if isinstance(status_obj, dict):
@@ -83,17 +93,17 @@ class Package:
         else:
             status = status_obj
             statusinfo_dict = config.get("statusinfo", {})
-        
+
         # Pull lastsync from statusinfo if present (matching mirror/config/__init__.py behavior)
         lastsync = statusinfo_dict.get("lastsync", config.get("lastsync", 0.0))
-        
+
         return Package(
             pkgid=config["id"],
             name=config["name"],
             status=status,
             href=config["href"],
             synctype=synctype,
-            syncrate=iso_duration_parser(config["syncrate"]),
+            syncrate=parse_iso_duration(config["syncrate"]),
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
             settings=PackageSettings.from_dict(config["settings"]),
             lastsync=lastsync,
@@ -139,30 +149,38 @@ class Package:
         )
     
     def to_dict(self) -> dict:
+        """Serialize the package to a stat-format dictionary.
+
+        Return:
+            data(dict): Package fields with "id" key and ISO 8601 syncrate.
+        """
         package_dict = asdict(self)
-        package_dict["id"] = package_dict.pop("pkgid") # Convert pkgid -> id
-        package_dict["syncrate"] = mirror.toolbox.iso_duration_maker(self.syncrate)
+        # Convert pkgid -> id
+        package_dict["id"] = package_dict.pop("pkgid")
+        package_dict["syncrate"] = mirror.toolbox.format_iso_duration(self.syncrate)
         package_dict["link"] = [link.to_dict() for link in self.link]
         package_dict["settings"] = self.settings.to_dict()
-        
+
         # stat format: status is an object containing status and statusinfo
         package_dict["status"] = {
             "status": self.status,
             "statusinfo": self.statusinfo.to_dict()
         }
-        # Remove flat statusinfo from asdict if present
         if "statusinfo" in package_dict:
             del package_dict["statusinfo"]
-            
+
         return package_dict
 
     def to_json(self) -> str:
+        """Serialize the package to a JSON string."""
         return json.dumps(self.to_dict())
-    
+
     def is_syncing(self) -> bool:
+        """Return True if the package status is SYNC."""
         return self.status == "SYNC"
-    
+
     def is_disabled(self) -> bool:
+        """Return True if the package is disabled."""
         return self.disabled
 
     def _path_check(self, path: Path) -> None:
@@ -263,6 +281,14 @@ class Config:
 
     @staticmethod
     def load_from_dict(config: dict) -> "Config":
+        """Build a Config instance from the parsed JSON config dict.
+
+        Args:
+            config(dict): Top-level config dictionary.
+
+        Return:
+            conf(Config): Populated Config instance.
+        """
         return Config(
             name=config.get("mirrorname", ""),
             hostname=config.get("hostname", ""),
@@ -288,6 +314,11 @@ class Config:
             raise NotADirectoryError(f"{path} is not a directory")
 
     def to_dict(self) -> dict:
+        """Serialize Config to a dictionary matching the config.json schema.
+
+        Return:
+            data(dict): Config as a serializable dict.
+        """
         return {
             "mirrorname": self.name,
             "hostname": self.hostname,
@@ -307,8 +338,10 @@ class Config:
         }
 
     def to_json(self) -> str:
+        """Serialize Config to a JSON string."""
         return json.dumps(self.to_dict())
-    
+
     def save(self) -> None:
+        """Persist the config to disk at the loaded config path."""
         mirror.confPath.write_text(self.to_json())
 
