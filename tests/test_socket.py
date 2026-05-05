@@ -181,8 +181,10 @@ class TestMasterServer:
             mock_worker = MagicMock()
 
             original_packages = getattr(mirror, 'packages', None)
-            original_sync = sys.modules.get('mirror.sync')
-            original_worker = sys.modules.get('mirror.socket.worker')
+            original_sync_in_sysmod = sys.modules.get('mirror.sync')
+            original_sync_attr = getattr(mirror, 'sync', None)
+            original_worker_in_sysmod = sys.modules.get('mirror.socket.worker')
+            original_worker_attr = getattr(mirror.socket, 'worker', None)
 
             mirror.packages = mock_packages
             sys.modules['mirror.sync'] = mock_sync
@@ -217,14 +219,22 @@ class TestMasterServer:
             finally:
                 server.stop()
                 mirror.packages = original_packages
-                if original_sync is not None:
-                    sys.modules['mirror.sync'] = original_sync
+                if original_sync_in_sysmod is not None:
+                    sys.modules['mirror.sync'] = original_sync_in_sysmod
                 else:
                     sys.modules.pop('mirror.sync', None)
-                if original_worker is not None:
-                    sys.modules['mirror.socket.worker'] = original_worker
+                if original_sync_attr is not None:
+                    mirror.sync = original_sync_attr
+                else:
+                    delattr(mirror, 'sync')
+                if original_worker_in_sysmod is not None:
+                    sys.modules['mirror.socket.worker'] = original_worker_in_sysmod
                 else:
                     sys.modules.pop('mirror.socket.worker', None)
+                if original_worker_attr is not None:
+                    mirror.socket.worker = original_worker_attr
+                else:
+                    delattr(mirror.socket, 'worker')
 
 
 class TestWorkerServer:
