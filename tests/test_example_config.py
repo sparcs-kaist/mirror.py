@@ -102,6 +102,15 @@ def setup_example_env(tmp_path):
 
     return test_config_path, content
 
+def test_example_config_has_statfile_key():
+    """config-example.json must declare statfile (required by config/__init__.py)."""
+    import json
+    from pathlib import Path
+    p = Path(__file__).parent.parent / "config-example.json"
+    cfg = json.loads(p.read_text())
+    assert "statfile" in cfg["settings"], "config-example.json missing statfile key"
+
+
 def test_load_config_example(setup_example_env):
     """
     Tests if config-example.json is loaded correctly based on its content.

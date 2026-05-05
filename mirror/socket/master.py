@@ -13,7 +13,22 @@ from typing import Optional
 from .protocol import expose
 from .base import BaseServer, BaseClient
 
-MASTER_SOCKET_PATH = mirror.RUN_PATH / "master.sock"
+def _default_master_socket_path() -> Path:
+    """Resolve the master socket path, preferring config.SOCKET_PATH when set."""
+    try:
+        import mirror.config
+        configured = getattr(mirror.config, "SOCKET_PATH", None)
+    except Exception:
+        configured = None
+    if configured:
+        p = Path(str(configured))
+        if p.suffix == ".sock":
+            return p
+        return p / "master.sock"
+    return mirror.RUN_PATH / "master.sock"
+
+
+MASTER_SOCKET_PATH = mirror.RUN_PATH / "master.sock"  # legacy default constant
 
 # Module-level instance (initialized via init_instance)
 _instance: Optional["MasterServer | MasterClient"] = None
@@ -31,7 +46,7 @@ class MasterServer(BaseServer):
 
     def __init__(self, socket_path: Optional[Path | str] = None):
         if socket_path is None:
-            socket_path = MASTER_SOCKET_PATH
+            socket_path = _default_master_socket_path()
         super().__init__(socket_path, role="master")
 
     @expose("ping")
@@ -102,7 +117,7 @@ class MasterClient(BaseClient):
 
     def __init__(self, socket_path: Optional[Path | str] = None):
         if socket_path is None:
-            socket_path = MASTER_SOCKET_PATH
+            socket_path = _default_master_socket_path()
         super().__init__(socket_path, role="cli")
 
     def ping(self) -> dict:
@@ -249,6 +264,7 @@ __all__ = [
     "MasterServer",
     "MasterClient",
     "MASTER_SOCKET_PATH",
+    "_default_master_socket_path",
     "init_instance",
     "stop_instance",
     "get_master_client",

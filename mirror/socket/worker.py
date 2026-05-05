@@ -20,7 +20,22 @@ from .base import BaseServer, BaseClient
 
 logger = logging.getLogger(__name__)
 
-WORKER_SOCKET_PATH = mirror.RUN_PATH / "worker.sock"
+def _default_worker_socket_path() -> Path:
+    """Resolve the worker socket path, preferring config.SOCKET_PATH when set."""
+    try:
+        import mirror.config
+        configured = getattr(mirror.config, "SOCKET_PATH", None)
+    except Exception:
+        configured = None
+    if configured:
+        p = Path(str(configured))
+        if p.suffix == ".sock":
+            return p
+        return p / "worker.sock"
+    return mirror.RUN_PATH / "worker.sock"
+
+
+WORKER_SOCKET_PATH = mirror.RUN_PATH / "worker.sock"  # legacy default constant
 
 # Module-level instance (initialized via init_instance)
 _instance: Optional["WorkerServer | WorkerClient"] = None
@@ -41,7 +56,7 @@ class WorkerServer(BaseServer):
 
     def __init__(self, socket_path: Optional[Path | str] = None):
         if socket_path is None:
-            socket_path = WORKER_SOCKET_PATH
+            socket_path = _default_worker_socket_path()
         super().__init__(socket_path, role="worker")
 
     def send_finished_notification(self, job_id: str, success: bool, returncode: Optional[int]) -> None:
@@ -189,7 +204,7 @@ class WorkerClient(BaseClient):
 
     def __init__(self, socket_path: Optional[Path | str] = None):
         if socket_path is None:
-            socket_path = WORKER_SOCKET_PATH
+            socket_path = _default_worker_socket_path()
         super().__init__(socket_path, role="master")
 
     def handle_notification(self, data: dict) -> None:
@@ -260,6 +275,8 @@ class WorkerClientSupervisor:
     _BACKOFF = [1, 2, 4, 8, 16, 30]
 
     def __init__(self, socket_path: Optional[Path | str] = None):
+        if socket_path is None:
+            socket_path = _default_worker_socket_path()
         self._socket_path = socket_path
         self._stop_event = threading.Event()
         self._has_connected_once = False
@@ -473,6 +490,7 @@ __all__ = [
     "WorkerClient",
     "WorkerClientSupervisor",
     "WORKER_SOCKET_PATH",
+    "_default_worker_socket_path",
     "init_instance",
     "stop_instance",
     "send_finished_notification",

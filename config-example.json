@@ -5,6 +5,7 @@
         "logfolder": "/mirror/logs",
         "webroot": "/var/www/mirror",
         "statusfile": "/var/www/mirror/status.json",
+        "statfile": "/var/lib/mirror/stat.json",
         "localtimezone": "Asia/Seoul",
         "errorcontinuetime": 60,
         "maintainer": {

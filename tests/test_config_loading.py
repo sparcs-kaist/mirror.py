@@ -167,6 +167,71 @@ def test_mirror_config_loading(temp_config_env):
 
     print("\nConfig loading test passed successfully.")
 
+def test_default_config_has_statfile():
+    """DEFAULT_CONFIG must include statfile so setup-time bootstrap works."""
+    from mirror.config.config import DEFAULT_CONFIG
+    assert "statfile" in DEFAULT_CONFIG["settings"]
+
+
+def test_socket_path_from_config_overrides_default(tmp_path, monkeypatch):
+    """When config sets socket_path, master/worker socket defaults reflect it."""
+    import json
+    from pathlib import Path
+    import mirror
+
+    custom_dir = tmp_path / "custom_sockets"
+    custom_dir.mkdir()
+
+    cfg = {
+        "mirrorname": "TestMirror",
+        "hostname": "test.local",
+        "settings": {
+            "logfolder": str(tmp_path / "logs"),
+            "webroot": str(tmp_path / "web"),
+            "statusfile": str(tmp_path / "status.json"),
+            "statfile": str(tmp_path / "stat.json"),
+            "socket_path": str(custom_dir),
+            "errorcontinuetime": 60,
+            "localtimezone": "UTC",
+            "logger": {
+                "level": "INFO",
+                "format": "[%(asctime)s] %(levelname)s # %(message)s",
+                "fileformat": {"base": str(tmp_path / "logs"), "folder": "{year}", "filename": "{day}.log", "gzip": False},
+            },
+            "plugins": [],
+            "ftpsync": {
+                "maintainer": "x", "sponsor": "y", "country": "KR",
+                "location": "Seoul", "throughput": "1G",
+            },
+        },
+        "packages": {},
+    }
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps(cfg))
+
+    (tmp_path / "stat.json").write_text(json.dumps({"packages": {}}))
+    (tmp_path / "status.json").write_text(json.dumps({}))
+
+    import mirror.config
+    try:
+        mirror.config.load(cfg_path)
+        assert mirror.config.SOCKET_PATH == str(custom_dir)
+
+        from mirror.socket.master import _default_master_socket_path
+        from mirror.socket.worker import _default_worker_socket_path
+        assert str(_default_master_socket_path()) == str(custom_dir / "master.sock")
+        assert str(_default_worker_socket_path()) == str(custom_dir / "worker.sock")
+    finally:
+        import mirror.config
+        # Restore SOCKET_PATH to an unset state so subsequent tests use
+        # WorkerServer/MasterServer defaults (mirror.RUN_PATH/...sock).
+        if hasattr(mirror.config, "SOCKET_PATH"):
+            try:
+                del mirror.config.SOCKET_PATH
+            except AttributeError:
+                pass
+
+
 # Define mirror.toolbox.iso_duration_parser temporarily as it's needed (in case the actual module is not loaded)
 if not hasattr(mirror, 'toolbox') or not hasattr(mirror.toolbox, 'iso_duration_parser'):
     class MockToolbox:
