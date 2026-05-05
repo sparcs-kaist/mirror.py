@@ -49,6 +49,13 @@ addopts = "-m 'not integration'"
 [project.scripts]
 mirror = "mirror.__main__:main"
 
+[project.entry-points."mirror.sync"]
+rsync = "mirror.sync.rsync:plugin"
+ftpsync = "mirror.sync.ftpsync:plugin"
+lftp = "mirror.sync.lftp:plugin"
+bandersnatch = "mirror.sync.bandersnatch:plugin"
+local = "mirror.sync.local:plugin"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

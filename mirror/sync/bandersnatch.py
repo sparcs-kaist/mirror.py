@@ -1,14 +1,10 @@
 import mirror
 import mirror.structure
 import mirror.socket.worker
-import mirror.logger
+import mirror.sync
 import os
 import logging
 from pathlib import Path
-
-module = "sync"
-name = "bandersnatch"
-_LOAD = False
 
 
 def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
@@ -18,7 +14,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         package(mirror.structure.Package): Package object
         pkg_logger(logging.Logger): Logger object for this sync session
     """
-    pkg_logger.info(f"Starting {module}.{name} for {package.name}")
+    pkg_logger.info(f"Starting sync.bandersnatch for {package.name}")
 
     try:
         command = ["bandersnatch", "mirror"]
@@ -32,7 +28,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         pkg_logger.info(f"Delegating bandersnatch sync to worker")
         mirror.socket.worker.execute_command(
             job_id=package.pkgid,
-            sync_method=name,
+            sync_method="bandersnatch",
             commandline=command,
             env={},
             uid=os.getuid(),
@@ -42,5 +38,10 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
 
     except Exception as e:
         pkg_logger.error(f"bandersnatch sync for {package.pkgid} failed: {e}")
-        mirror.logger.close_logger(pkg_logger)
-        package.set_status("ERROR")
+        mirror.sync.on_sync_done(package.pkgid, success=False, returncode=None)
+
+
+def plugin():
+    """Entry-point factory for the bandersnatch plug-in."""
+    from mirror.plugin import sync_plugin
+    return sync_plugin(name="bandersnatch", execute=execute)

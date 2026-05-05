@@ -225,3 +225,9 @@ def _config(package: mirror.structure.Package) -> str:
         lines.append(f"ARCH_EXCLUDE={_q('arch_exclude', opts['arch_exclude'])}")
     lines.append(f"LOGDIR={_q('logdir', opts.get('logdir', mirror.conf.logfolder))}")
     return "\n".join(lines) + "\n"
+
+
+def plugin():
+    """Entry-point factory for the ftpsync plug-in."""
+    from mirror.plugin import sync_plugin
+    return sync_plugin(name="ftpsync", execute=execute, on_sync_done=on_sync_done)

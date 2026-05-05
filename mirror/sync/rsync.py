@@ -9,9 +9,6 @@ import logging
 import subprocess
 from pathlib import Path
 
-module = "sync"
-name = "rsync"
-
 def setup(path: Path, package: mirror.structure.Package) -> None:
     """Prepare the sync environment (no-op for rsync)."""
     pass
@@ -24,7 +21,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger) -> No
         pkg_logger(logging.Logger): Logger for this sync session.
     """
     # Set status to SYNC as soon as we enter execute
-    pkg_logger.info(f"Starting {module}.{name} for {package.name}")
+    pkg_logger.info(f"Starting sync.rsync for {package.name}")
 
     try:
         # 1. Get settings
@@ -161,3 +158,13 @@ def check_ffts_update(package: mirror.structure.Package, pkg_logger: logging.Log
         pkg_logger.error(f"FFTS check for {package.pkgid} failed: {e}")
         # Assume update needed on error to avoid skipping a required sync
         return True
+
+
+def plugin():
+    """Entry-point factory for the rsync plug-in.
+
+    Return:
+        record(mirror.plugin.PluginRecord): Sync plug-in record exposing execute and on_sync_done.
+    """
+    from mirror.plugin import sync_plugin
+    return sync_plugin(name="rsync", execute=execute)
