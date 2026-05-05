@@ -1,82 +1,58 @@
-import os
-import sys
+"""Verify plug-in registration produces the expected mirror.sync.methods set."""
 import pytest
-from pathlib import Path
+
 import mirror
 import mirror.sync
-
-# 전역 상수로 설정
-EXPECTED_SYNC_METHODS = {"rsync", "ftpsync"}
+import mirror.plugin
+from mirror.plugin import load_builtin_plugins
 
 
 @pytest.fixture(autouse=True)
-def restore_sync_module_state():
-    """Defend against sys.modules contamination from other tests.
+def _ensure_builtins_loaded():
+    """Guarantee all five built-ins are registered before each test.
 
-    `tests/test_socket.py` (and others) historically swapped
-    `sys.modules["mirror.sync"]` with mocks; cleanup was best-effort. We
-    re-bind from sys.modules to undo any leftover swap. We avoid calling
-    `load_sync_methods()` proactively because that creates fresh module
-    objects on `mirror.sync.<name>` while leaving `sys.modules['mirror.sync.<name>']`
-    pointing to the older instances — the divergence breaks `mock.patch`
-    targets in sibling tests. Only repopulate when `methods` is empty.
+    test_example_config.py replaces mirror.sync.methods with a truncated list,
+    so we always rebuild from scratch here rather than relying on whatever state
+    earlier tests left behind.
     """
-    real_sync = sys.modules.get("mirror.sync")
-    if real_sync is not None:
-        mirror.sync = real_sync
-    snapshot = list(mirror.sync.methods)
-    if not snapshot:
-        mirror.sync.load_sync_methods(mirror.sync.BasicMethodPath)
-        snapshot = list(mirror.sync.methods)
+    mirror.plugin._registry.clear()
+    mirror.plugin._BUILTIN_NAMES.clear()
+    mirror.sync.methods.clear()
+    load_builtin_plugins()
+
+    orig_registry = dict(mirror.plugin._registry)
+    orig_methods = list(mirror.sync.methods)
+    orig_builtins = set(mirror.plugin._BUILTIN_NAMES)
+
     yield
-    mirror.sync.methods[:] = snapshot
-    sys.modules.pop("mock_sync", None)
-    if hasattr(mirror.sync, "mock_sync"):
-        delattr(mirror.sync, "mock_sync")
 
-def test_default_methods_detection():
-    """Check if .py files in the default sync directory are correctly included in the methods list"""
-    # 전역 상수를 사용하여 expected_methods 설정
-    expected_methods = EXPECTED_SYNC_METHODS
-    actual_methods = set(mirror.sync.methods)
-    
-    assert expected_methods.issubset(actual_methods), f"Not all expected sync methods loaded. Missing: {expected_methods - actual_methods}"
-    assert "_ftpsync_script" not in actual_methods # Ensure private script is not loaded
+    mirror.plugin._registry.clear()
+    mirror.plugin._registry.update(orig_registry)
+    mirror.sync.methods[:] = orig_methods
+    mirror.plugin._BUILTIN_NAMES.clear()
+    mirror.plugin._BUILTIN_NAMES.update(orig_builtins)
 
-def test_default_modules_loaded():
-    """Check if default modules are actually loaded as attributes of mirror.sync"""
-    # EXPECTED_SYNC_METHODS에 있는 모듈만 확인
-    for method in EXPECTED_SYNC_METHODS:
-        assert hasattr(mirror.sync, method), f"Module {method} was not loaded into mirror.sync"
-        module = getattr(mirror.sync, method)
-        # Verify if the loaded object is a module (e.g., rsync should have an execute function)
-        if method == "rsync":
-            assert hasattr(module, "execute")
 
-def test_dynamic_loader(tmp_path):
-    """Check if the loader function correctly loads modules from an arbitrary path"""
-    # Create a fake sync module in a temporary directory
-    custom_sync_dir = tmp_path / "custom_sync"
-    custom_sync_dir.mkdir()
-    
-    mock_content = """
-def execute(package, logger):
-    return "mock_executed"
-name = "mock_module"
-"""
-    mock_file = custom_sync_dir / "mock_sync.py"
-    mock_file.write_text(mock_content)
-    
-    # Execute loader
-    mirror.sync.load_sync_methods(custom_sync_dir)
-    
-    # Check loading
-    assert hasattr(mirror.sync, "mock_sync")
-    assert mirror.sync.mock_sync.name == "mock_module"
-    assert mirror.sync.mock_sync.execute(None, None) == "mock_executed"
+def test_builtin_methods_present():
+    """All five built-in sync types must be registered after phase A."""
+    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local"}
+    assert expected == set(mirror.sync.methods), (
+        f"Expected {expected}, got {set(mirror.sync.methods)}"
+    )
 
-def test_get_module():
-    """Check if the get_module function correctly returns registered modules"""
-    rsync_mod = mirror.sync.get_module("rsync")
-    assert rsync_mod is not None
-    assert rsync_mod.__name__.endswith("rsync")
+
+def test_rsync_record_is_valid():
+    """get_record('rsync') returns a PluginRecord with the expected shape."""
+    record = mirror.plugin.get_record("rsync")
+    assert record is not None, "rsync PluginRecord not found in registry"
+    assert record.name == "rsync"
+    assert record.type == "sync"
+    assert callable(record.execute), "rsync execute must be callable"
+
+
+def test_all_five_records_have_execute():
+    """Every built-in sync plug-in must expose a callable execute."""
+    for name in ("rsync", "ftpsync", "lftp", "bandersnatch", "local"):
+        record = mirror.plugin.get_record(name)
+        assert record is not None, f"{name} not in registry"
+        assert callable(record.execute), f"{name}.execute not callable"

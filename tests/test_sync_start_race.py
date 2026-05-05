@@ -43,11 +43,13 @@ def test_concurrent_start_rejects_second_call():
         started_event.set()
         time.sleep(0.3)
 
-    fake_sync_module = MagicMock()
-    fake_sync_module.execute.side_effect = block_execute
+    import mirror.plugin
+    fake_record = MagicMock()
+    fake_record.execute = MagicMock(side_effect=block_execute)
+    fake_record.on_sync_done = None
 
     import mirror
-    with patch.object(sync_mod, "rsync", fake_sync_module, create=True), \
+    with patch.dict("mirror.plugin._registry", {"rsync": fake_record}, clear=False), \
          patch("mirror.logger.create_logger") as mk, \
          patch.object(mirror, "sync", sync_mod):
         mk.return_value = MagicMock(handlers=[])
@@ -77,11 +79,13 @@ def test_concurrent_start_rejects_second_call():
 
 def test_in_progress_cleared_when_execute_raises_immediately():
     pkg = _make_pkg("race2")
-    fake_sync_module = MagicMock()
-    fake_sync_module.execute.side_effect = RuntimeError("boom")
+    import mirror.plugin
+    fake_record = MagicMock()
+    fake_record.execute = MagicMock(side_effect=RuntimeError("boom"))
+    fake_record.on_sync_done = None
 
     import mirror
-    with patch.object(sync_mod, "rsync", fake_sync_module, create=True), \
+    with patch.dict("mirror.plugin._registry", {"rsync": fake_record}, clear=False), \
          patch("mirror.logger.create_logger") as mk, \
          patch.object(mirror, "sync", sync_mod):
         mk.return_value = MagicMock(handlers=[])
