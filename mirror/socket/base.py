@@ -262,6 +262,7 @@ class BaseClient:
         self._connected = False
         self._response_queue: queue.Queue = queue.Queue()
         self._listener_thread: Optional[threading.Thread] = None
+        self._send_lock = threading.Lock()
 
     def set_version(self, version: str) -> None:
         """Set application version for handshake
@@ -384,15 +385,16 @@ class BaseClient:
         if not self._connected or not self._sock:
             raise ConnectionError("Not connected to server")
 
-        send_message(self._sock, {
-            "command": command,
-            "kwargs": kwargs if kwargs else None,
-        })
+        with self._send_lock:
+            send_message(self._sock, {
+                "command": command,
+                "kwargs": kwargs if kwargs else None,
+            })
 
-        try:
-            response = self._response_queue.get(timeout=30)
-        except queue.Empty:
-            raise TimeoutError(f"Command '{command}' timed out")
+            try:
+                response = self._response_queue.get(timeout=30)
+            except queue.Empty:
+                raise TimeoutError(f"Command '{command}' timed out")
 
         if response.get("status") == 200:
             return response.get("data")

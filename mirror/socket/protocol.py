@@ -82,9 +82,12 @@ def recv_message(sock: socket.socket, timeout: Optional[float] = None) -> dict:
     if timeout:
         sock.settimeout(timeout)
 
-    header = sock.recv(4)
-    if not header or len(header) < 4:
-        raise ConnectionError("Failed to receive message header")
+    header = b""
+    while len(header) < 4:
+        chunk = sock.recv(4 - len(header))
+        if not chunk:
+            raise ConnectionError("Connection closed while receiving message header")
+        header += chunk
 
     length = struct.unpack(">I", header)[0]
     data = b""

@@ -498,3 +498,93 @@ class TestContextManager:
                 assert not client.is_connected
             finally:
                 server.stop()
+
+
+def test_recv_message_handles_fragmented_header(tmp_path):
+    """recv_message must reassemble headers split across multiple recv() calls."""
+    import socket as _socket
+    import struct
+    import threading
+    import time
+    from mirror.socket.protocol import recv_message, send_message
+
+    sock_path = tmp_path / "frag.sock"
+    server = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    server.bind(str(sock_path))
+    server.listen()
+
+    received = {}
+
+    def _server():
+        conn, _ = server.accept()
+        try:
+            received["msg"] = recv_message(conn, timeout=5.0)
+        finally:
+            conn.close()
+
+    t = threading.Thread(target=_server, daemon=True)
+    t.start()
+
+    client = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    client.connect(str(sock_path))
+    body = b'{"hello":"world"}'
+    header = struct.pack(">I", len(body))
+    # Send header in two parts to force a partial recv
+    client.sendall(header[:1])
+    time.sleep(0.05)
+    client.sendall(header[1:])
+    client.sendall(body)
+    client.close()
+
+    t.join(timeout=5.0)
+    server.close()
+
+    assert received["msg"] == {"hello": "world"}
+
+
+def test_send_command_serialized_under_concurrent_callers(tmp_path):
+    """Concurrent send_command calls from one BaseClient must not mismatch responses."""
+    import threading
+    import time
+    from mirror.socket.base import BaseServer
+    from mirror.socket.master import MasterClient
+
+    class EchoServer(BaseServer):
+        def __init__(self, socket_path):
+            super().__init__(socket_path, role="master")
+
+        def echo(self, value: str) -> dict:
+            time.sleep(0.01)  # encourage interleave attempts
+            return {"value": value}
+
+    server = EchoServer(tmp_path / "echo.sock")
+    server.register_handler("echo", server.echo)
+    server.start()
+    try:
+        client = MasterClient(server.socket_path)
+        client.connect()
+        try:
+            errors = []
+            results = {}
+
+            def _worker(i: int):
+                try:
+                    resp = client.send_command("echo", value=f"v{i}")
+                    results[i] = resp
+                except Exception as exc:  # noqa: BLE001
+                    errors.append((i, exc))
+
+            threads = [threading.Thread(target=_worker, args=(i,)) for i in range(5)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join(timeout=10.0)
+
+            assert not errors, f"errors: {errors}"
+            assert len(results) == 5
+            for i, resp in results.items():
+                assert resp == {"value": f"v{i}"}, f"thread {i} got {resp}"
+        finally:
+            client.disconnect()
+    finally:
+        server.stop()
