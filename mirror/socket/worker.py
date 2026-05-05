@@ -94,9 +94,9 @@ class WorkerServer(BaseServer):
 
         process.prune_finished()
 
-        if not uid:
+        if uid is None:
             uid = os.getuid()
-        if not gid:
+        if gid is None:
             gid = os.getgid()
 
         job = process.create(
