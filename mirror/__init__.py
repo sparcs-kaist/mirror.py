@@ -7,7 +7,7 @@ conf: mirror.structure.Config
 packages: mirror.structure.Packages
 confPath: Path
 publishPath: Path
-log: logging.Logger
+log: logging.Logger = logging.getLogger("mirror")
 worker: dict
 status: dict
 debug: bool = False
