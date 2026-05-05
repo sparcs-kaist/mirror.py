@@ -1,5 +1,7 @@
 import re
 import os
+import shutil
+import subprocess
 
 def iso_duration_parser(iso8601: str) -> int: # ISO 8601 Parser
     """
@@ -87,24 +89,23 @@ def set_rsync_user(url: str, user: str):
         raise ValueError("Invalid URL")
 
 def checkPermission() -> bool:
-    """
-    Check that user has root permission or sudo permission
-    Args:
-        None
-    Returns:
-        bool: True if user has root permission or sudo permission
+    """Check that user has root or passwordless sudo permission.
+
+    Return:
+        ok(bool): True if EUID is 0 or `sudo -n true` succeeds.
     """
     if os.getuid() == 0:
         return True
-    
-    return not os.system("sudo -n true")
+    result = subprocess.run(["sudo", "-n", "true"], check=False, capture_output=True)
+    return result.returncode == 0
 
-def is_command_exists(command: str) -> bool:
-    """
-    Check that command exists
+def command_exists(command: str) -> bool:
+    """Check whether the given command is available on PATH.
+
     Args:
-        command (str): Command to check
-    Returns:
-        bool: True if command exists
+        command(str): Command name to look up.
+
+    Return:
+        exists(bool): True if the command is found on PATH.
     """
-    return not os.system(f"command -v {command} > /dev/null")
+    return shutil.which(command) is not None

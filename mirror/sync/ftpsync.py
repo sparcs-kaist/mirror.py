@@ -11,6 +11,7 @@ import subprocess
 import logging
 import tarfile
 import shutil
+import shlex
 import io
 import os
 
@@ -141,35 +142,39 @@ def _extract_archvsync(path: Path) -> bool:
         return False
 
 def _config(package: mirror.structure.Package) -> str:
-    """Create config file"""
+    """Build ftpsync config text with shell-safe quoting."""
     opts = package.settings.options
 
-    config = ""
-    config += f"MIRRORNAME=\"{mirror.conf.name}\"\n"
-    config += f"TO=\"{package.settings.dst}\"\n"
-    config += f"MAILTO=\"{opts['email']}\"\n"
-    config += f"HUB={opts['hub']}\n"
-    config += f"RSYNC_HOST=\"{package.settings.src}\"\n"
-    config += f"RSYNC_PATH=\"{opts['path']}\"\n"
+    def _q(key: str, value) -> str:
+        s = str(value)
+        if "\n" in s or "\r" in s:
+            raise ValueError(f"ftpsync option {key} must not contain newlines")
+        return shlex.quote(s)
 
+    lines = [
+        f"MIRRORNAME={_q('mirrorname', mirror.conf.name)}",
+        f"TO={_q('dst', package.settings.dst)}",
+        f"MAILTO={_q('email', opts['email'])}",
+        f"HUB={_q('hub', opts['hub'])}",
+        f"RSYNC_HOST={_q('src', package.settings.src)}",
+        f"RSYNC_PATH={_q('path', opts['path'])}",
+    ]
     if "user" in opts and "password" in opts:
-        config += f"RSYNC_USER=\"{opts['user']}\"\n"
-        config += f"RSYNC_PASSWORD=\"{opts['password']}\"\n"
+        lines.append(f"RSYNC_USER={_q('user', opts['user'])}")
+        lines.append(f"RSYNC_PASSWORD={_q('password', opts['password'])}")
     if "maintainer" in opts:
-        config += f"INFO_MAINTAINER=\"{opts['maintainer']}\"\n"
+        lines.append(f"INFO_MAINTAINER={_q('maintainer', opts['maintainer'])}")
     if "sponsor" in opts:
-        config += f"INFO_SPONSOR=\"{opts['sponsor']}\"\n"
+        lines.append(f"INFO_SPONSOR={_q('sponsor', opts['sponsor'])}")
     if "country" in opts:
-        config += f"INFO_COUNTRY={opts['country']}\n"
+        lines.append(f"INFO_COUNTRY={_q('country', opts['country'])}")
     if "location" in opts:
-        config += f"INFO_LOCATION=\"{opts['location']}\"\n"
+        lines.append(f"INFO_LOCATION={_q('location', opts['location'])}")
     if "throughput" in opts:
-        config += f"INFO_THROUGHPUT={opts['throughput']}\n"
+        lines.append(f"INFO_THROUGHPUT={_q('throughput', opts['throughput'])}")
     if "arch_include" in opts:
-        config += f"ARCH_INCLUDE=\"{opts['arch_include']}\"\n"
+        lines.append(f"ARCH_INCLUDE={_q('arch_include', opts['arch_include'])}")
     if "arch_exclude" in opts:
-        config += f"ARCH_EXCLUDE=\"{opts['arch_exclude']}\"\n"
-
-    config += f"LOGDIR=\"{opts.get('logdir', mirror.conf.logfolder)}\"\n"
-
-    return config
+        lines.append(f"ARCH_EXCLUDE={_q('arch_exclude', opts['arch_exclude'])}")
+    lines.append(f"LOGDIR={_q('logdir', opts.get('logdir', mirror.conf.logfolder))}")
+    return "\n".join(lines) + "\n"
