@@ -2,24 +2,27 @@ from prompt_toolkit import print_formatted_text
 from prompt_toolkit.formatted_text import ANSI
 import logging
 import gzip
+import re
 import shutil
 import os
+import sys
 import time
 import datetime
 from pathlib import Path
 
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
 
 def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None = None) -> str:
-    """
-    Format time in the log message or path.
-    Pre-formats components with zero-padding (e.g., month as '02').
+    """Format a template string with zero-padded time components.
 
     Args:
-        line (str): Template string
-        usetime (datetime.datetime): Time to format
-        pkgid (str): Package ID (optional)
-    Returns:
-        str: Formatted string
+        line(str): Template string with placeholders like {year}, {month}, etc.
+        usetime(datetime.datetime): Timestamp to format from.
+        pkgid(str, optional): Package ID substituted into {packageid} placeholder.
+
+    Return:
+        formatted(str): Template with all placeholders replaced.
     """
     return line.format(
         year=f"{usetime.year:04d}",
@@ -34,14 +37,13 @@ def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None = 
 
 
 def compress_file(filepath: str | Path) -> Path | None:
-    """
-    Compress a file with gzip and remove the original.
+    """Compress a file with gzip and remove the original.
 
     Args:
-        filepath: Path to the file to compress
+        filepath(str | Path): Path to the file to compress.
 
-    Returns:
-        Path to the compressed file, or None if compression failed
+    Return:
+        gz_path(Path | None): Path to the .gz file, or None if compression failed.
     """
     filepath = Path(filepath)
     if not filepath.exists():
@@ -61,11 +63,28 @@ def compress_file(filepath: str | Path) -> Path | None:
 
 
 class PromptHandler(logging.StreamHandler):
-    """Handler that outputs to prompt_toolkit formatted text."""
+    """Log handler that prints via prompt_toolkit ANSI when the terminal
+    supports it, and falls back to plain text otherwise.
+    """
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord) -> None:
         msg = self.format(record)
-        print_formatted_text(ANSI(msg))
+        if self._supports_ansi():
+            print_formatted_text(ANSI(msg))
+        else:
+            sys.stdout.write(_ANSI_ESCAPE_RE.sub("", msg) + "\n")
+            sys.stdout.flush()
+
+    @staticmethod
+    def _supports_ansi() -> bool:
+        """Return True when stdout is a TTY and TERM is not 'dumb'."""
+        try:
+            isatty = sys.stdout.isatty()
+        except Exception:
+            isatty = False
+        if not isatty:
+            return False
+        return os.environ.get("TERM", "").lower() != "dumb"
 
 
 class DynamicGzipRotatingFileHandler(logging.FileHandler):

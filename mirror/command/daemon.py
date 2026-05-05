@@ -9,13 +9,14 @@ import mirror.event
 import time
 import signal
 import sys
-import os # Added os import
+import os
 from pathlib import Path
 
-def daemon(config):
-    """
-    Runs the mirror daemon.
-    'config' is the path to the main JSON configuration file.
+def daemon(config: str) -> None:
+    """Run the mirror master daemon.
+
+    Args:
+        config(str): Path to the main JSON configuration file.
     """
     # Load all configurations from the single config file path.
     mirror.config.load(Path(config))
@@ -39,7 +40,7 @@ def daemon(config):
     mirror.log.info(f"Master Daemon listening on {socket_server.socket_path}")
     mirror.log.info("Daemon started and configuration loaded.")
 
-    if mirror.socket.worker.is_worker_running("master"): # Or some general check
+    if mirror.socket.worker.is_worker_running():
         mirror.log.info("Worker server is running and reachable.")
     else:
         mirror.log.error("Worker server is NOT running. Sync operations may fail if they rely on it.")

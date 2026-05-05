@@ -17,10 +17,15 @@ class EventManager:
         # Thread pool for asynchronous execution
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="EventWorker")
 
-    def on(self, event_name: str, listener: Callable, priority: int = 50):
-        """
-        Register a listener for a specific event with a given priority.
-        Lower number means higher priority (executes earlier).
+    def on(self, event_name: str, listener: Callable, priority: int = 50) -> None:
+        """Register a listener for a specific event.
+
+        Lower priority number means higher precedence (executes earlier).
+
+        Args:
+            event_name(str): Name of the event to listen for.
+            listener(Callable): Callback to invoke when the event fires.
+            priority(int, optional): Execution order (lower = earlier). Defaults to 50.
         """
         with self._lock:
             if event_name not in self._listeners:
@@ -33,9 +38,13 @@ class EventManager:
                 self._listeners[event_name].sort(key=lambda x: x[0])
                 logger.debug(f"Registered listener {listener.__name__} for event '{event_name}' with priority {priority}")
 
-    def once(self, event_name: str, listener: Callable, priority: int = 50):
-        """
-        Register a listener that runs only once with a given priority.
+    def once(self, event_name: str, listener: Callable, priority: int = 50) -> None:
+        """Register a one-shot listener that auto-removes itself after first invocation.
+
+        Args:
+            event_name(str): Name of the event to listen for.
+            listener(Callable): Callback to invoke once.
+            priority(int, optional): Execution order. Defaults to 50.
         """
         def wrapper(*args, **kwargs):
             try:
@@ -49,9 +58,12 @@ class EventManager:
         wrapper.__name__ = getattr(listener, "__name__", "unknown_listener")
         self.on(event_name, wrapper, priority)
 
-    def off(self, event_name: str, listener: Callable):
-        """
-        Unregister a listener.
+    def off(self, event_name: str, listener: Callable) -> None:
+        """Unregister a previously registered listener.
+
+        Args:
+            event_name(str): Event name the listener is registered under.
+            listener(Callable): Listener to remove.
         """
         with self._lock:
             if event_name in self._listeners:
@@ -60,12 +72,14 @@ class EventManager:
                     (p, cb) for p, cb in self._listeners[event_name] if cb != listener
                 ]
 
-    def post_event(self, event_name: str, wait: bool, *args, **kwargs):
-        """
-        Fire an event.
-        
+    def post_event(self, event_name: str, *args, wait: bool = False, **kwargs) -> None:
+        """Fire an event, executing all registered listeners.
+
         Args:
-            wait (bool): If True, blocks until all listeners have completed.
+            event_name(str): Name of the event to fire.
+            *args: Positional payload forwarded to listeners.
+            wait(bool, keyword-only): If True, block until all listeners complete.
+            **kwargs: Keyword payload forwarded to listeners.
         """
 
         with self._lock:
@@ -87,8 +101,8 @@ class EventManager:
         if wait and futures:
             wait_futures(futures)
 
-    def _execute_listener(self, listener: Callable, event_name: str, *args, **kwargs):
-        """Execute a single listener safely using the thread pool."""
+    def _execute_listener(self, listener: Callable, event_name: str, *args, **kwargs) -> "Future":
+        """Submit a single listener to the thread pool for safe async execution."""
         def wrapper():
             try:
                 listener(*args, **kwargs)
@@ -97,8 +111,12 @@ class EventManager:
 
         return self._executor.submit(wrapper)
 
-    def shutdown(self, wait: bool = True):
-        """Shutdown the event manager and its thread pool."""
+    def shutdown(self, wait: bool = True) -> None:
+        """Shut down the event manager and its thread pool.
+
+        Args:
+            wait(bool, optional): If True, block until all running listeners complete. Defaults to True.
+        """
         self._executor.shutdown(wait=wait)
 
 # Global singleton instance
@@ -106,7 +124,13 @@ _manager = EventManager()
 
 # Public API wrappers
 def on(event_name: str, listener: Optional[Callable] = None, priority: int = 50):
-    """Register a listener for an event."""
+    """Register a listener for an event, or return a decorator if listener is omitted.
+
+    Args:
+        event_name(str): Event name to listen for.
+        listener(Callable, optional): Callback to register. If None, returns a decorator.
+        priority(int, optional): Execution order. Defaults to 50.
+    """
     if listener is None:
         def decorator(func):
             _manager.on(event_name, func, priority)
@@ -114,25 +138,44 @@ def on(event_name: str, listener: Optional[Callable] = None, priority: int = 50)
         return decorator
     _manager.on(event_name, listener, priority)
 
-def once(event_name: str, listener: Callable, priority: int = 50):
-    """Register a listener that runs only once."""
+def once(event_name: str, listener: Callable, priority: int = 50) -> None:
+    """Register a one-shot listener via the global manager.
+
+    Args:
+        event_name(str): Event name to listen for.
+        listener(Callable): Callback to invoke once.
+        priority(int, optional): Execution order. Defaults to 50.
+    """
     _manager.once(event_name, listener, priority)
 
-def off(event_name: str, listener: Callable):
-    """Unregister a listener."""
+def off(event_name: str, listener: Callable) -> None:
+    """Unregister a listener via the global manager.
+
+    Args:
+        event_name(str): Event name the listener is registered under.
+        listener(Callable): Listener to remove.
+    """
     _manager.off(event_name, listener)
 
-def post_event(event_name: str, *args, **kwargs):
+def post_event(event_name: str, *args, wait: bool = False, **kwargs) -> None:
+    """Fire an event via the global manager.
+
+    Args:
+        event_name(str): Name of the event to fire.
+        *args: Positional payload forwarded to listeners.
+        wait(bool, keyword-only): If True, block until all listeners complete.
+        **kwargs: Keyword payload forwarded to listeners.
     """
-    Fire an event.
-    Use 'wait=True' to block until completion.
-    """
-    wait = kwargs.pop('wait', False)
-    _manager.post_event(event_name, wait, *args, **kwargs)
+    _manager.post_event(event_name, *args, wait=wait, **kwargs)
 
 # Decorator for easy registration
 def listener(event_name: str, priority: int = 50):
-    """Decorator to register a function as an event listener."""
+    """Decorator to register a function as an event listener.
+
+    Args:
+        event_name(str): Event name to listen for.
+        priority(int, optional): Execution order. Defaults to 50.
+    """
     def decorator(func):
         on(event_name, func, priority)
         return func

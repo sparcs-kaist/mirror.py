@@ -130,3 +130,7 @@ dmypy.json
 
 # Temporary files defined by DoyunShin
 ___*
+
+# Claude Code session files
+.claude/
+

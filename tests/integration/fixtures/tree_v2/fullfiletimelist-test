@@ -1,0 +1,10 @@
+[Version]
+2
+
+[Files]
+README
+NEW_FILE
+dists/test/Release
+pool/main/p/pkg/pkg_1.0.deb
+
+[End]

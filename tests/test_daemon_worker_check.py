@@ -91,33 +91,36 @@ class TestDaemonWorkerCheck(unittest.TestCase):
             mirror.log = mock_log
         mock_setup_logger.side_effect = setup_logger_side_effect
 
-        # Setup a package
+        # Setup a package whose timing-based sync condition is unambiguously
+        # true on iteration 1: time.time() - 0 > -1 is always True.
         pkg = MagicMock()
         pkg.pkgid = "test_pkg"
         pkg.is_disabled.return_value = False
-        pkg.is_syncing.side_effect = [False, True, False]
+        pkg.is_syncing.return_value = False
         pkg.lastsync = 0
-        pkg.syncrate = 0
+        pkg.syncrate = -1
         pkg.status = "ACTIVE"
-        
+
         mirror.packages = {"test_pkg": pkg}
-        
-        # Mock sleep to run exactly 3 iterations then stop
-        mock_sleep.side_effect = [None, None, KeyboardInterrupt]
-        
-        # Mock worker running
-        mock_is_worker_running.return_value = True
+
+        # Run exactly one iteration before raising.
+        mock_sleep.side_effect = [KeyboardInterrupt]
+
+        # The daemon calls is_worker_running() (no-arg) at startup AND
+        # is_worker_running(package.pkgid) per package. We want startup True
+        # and per-package False so that the timing branch is reached.
+        mock_is_worker_running.side_effect = lambda *args: not bool(args)
 
         try:
             mod.daemon("dummy_config.json")
         except KeyboardInterrupt:
             pass
-            
-        # Verify it started sync
+
         mock_sync_start.assert_called_with(pkg)
-        
-        # Verify it logged transition to syncing
-        mock_log.info.assert_any_call(f"Package {pkg.pkgid} requires sync (Last sync: {pkg.lastsync}, Rate: {pkg.syncrate})")
+
+        mock_log.info.assert_any_call(
+            f"Package {pkg.pkgid} requires sync (Last sync: {pkg.lastsync}, Rate: {pkg.syncrate})"
+        )
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,7 @@
 import mirror
 import mirror.structure
 import mirror.socket.worker
+import mirror.sync
 import mirror.logger
 
 from tempfile import TemporaryDirectory
@@ -11,16 +12,25 @@ import subprocess
 import logging
 import tarfile
 import shutil
+import shlex
 import io
 import os
 
 ARCHVSYNC_REPO = "https://salsa.debian.org/mirror-team/archvsync.git"
 
-def setup(path: Path, package: mirror.structure.Package):
+_ftpsync_handles: dict[str, "TemporaryDirectory"] = {}
+
+def setup(path: Path, package: mirror.structure.Package) -> None:
+    """Prepare the sync environment (no-op for ftpsync top-level setup)."""
     pass
 
-def setup_ftpsync(path: Path, package: mirror.structure.Package):
-    """Setup archvsync and package config"""
+def setup_ftpsync(path: Path, package: mirror.structure.Package) -> None:
+    """Set up archvsync binary and ftpsync.conf in a temporary directory.
+
+    Args:
+        path(Path): Temporary working directory for this sync session.
+        package(mirror.structure.Package): Package whose settings drive the config.
+    """
     (path / "bin").mkdir(exist_ok=True)
     (path / "etc").mkdir(exist_ok=True)
 
@@ -46,70 +56,87 @@ def setup_ftpsync(path: Path, package: mirror.structure.Package):
     (path / "etc" / "ftpsync.conf").write_text(_config(package))
 
 def execute(package: mirror.structure.Package, logger: logging.Logger):
-    """Sync package"""
-    import time
+    """Sync package via ftpsync subprocess.
+
+    Args:
+        package(mirror.structure.Package): Package to sync.
+        logger(logging.Logger): Per-sync session logger.
+    """
     import os
 
-    # Set status to SYNC as soon as we enter execute
-    package.set_status("SYNC")
     logger.info(f"Starting ftpsync for {package.name}")
 
-    # Temporary directory for ftpsync scripts and config
-    # Note: Using a fixed-prefix path in /tmp so worker can access it
-    tmp_base = Path("/tmp/mirror_ftpsync")
-    tmp_base.mkdir(exist_ok=True)
-    _tmp_handle = TemporaryDirectory(dir=tmp_base)
-    tmp_dir = Path(_tmp_handle.name)
+    handle = TemporaryDirectory(prefix="mirror_ftpsync_", dir=mirror.STATE_PATH)
+    tmp_dir = Path(handle.name)
+    _ftpsync_handles[package.pkgid] = handle
 
     try:
-        # 1. Setup ftpsync environment (scripts and config)
         logger.info(f"Setting up ftpsync environment in {tmp_dir}")
         setup_ftpsync(tmp_dir, package)
 
-        # 2. Prepare commandline
-        # The main script is located in the bin directory we just set up
         command = [str(tmp_dir / "bin" / "ftpsync")]
 
-        # 3. Delegate to Worker
         log_path = None
-        for handler in logger.handlers:
-            if isinstance(handler, logging.FileHandler):
-                log_path = handler.baseFilename
+        for h in logger.handlers:
+            if isinstance(h, logging.FileHandler):
+                log_path = h.baseFilename
                 break
 
         logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
-        response = mirror.socket.worker.execute_command(
+
+        mirror.socket.worker.execute_command(
             job_id=package.pkgid,
             sync_method="ftpsync",
             commandline=command,
             env={},
             uid=os.getuid(),
             gid=os.getgid(),
-            log_path=log_path
+            log_path=log_path,
         )
-
-        if response.get("status") == "started":
-            logger.info(f"Worker started ftpsync (PID: {response.get('job_pid')})")
-            package.lastsync = time.time()
-            package.set_status("ACTIVE")
-        else:
-            raise RuntimeError(f"Worker failed to start ftpsync: {response.get('message')}")
 
     except Exception as e:
         logger.error(f"ftpsync for {package.pkgid} failed: {e}")
-        package.set_status("ERROR")
-        # Cleanup temp dir on failure (on success, it might be needed by the worker process)
-        # However, since start_sync is asynchronous, we might need a better cleanup strategy.
-        # For now, we leave it for the system /tmp cleanup or manual intervention if it fails.
-    finally:
-        mirror.logger.close_logger(logger)
+        # Clean up temp dir; on_sync_done won't be called on this path because
+        # the worker job was never created.
+        h = _ftpsync_handles.pop(package.pkgid, None)
+        if h is not None:
+            try:
+                h.cleanup()
+            except Exception as cleanup_exc:
+                logger.warning(f"Failed to clean up ftpsync temp dir: {cleanup_exc}")
+        mirror.sync.on_sync_done(package.pkgid, success=False, returncode=None)
+
+
+def on_sync_done(package: mirror.structure.Package, logger: logging.Logger, success: bool, returncode):
+    """Clean up ftpsync temporary directory after sync completes.
+
+    Args:
+        package(mirror.structure.Package): Package object.
+        logger(logging.Logger): Logger for this sync session.
+        success(bool): Whether the sync succeeded.
+        returncode: Process return code.
+    """
+    handle = _ftpsync_handles.pop(package.pkgid, None)
+    if handle is not None:
+        try:
+            handle.cleanup()
+        except Exception as e:
+            logger.warning(f"Failed to clean up ftpsync temp dir: {e}")
+
 
 def _check_git() -> bool:
-    """Check if git command is available"""
+    """Return True if git is available on PATH."""
     return shutil.which("git") is not None
 
 def _clone_archvsync(path: Path) -> bool:
-    """Clone archvsync repository to path"""
+    """Clone the archvsync repository into path/archvsync.
+
+    Args:
+        path(Path): Parent directory for the clone.
+
+    Return:
+        ok(bool): True if the clone succeeded.
+    """
     try:
         result = subprocess.run(
             ["git", "clone", "--depth", "1", ARCHVSYNC_REPO, str(path / "archvsync")],
@@ -121,7 +148,14 @@ def _clone_archvsync(path: Path) -> bool:
         return False
 
 def _extract_archvsync(path: Path) -> bool:
-    """Extract archvsync from base64 encoded tar.gz"""
+    """Extract the bundled archvsync tar.gz into path.
+
+    Args:
+        path(Path): Directory to extract into.
+
+    Return:
+        ok(bool): True if extraction succeeded.
+    """
     try:
         from mirror.sync._ftpsync_script import ARCHVSYNC_HASH, ARCHVSYNC_SCRIPT
 
@@ -131,65 +165,55 @@ def _extract_archvsync(path: Path) -> bool:
 
         tar_buffer = io.BytesIO(script)
         with tarfile.open(fileobj=tar_buffer, mode="r:gz") as tar:
-            tar.extractall(path=path)
+            tar.extractall(path=path, filter="data")
 
         return True
-    except Exception:
+    except (ValueError, tarfile.TarError, OSError) as exc:
+        logger = logging.getLogger("mirror")
+        logger.warning("archvsync extraction failed: %s", exc)
         return False
 
-def ftpsync(package: mirror.structure.Package) -> None:
-    """Sync package"""
-
-    package.set_status("SYNC")
-
-    os.setgid(mirror.conf.gid)
-    os.setuid(mirror.conf.uid)
-
-    logger = logging.getLogger(f"mirror.package.{package.name}")
-    tmp = Path(TemporaryDirectory().name)
-    tmp.mkdir()
-
-    setup_ftpsync(tmp, package)
-
-    command = [
-        f"{tmp}/bin/ftpsync",
-    ]
-    result = subprocess.run(command, shell=True, check=True)
-    if result.returncode == 0:
-        package.set_status("ACTIVE")
-    else:
-        package.set_status("ERROR")
-
 def _config(package: mirror.structure.Package) -> str:
-    """Create config file"""
+    """Build ftpsync.conf content with shell-safe quoting.
+
+    Args:
+        package(mirror.structure.Package): Package whose options populate the config.
+
+    Return:
+        config_text(str): Newline-separated KEY=VALUE lines for ftpsync.conf.
+    """
     opts = package.settings.options
 
-    config = ""
-    config += f"MIRRORNAME=\"{mirror.conf.name}\"\n"
-    config += f"TO=\"{package.settings.dst}\"\n"
-    config += f"MAILTO=\"{opts['email']}\"\n"
-    config += f"HUB={opts['hub']}\n"
-    config += f"RSYNC_HOST=\"{package.settings.src}\"\n"
-    config += f"RSYNC_PATH=\"{opts['path']}\"\n"
+    def _q(key: str, value) -> str:
+        s = str(value)
+        if "\n" in s or "\r" in s:
+            raise ValueError(f"ftpsync option {key} must not contain newlines")
+        return shlex.quote(s)
 
+    lines = [
+        f"MIRRORNAME={_q('mirrorname', mirror.conf.name)}",
+        f"TO={_q('dst', package.settings.dst)}",
+        f"MAILTO={_q('email', opts['email'])}",
+        f"HUB={_q('hub', opts['hub'])}",
+        f"RSYNC_HOST={_q('src', package.settings.src)}",
+        f"RSYNC_PATH={_q('path', opts['path'])}",
+    ]
     if "user" in opts and "password" in opts:
-        config += f"RSYNC_USER=\"{opts['user']}\"\n"
-        config += f"RSYNC_PASSWORD=\"{opts['password']}\"\n"
+        lines.append(f"RSYNC_USER={_q('user', opts['user'])}")
+        lines.append(f"RSYNC_PASSWORD={_q('password', opts['password'])}")
     if "maintainer" in opts:
-        config += f"INFO_MAINTAINER=\"{opts['maintainer']}\"\n"
+        lines.append(f"INFO_MAINTAINER={_q('maintainer', opts['maintainer'])}")
     if "sponsor" in opts:
-        config += f"INFO_SPONSOR=\"{opts['sponsor']}\"\n"
+        lines.append(f"INFO_SPONSOR={_q('sponsor', opts['sponsor'])}")
     if "country" in opts:
-        config += f"INFO_COUNTRY={opts['country']}\n"
+        lines.append(f"INFO_COUNTRY={_q('country', opts['country'])}")
     if "location" in opts:
-        config += f"INFO_LOCATION=\"{opts['location']}\"\n"
+        lines.append(f"INFO_LOCATION={_q('location', opts['location'])}")
     if "throughput" in opts:
-        config += f"INFO_THROUGHPUT={opts['throughput']}\n"
+        lines.append(f"INFO_THROUGHPUT={_q('throughput', opts['throughput'])}")
     if "arch_include" in opts:
-        config += f"ARCH_INCLUDE=\"{opts['arch_include']}\"\n"
+        lines.append(f"ARCH_INCLUDE={_q('arch_include', opts['arch_include'])}")
     if "arch_exclude" in opts:
-        config += f"ARCH_EXCLUDE=\"{opts['arch_exclude']}\"\n"
-
-    config += f"LOGDIR=\"{opts.get('logdir', mirror.conf.logfolder)}\"\n"
-
-    return config
+        lines.append(f"ARCH_EXCLUDE={_q('arch_exclude', opts['arch_exclude'])}")
+    lines.append(f"LOGDIR={_q('logdir', opts.get('logdir', mirror.conf.logfolder))}")
+    return "\n".join(lines) + "\n"

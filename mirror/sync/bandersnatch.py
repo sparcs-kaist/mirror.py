@@ -3,7 +3,6 @@ import mirror.structure
 import mirror.socket.worker
 import mirror.logger
 import os
-import time
 import logging
 from pathlib import Path
 
@@ -11,25 +10,19 @@ module = "sync"
 name = "bandersnatch"
 _LOAD = False
 
-def setup():
-    """Setup bandersnatch sync module"""
-    pass
 
 def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
-    """Sync package using bandersnatch"""
-    package.set_status("SYNC")
+    """Sync package using bandersnatch
+
+    Args:
+        package(mirror.structure.Package): Package object
+        pkg_logger(logging.Logger): Logger object for this sync session
+    """
     pkg_logger.info(f"Starting {module}.{name} for {package.name}")
 
     try:
-        # 1. Prepare commandline
-        # Bandersnatch usually uses a config file
-        # For now, we assume mirror mode
-        command = [
-            "bandersnatch",
-            "mirror"
-        ]
+        command = ["bandersnatch", "mirror"]
 
-        # 2. Delegate to Worker
         log_path = None
         for handler in pkg_logger.handlers:
             if isinstance(handler, logging.FileHandler):
@@ -37,25 +30,17 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
                 break
 
         pkg_logger.info(f"Delegating bandersnatch sync to worker")
-        response = mirror.socket.worker.execute_command(
+        mirror.socket.worker.execute_command(
             job_id=package.pkgid,
             sync_method=name,
             commandline=command,
             env={},
             uid=os.getuid(),
             gid=os.getgid(),
-            log_path=log_path
+            log_path=log_path,
         )
-
-        if response.get("status") == "started":
-            pkg_logger.info(f"Worker started bandersnatch sync (PID: {response.get('job_pid')})")
-            package.lastsync = time.time()
-            package.set_status("ACTIVE")
-        else:
-            raise RuntimeError(f"Worker failed to start sync: {response.get('message')}")
 
     except Exception as e:
         pkg_logger.error(f"bandersnatch sync for {package.pkgid} failed: {e}")
-        package.set_status("ERROR")
-    finally:
         mirror.logger.close_logger(pkg_logger)
+        package.set_status("ERROR")

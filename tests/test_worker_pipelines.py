@@ -1,30 +1,31 @@
-import time
+"""Worker subprocess streams default to DEVNULL when no log_path is given."""
+import subprocess
+from unittest.mock import patch
+
 from mirror.worker import process
 
-def test_worker_pipelines():
-    worker_id = "pipeline_test"
-    # 입력을 그대로 출력하는 'cat' 명령어 사용
-    command = ["cat"]
-    
-    worker = process.create(worker_id, command, {}, None, None, 0)
-    
-    try:
-        test_message = b"hello mirror pipeline\n"
-        
-        # stdin에 데이터 쓰기
-        worker.stdin.write(test_message)
-        worker.stdin.flush()
-        
-        # stdout에서 데이터 읽기
-        # cat은 입력받은 데이터를 즉시 출력함
-        output = worker.stdout.readline()
-        
-        assert output == test_message
-        print(f"Pipeline test success: received '{output.decode().strip()}'")
-        
-    finally:
-        worker.stop()
-        process.prune_finished()
 
-if __name__ == "__main__":
-    test_worker_pipelines()
+def test_pipelines_default_to_devnull():
+    captured = {}
+
+    class _FakePopen:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+            self.pid = 7
+            self.returncode = None
+            self.stdin = None
+            self.stdout = None
+            self.stderr = None
+
+        def poll(self):
+            return None
+
+    with patch("mirror.worker.process.subprocess.Popen", _FakePopen):
+        job = process.create("p_test", ["true"], {}, None, None, 0)
+        try:
+            assert captured["stdin"] is subprocess.DEVNULL
+            assert captured["stdout"] is subprocess.DEVNULL
+            assert captured["stderr"] is subprocess.DEVNULL
+        finally:
+            with process._jobs_lock:
+                process._jobs.pop("p_test", None)

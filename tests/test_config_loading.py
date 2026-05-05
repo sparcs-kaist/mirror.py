@@ -147,7 +147,7 @@ def test_mirror_config_loading(temp_config_env):
     assert pkg.name == dummy_config_content["packages"][pkg_id]["name"]
     assert pkg.href == dummy_config_content["packages"][pkg_id]["href"]
     assert pkg.synctype == dummy_config_content["packages"][pkg_id]["synctype"]
-    assert pkg.syncrate == mirror.toolbox.iso_duration_parser(dummy_config_content["packages"][pkg_id]["syncrate"]) # Compare parsed values
+    assert pkg.syncrate == mirror.toolbox.parse_iso_duration(dummy_config_content["packages"][pkg_id]["syncrate"])
     assert pkg.settings.src == dummy_config_content["packages"][pkg_id]["settings"]["src"]
     
     # --- Verify Stat file ---
@@ -167,15 +167,80 @@ def test_mirror_config_loading(temp_config_env):
 
     print("\nConfig loading test passed successfully.")
 
-# Define mirror.toolbox.iso_duration_parser temporarily as it's needed (in case the actual module is not loaded)
-if not hasattr(mirror, 'toolbox') or not hasattr(mirror.toolbox, 'iso_duration_parser'):
+def test_default_config_has_statfile():
+    """DEFAULT_CONFIG must include statfile so setup-time bootstrap works."""
+    from mirror.config.config import DEFAULT_CONFIG
+    assert "statfile" in DEFAULT_CONFIG["settings"]
+
+
+def test_socket_path_from_config_overrides_default(tmp_path, monkeypatch):
+    """When config sets socket_path, master/worker socket defaults reflect it."""
+    import json
+    from pathlib import Path
+    import mirror
+
+    custom_dir = tmp_path / "custom_sockets"
+    custom_dir.mkdir()
+
+    cfg = {
+        "mirrorname": "TestMirror",
+        "hostname": "test.local",
+        "settings": {
+            "logfolder": str(tmp_path / "logs"),
+            "webroot": str(tmp_path / "web"),
+            "statusfile": str(tmp_path / "status.json"),
+            "statfile": str(tmp_path / "stat.json"),
+            "socket_path": str(custom_dir),
+            "errorcontinuetime": 60,
+            "localtimezone": "UTC",
+            "logger": {
+                "level": "INFO",
+                "format": "[%(asctime)s] %(levelname)s # %(message)s",
+                "fileformat": {"base": str(tmp_path / "logs"), "folder": "{year}", "filename": "{day}.log", "gzip": False},
+            },
+            "plugins": [],
+            "ftpsync": {
+                "maintainer": "x", "sponsor": "y", "country": "KR",
+                "location": "Seoul", "throughput": "1G",
+            },
+        },
+        "packages": {},
+    }
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps(cfg))
+
+    (tmp_path / "stat.json").write_text(json.dumps({"packages": {}}))
+    (tmp_path / "status.json").write_text(json.dumps({}))
+
+    import mirror.config
+    try:
+        mirror.config.load(cfg_path)
+        assert mirror.config.SOCKET_PATH == str(custom_dir)
+
+        from mirror.socket.master import _default_master_socket_path
+        from mirror.socket.worker import _default_worker_socket_path
+        assert str(_default_master_socket_path()) == str(custom_dir / "master.sock")
+        assert str(_default_worker_socket_path()) == str(custom_dir / "worker.sock")
+    finally:
+        import mirror.config
+        # Restore SOCKET_PATH to an unset state so subsequent tests use
+        # WorkerServer/MasterServer defaults (mirror.RUN_PATH/...sock).
+        if hasattr(mirror.config, "SOCKET_PATH"):
+            try:
+                del mirror.config.SOCKET_PATH
+            except AttributeError:
+                pass
+
+
+# Define mirror.toolbox.parse_iso_duration temporarily as it's needed (in case the actual module is not loaded)
+if not hasattr(mirror, 'toolbox') or not hasattr(mirror.toolbox, 'parse_iso_duration'):
     class MockToolbox:
-        def iso_duration_parser(self, duration_str):
+        def parse_iso_duration(self, duration_str):
             # Handle simple PT1H -> 3600 (seconds) conversion only
             if duration_str == "PT1H":
                 return 3600
-            return 0 # Assume other values are 0 for now
-        def iso_duration_maker(self, seconds):
+            return 0
+        def format_iso_duration(self, seconds):
             if seconds == 3600:
                 return "PT1H"
             return ""

@@ -3,25 +3,16 @@ import tempfile
 import time
 import sys
 import os
-import importlib.util
 from pathlib import Path
 
-# Load socket modules directly to avoid circular import
-def _load_module(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-_socket_dir = Path(__file__).parent.parent / "mirror" / "socket"
-
-# Load modules in dependency order
-_protocol_module = _load_module("mirror.socket.protocol", _socket_dir / "protocol.py")
-_base_module = _load_module("mirror.socket.base", _socket_dir / "base.py")
-_init_module = _load_module("mirror.socket", _socket_dir / "__init__.py")
-_master_module = _load_module("mirror.socket.master", _socket_dir / "master.py")
-_worker_module = _load_module("mirror.socket.worker", _socket_dir / "worker.py")
+# Use normal imports — earlier code used a `_load_module` helper that
+# overwrote `sys.modules['mirror.socket.*']`, causing contamination for
+# subsequent tests that patched those modules.
+import mirror.socket.protocol as _protocol_module
+import mirror.socket.base as _base_module
+import mirror.socket as _init_module
+import mirror.socket.master as _master_module
+import mirror.socket.worker as _worker_module
 
 BaseServer = _base_module.BaseServer
 BaseClient = _base_module.BaseClient
@@ -297,7 +288,7 @@ class TestWorkerServer:
                 server.stop()
 
     def test_worker_stop_sync(self):
-        """Test stop_sync command"""
+        """Test stop_command (by job_id)"""
         with tempfile.TemporaryDirectory() as tmpdir:
             socket_path = Path(tmpdir) / "worker.sock"
 
@@ -308,16 +299,16 @@ class TestWorkerServer:
             try:
                 with WorkerClient(socket_path) as client:
                     # First start a sync so we can stop it
-                    client.start_sync(
+                    client.execute_command(
                         job_id="test-job-stop",
                         sync_method="test",
-                        commandline=["ls"],
+                        commandline=["sleep", "60"],
                         env={},
                         uid=os.getuid(),
                         gid=os.getgid()
                     )
 
-                    result = client.stop_sync()
+                    result = client.stop_command(job_id="test-job-stop")
                     assert result["job_id"] == "test-job-stop"
                     assert result["status"] == "stopped"
             finally:
@@ -339,19 +330,20 @@ class TestWorkerServer:
                     assert result["syncing"] == False
 
                     # Start sync
-                    client.start_sync(
+                    client.execute_command(
                         job_id="test-job-progress",
                         sync_method="test",
-                        commandline=["ls"],
+                        commandline=["sleep", "60"],
                         env={},
                         uid=os.getuid(),
                         gid=os.getgid()
                     )
 
-                    # Check progress (mocked)
+                    # Aggregate progress (no-arg): returns {"syncing", "jobs"}
                     result = client.get_progress()
                     assert result["syncing"] == True
-                    assert result["job_id"] == "test-job-progress"
+                    assert "jobs" in result
+                    assert isinstance(result["jobs"], dict)
             finally:
                 server.stop()
 
@@ -374,7 +366,7 @@ class TestMasterWorkerCommunication:
             try:
                 # Connect to worker and send sync command
                 with WorkerClient(worker_path) as worker_client:
-                    result = worker_client.start_sync(
+                    result = worker_client.execute_command(
                         job_id="test-master-job",
                         sync_method="test",
                         commandline=["ls"],
@@ -498,3 +490,93 @@ class TestContextManager:
                 assert not client.is_connected
             finally:
                 server.stop()
+
+
+def test_recv_message_handles_fragmented_header(tmp_path):
+    """recv_message must reassemble headers split across multiple recv() calls."""
+    import socket as _socket
+    import struct
+    import threading
+    import time
+    from mirror.socket.protocol import recv_message, send_message
+
+    sock_path = tmp_path / "frag.sock"
+    server = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    server.bind(str(sock_path))
+    server.listen()
+
+    received = {}
+
+    def _server():
+        conn, _ = server.accept()
+        try:
+            received["msg"] = recv_message(conn, timeout=5.0)
+        finally:
+            conn.close()
+
+    t = threading.Thread(target=_server, daemon=True)
+    t.start()
+
+    client = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    client.connect(str(sock_path))
+    body = b'{"hello":"world"}'
+    header = struct.pack(">I", len(body))
+    # Send header in two parts to force a partial recv
+    client.sendall(header[:1])
+    time.sleep(0.05)
+    client.sendall(header[1:])
+    client.sendall(body)
+    client.close()
+
+    t.join(timeout=5.0)
+    server.close()
+
+    assert received["msg"] == {"hello": "world"}
+
+
+def test_send_command_serialized_under_concurrent_callers(tmp_path):
+    """Concurrent send_command calls from one BaseClient must not mismatch responses."""
+    import threading
+    import time
+    from mirror.socket.base import BaseServer
+    from mirror.socket.master import MasterClient
+
+    class EchoServer(BaseServer):
+        def __init__(self, socket_path):
+            super().__init__(socket_path, role="master")
+
+        def echo(self, value: str) -> dict:
+            time.sleep(0.01)  # encourage interleave attempts
+            return {"value": value}
+
+    server = EchoServer(tmp_path / "echo.sock")
+    server.register_handler("echo", server.echo)
+    server.start()
+    try:
+        client = MasterClient(server.socket_path)
+        client.connect()
+        try:
+            errors = []
+            results = {}
+
+            def _worker(i: int):
+                try:
+                    resp = client.send_command("echo", value=f"v{i}")
+                    results[i] = resp
+                except Exception as exc:  # noqa: BLE001
+                    errors.append((i, exc))
+
+            threads = [threading.Thread(target=_worker, args=(i,)) for i in range(5)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join(timeout=10.0)
+
+            assert not errors, f"errors: {errors}"
+            assert len(results) == 5
+            for i, resp in results.items():
+                assert resp == {"value": f"v{i}"}, f"thread {i} got {resp}"
+        finally:
+            client.disconnect()
+    finally:
+        server.stop()

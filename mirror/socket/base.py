@@ -142,7 +142,10 @@ class BaseServer:
             with self._connections_lock:
                 if conn in self._connections:
                     self._connections.remove(conn)
-            conn.close()
+            try:
+                conn.close()
+            except OSError as exc:
+                logger.debug("Failed to close connection: %s", exc)
 
     def _dispatch_command(self, command: str, kwargs: Optional[dict]) -> dict:
         """Route a command to its handler and build the response"""
@@ -177,8 +180,8 @@ class BaseServer:
         for conn in connections:
             try:
                 send_message(conn, data)
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("broadcast send failed: %s", exc)
 
     @property
     def client_count(self) -> int:
@@ -236,13 +239,13 @@ class BaseServer:
         if self.server:
             try:
                 self.server.close()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("Failed to close server socket: %s", exc)
         if self.socket_path.exists():
             try:
                 self.socket_path.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("Failed to unlink socket path %s: %s", self.socket_path, exc)
 
 
 class BaseClient:
@@ -262,6 +265,7 @@ class BaseClient:
         self._connected = False
         self._response_queue: queue.Queue = queue.Queue()
         self._listener_thread: Optional[threading.Thread] = None
+        self._send_lock = threading.Lock()
 
     def set_version(self, version: str) -> None:
         """Set application version for handshake
@@ -366,8 +370,8 @@ class BaseClient:
             try:
                 self._sock.shutdown(socket.SHUT_RDWR)
                 self._sock.close()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("Failed to shut down client socket: %s", exc)
             self._sock = None
         self._server_info = None
 
@@ -384,15 +388,16 @@ class BaseClient:
         if not self._connected or not self._sock:
             raise ConnectionError("Not connected to server")
 
-        send_message(self._sock, {
-            "command": command,
-            "kwargs": kwargs if kwargs else None,
-        })
+        with self._send_lock:
+            send_message(self._sock, {
+                "command": command,
+                "kwargs": kwargs if kwargs else None,
+            })
 
-        try:
-            response = self._response_queue.get(timeout=30)
-        except queue.Empty:
-            raise TimeoutError(f"Command '{command}' timed out")
+            try:
+                response = self._response_queue.get(timeout=30)
+            except queue.Empty:
+                raise TimeoutError(f"Command '{command}' timed out")
 
         if response.get("status") == 200:
             return response.get("data")

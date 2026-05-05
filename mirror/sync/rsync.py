@@ -1,6 +1,7 @@
 import mirror
 import mirror.structure
 import mirror.socket.worker
+import mirror.sync
 import mirror.toolbox
 import os
 import time
@@ -11,15 +12,16 @@ from pathlib import Path
 module = "sync"
 name = "rsync"
 
-def setup(path: Path, package: mirror.structure.Package):
+def setup(path: Path, package: mirror.structure.Package) -> None:
+    """Prepare the sync environment (no-op for rsync)."""
     pass
 
-def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
-    """
-    Run the Rsync Sync method (CORE)
+def execute(package: mirror.structure.Package, pkg_logger: logging.Logger) -> None:
+    """Run rsync sync for the given package.
+
     Args:
-        package (mirror.structure.Package): Package object
-        pkg_logger (logging.Logger): Logger object for this sync session
+        package(mirror.structure.Package): Package to sync.
+        pkg_logger(logging.Logger): Logger for this sync session.
     """
     # Set status to SYNC as soon as we enter execute
     pkg_logger.info(f"Starting {module}.{name} for {package.name}")
@@ -35,10 +37,9 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         
         # 2. FFTS Check
         if ffts_val:
-            if not ffts(package, pkg_logger):
+            if not check_ffts_update(package, pkg_logger):
                 pkg_logger.info("FFTS check: Up to date. Skipping sync.")
-                package.lastsync = time.time()
-                package.set_status("ACTIVE")
+                mirror.sync.on_sync_done(package.pkgid, success=True, returncode=0)
                 return
 
         # 3. Prepare command and env
@@ -46,7 +47,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
 
         # 4. Execute sync directly
         pkg_logger.info(f"+ src={src}")
-        pkg_logger.info(f"+ frequency={mirror.toolbox.iso_duration_maker(package.syncrate)}")
+        pkg_logger.info(f"+ frequency={mirror.toolbox.format_iso_duration(package.syncrate)}")
         pkg_logger.info(f"+ lastupdate={time.ctime(package.lastsync)}")
         pkg_logger.info(f"Running rsync: {' '.join(command)}")
 
@@ -56,19 +57,36 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
                 logpath = Path(handler.baseFilename)
                 break
 
-        mirror.socket.worker.execute_command(job_id=package.pkgid, commandline=command, env=env, log_path=logpath)
+        mirror.socket.worker.execute_command(
+            job_id=package.pkgid,
+            commandline=command,
+            env=env,
+            uid=os.getuid(),
+            gid=os.getgid(),
+            log_path=logpath,
+        )
 
     except AttributeError as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: value not found")
         pkg_logger.error(e)
-        package.set_status("ERROR")
+        mirror.sync.on_sync_done(package.pkgid, success=False, returncode=None)
     except Exception as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: {e}")
-        package.set_status("ERROR")
+        mirror.sync.on_sync_done(package.pkgid, success=False, returncode=None)
 
-def rsync(logger: logging.Logger, pkgid: str, src: str, dst: Path, user: str, password: str):
-    """
-    Generate rsync command and environment
+def rsync(logger: logging.Logger, pkgid: str, src: str, dst: Path, user: str, password: str) -> tuple[list[str], dict[str, str]]:
+    """Build the rsync command list and environment dictionary.
+
+    Args:
+        logger(logging.Logger): Logger for this sync session.
+        pkgid(str): Package identifier.
+        src(str): Source URL or path.
+        dst(Path): Destination directory.
+        user(str): Rsync username (empty string if not required).
+        password(str): Rsync password (empty string if not required).
+
+    Return:
+        result(tuple[list[str], dict[str, str]]): Command argument list and environment dict.
     """
     command = [
         "rsync",
@@ -88,8 +106,16 @@ def rsync(logger: logging.Logger, pkgid: str, src: str, dst: Path, user: str, pa
     return command, env
     
 
-def ffts(package: mirror.structure.Package, pkg_logger: logging.Logger) -> bool:
-    """Check if the mirror is up to date via direct rsync call"""
+def check_ffts_update(package: mirror.structure.Package, pkg_logger: logging.Logger) -> bool:
+    """Check if the mirror needs an update via a dry-run rsync (FFTS method).
+
+    Args:
+        package(mirror.structure.Package): Package to check.
+        pkg_logger(logging.Logger): Logger for this sync session.
+
+    Return:
+        needs_update(bool): True if an update is needed or check failed, False if up to date.
+    """
     pkg_logger.info(f"Running FFTS check for {package.name}")
     
     try:
@@ -128,8 +154,10 @@ def ffts(package: mirror.structure.Package, pkg_logger: logging.Logger) -> bool:
                 return False
         else:
             pkg_logger.warning(f"FFTS check failed with return code {result.returncode}: {result.stderr}")
-            return True # Assume update needed on error
-            
+            # Assume update needed on error to avoid skipping a required sync
+            return True
+
     except Exception as e:
         pkg_logger.error(f"FFTS check for {package.pkgid} failed: {e}")
-        return True # Assume update needed on error
+        # Assume update needed on error to avoid skipping a required sync
+        return True

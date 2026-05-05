@@ -4,6 +4,7 @@ import mirror.logger
 
 import time
 import logging
+import threading
 
 from typing import Callable, Optional
 import importlib.util
@@ -13,11 +14,19 @@ from pathlib import Path
 BasicMethodPath = Path(__file__).parent
 methods = []
 
-def setup():
+_start_lock = threading.Lock()
+_in_progress: set[str] = set()
+
+def setup() -> None:
+    """Initialize the sync subsystem by loading default sync modules."""
     load_default()
 
-def loader(methodPath: Path) -> None:
-    """Load the sync moodules"""
+def load_sync_methods(methodPath: Path) -> None:
+    """Load sync modules from the given directory path.
+
+    Args:
+        methodPath(Path): Directory containing sync module .py files.
+    """
     import mirror.sync
     global methods
     methodsFullPath = [method for method in methodPath.glob("*.py") if method.stem != "__init__"]
@@ -39,16 +48,29 @@ def loader(methodPath: Path) -> None:
                 methods.append(method.stem)
 
 def get_module(method: str) -> Callable:
-    """Get the sync moodule"""
+    """Return the loaded sync module for the given method name.
+
+    Args:
+        method(str): Sync method name (e.g. "rsync", "ftpsync").
+
+    Return:
+        module(Callable): The loaded sync module object.
+    """
     import mirror.sync
     return getattr(mirror.sync, method)
 
 def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
-    """
-    Start sync for a package.
+    """Start sync for a package.
+
+    Rejects if a sync for the same pkgid is already in progress.
 
     Args:
-        package: Package object to sync
+        package(mirror.structure.Package): Package to sync.
+        trigger(str): Source of the trigger ("auto", "manual", etc.).
+
+    Raises:
+        ValueError: If sync method is unknown.
+        RuntimeError: If a sync for this pkgid is already in progress.
     """
     import mirror.sync
     import mirror.logger
@@ -57,20 +79,59 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
     if method not in methods:
         raise ValueError(f"Unknown sync method: {method}")
 
-    start_time = time.time()
-    pkg_logger = mirror.logger.create_logger(package.pkgid, start_time)
+    pkgid = package.pkgid
+    with _start_lock:
+        if pkgid in _in_progress:
+            raise RuntimeError(f"Package {pkgid} sync already in progress")
+        _in_progress.add(pkgid)
 
-    package.set_status("SYNC")
-    mirror.log.info(f"Starting sync for {package.name} ({method})")
-    pkg_logger.info(f"Starting sync for {package.name} ({method})")
-    pkg_logger.info(f"Time: {time.ctime(start_time)}")
-    pkg_logger.info(f"Trigger: {trigger}")
+    started = False
+    try:
+        start_time = time.time()
+        pkg_logger = mirror.logger.create_logger(pkgid, start_time)
 
-    sync_module = getattr(mirror.sync, method)
-    thread = Thread(target=sync_module.execute, args=(package, pkg_logger), daemon=True)
-    thread.start()
+        package.set_status("SYNC")
+        mirror.log.info(f"Starting sync for {package.name} ({method})")
+        pkg_logger.info(f"Starting sync for {package.name} ({method})")
+        pkg_logger.info(f"Time: {time.ctime(start_time)}")
+        pkg_logger.info(f"Trigger: {trigger}")
 
-def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
+        sync_module = getattr(mirror.sync, method)
+
+        def _runner() -> None:
+            try:
+                sync_module.execute(package, pkg_logger)
+            except Exception as exc:
+                pkg_logger.error(f"Unhandled exception in sync runner for {pkgid}: {exc}")
+                # If execute() failed before worker delegation, on_sync_done
+                # will not be called by the worker; ensure cleanup here too.
+                try:
+                    on_sync_done(pkgid, success=False, returncode=None)
+                except Exception:
+                    with _start_lock:
+                        _in_progress.discard(pkgid)
+            finally:
+                # Belt-and-suspenders: guarantee removal even if on_sync_done
+                # itself raised (set.discard is idempotent).
+                with _start_lock:
+                    _in_progress.discard(pkgid)
+
+        thread = Thread(target=_runner, daemon=True)
+        thread.start()
+        started = True
+    finally:
+        if not started:
+            with _start_lock:
+                _in_progress.discard(pkgid)
+
+def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
+    """Handle sync completion: log result, call per-module hook, update package status.
+
+    Args:
+        pkgid(str): Package identifier.
+        success(bool): Whether the sync succeeded.
+        returncode(int, optional): Process return code, or None if unavailable.
+    """
     import mirror.sync
 
     package = mirror.packages.get(pkgid)
@@ -96,11 +157,17 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]):
 
     logpath = mirror.logger.get_log_path(pkglogger)
     mirror.logger.close_logger(pkglogger)
+    package.lastsync = time.time()
     package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
 
+    with _start_lock:
+        _in_progress.discard(pkgid)
 
-def load_default():
-    """Load the default sync moodules"""
-    loader(BasicMethodPath)
 
-def execute(package: "mirror.structure.Package", logger: logging.Logger): ...
+def load_default() -> None:
+    """Load the default sync modules from the package directory."""
+    load_sync_methods(BasicMethodPath)
+
+def execute(package: "mirror.structure.Package", logger: logging.Logger) -> None:
+    """Module-level execute placeholder; sync modules override this."""
+    ...

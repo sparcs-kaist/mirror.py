@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import pytest
+from unittest.mock import patch
 from pathlib import Path
 
 # Helper to find a suitable target user/group (e.g., 'nobody')
@@ -15,6 +16,13 @@ def get_target_uid_gid():
         # Fallback to 65534 if nobody not found
         return 65534, 65534
 
+@pytest.mark.skipif(
+    os.geteuid() != 0,
+    reason="Requires root or CAP_SETUID to switch UID/GID; on non-root the "
+           "preexec_fn raises at setgid before setuid is reached, which makes "
+           "the script's downstream assertions (worker PID logged, file UID "
+           "mismatch) unreachable.",
+)
 def test_worker_permissions_via_script():
     """
     Wraps the standalone verification script in a pytest test.
@@ -63,3 +71,56 @@ def test_worker_permissions_via_script():
 
         # Verify that file ownership mismatch was reported (standard behavior for non-root)
         assert "FAIL: File UID" in result.stdout
+
+
+def test_negative_nice_rejected_when_not_root():
+    """Job(nice<0) must raise PermissionError early when EUID != 0."""
+    import pytest as _pt
+    from mirror.worker.process import Job
+
+    if os.geteuid() == 0:
+        _pt.skip("Test requires non-root EUID")
+
+    with pytest.raises(PermissionError, match="negative nice"):
+        Job("nice_test", ["true"], {}, None, None, -5)
+
+
+def test_preexec_applies_nice_before_uid_changes(monkeypatch):
+    """preexec_fn order must be: nice -> setgid -> setuid."""
+    from mirror.worker.process import Job
+
+    calls = []
+
+    def fake_setgid(gid):
+        calls.append(("setgid", gid))
+
+    def fake_setuid(uid):
+        calls.append(("setuid", uid))
+
+    def fake_nice(n):
+        calls.append(("nice", n))
+        return n
+
+    monkeypatch.setattr("mirror.worker.process.os.setgid", fake_setgid)
+    monkeypatch.setattr("mirror.worker.process.os.setuid", fake_setuid)
+    monkeypatch.setattr("mirror.worker.process.os.nice", fake_nice)
+
+    job = Job("order_test", ["true"], {}, 1000, 1000, 10)
+    captured = {}
+
+    class _FakePopen:
+        def __init__(self, *args, **kwargs):
+            captured["preexec_fn"] = kwargs.get("preexec_fn")
+            self.pid = 99
+            self.returncode = None
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("mirror.worker.process.subprocess.Popen", _FakePopen)
+    job.start()
+    captured["preexec_fn"]()
+
+    names = [c[0] for c in calls]
+    assert names.index("nice") < names.index("setgid"), f"order was {names}"
+    assert names.index("setgid") < names.index("setuid"), f"order was {names}"

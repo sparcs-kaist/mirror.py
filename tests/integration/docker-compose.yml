@@ -1,0 +1,42 @@
+services:
+  rsync-fixture:
+    container_name: rsync-fixture
+    build:
+      context: docker/rsync-fixture
+    expose:
+      - "873"
+    healthcheck:
+      test: ["CMD", "rsync", "rsync://localhost:873/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+
+  ftpsync-fixture:
+    container_name: ftpsync-fixture
+    build:
+      context: docker/ftpsync-fixture
+    expose:
+      - "873"
+    healthcheck:
+      test: ["CMD", "rsync", "rsync://localhost:873/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+
+  mirror:
+    container_name: mirror
+    build:
+      context: docker/mirror
+    depends_on:
+      rsync-fixture:
+        condition: service_healthy
+      ftpsync-fixture:
+        condition: service_healthy
+    volumes:
+      - "${INTEGRATION_TMP}/publish:/srv/publish"
+      - "${INTEGRATION_TMP}/state:/var/lib/mirror"
+      - "${INTEGRATION_TMP}/log:/var/log/mirror"
+    environment:
+      - PYTHONUNBUFFERED=1

@@ -34,7 +34,7 @@ def load(conf_path: Path):
     config = config_dict.get("settings", {})
     stat_path_str = config.get("statfile")
     status_path_str = config.get("statusfile")
-    SOCKET_PATH = config.get("socket_path", "/tmp/mirror_worker.sock")
+    SOCKET_PATH = config.get("socket_path") or None
 
 
     if not stat_path_str or not status_path_str:
@@ -42,6 +42,10 @@ def load(conf_path: Path):
 
     STAT_DATA_PATH = Path(stat_path_str)
     STATUS_PATH = Path(status_path_str)
+
+    # Ensure STATE_PATH exists with restrictive permissions for ftpsync tempdirs.
+    if not mirror.STATE_PATH.exists():
+        mirror.STATE_PATH.mkdir(parents=True, mode=0o700, exist_ok=True)
 
     # 2. Load stat file and synchronize with config
     stat_dict = json.loads(STAT_DATA_PATH.read_text()) if STAT_DATA_PATH.exists() else {"packages": {}}
@@ -124,7 +128,7 @@ def generate_and_save_web_status():
             "id": package.pkgid,
             "status": package.status,
             "synctype": package.synctype,
-            "syncrate": mirror.toolbox.iso_duration_maker(package.syncrate),
+            "syncrate": mirror.toolbox.format_iso_duration(package.syncrate),
             "syncurl": package.settings.src,
             "href": package.href,
             "lastsync": package.lastsync,
@@ -153,7 +157,7 @@ def save_stat_data():
         mirror.log.error(f"Failed to save stat data to {STAT_DATA_PATH}: {e}")
 
 @mirror.event.listener("MASTER.PACKAGE_STATUS_UPDATE.POST")
-def _on_package_status_update():
+def _on_package_status_update(*args, **kwargs):
     """Automatically save status and stats when a package status changes."""
     generate_and_save_web_status()
     save_stat_data()
