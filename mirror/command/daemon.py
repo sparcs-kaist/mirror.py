@@ -39,7 +39,7 @@ def daemon(config):
     mirror.log.info(f"Master Daemon listening on {socket_server.socket_path}")
     mirror.log.info("Daemon started and configuration loaded.")
 
-    if mirror.socket.worker.is_worker_running("master"): # Or some general check
+    if mirror.socket.worker.is_worker_running():
         mirror.log.info("Worker server is running and reachable.")
     else:
         mirror.log.error("Worker server is NOT running. Sync operations may fail if they rely on it.")
