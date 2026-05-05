@@ -16,6 +16,13 @@ def get_target_uid_gid():
         # Fallback to 65534 if nobody not found
         return 65534, 65534
 
+@pytest.mark.skipif(
+    os.geteuid() != 0,
+    reason="Requires root or CAP_SETUID to switch UID/GID; on non-root the "
+           "preexec_fn raises at setgid before setuid is reached, which makes "
+           "the script's downstream assertions (worker PID logged, file UID "
+           "mismatch) unreachable.",
+)
 def test_worker_permissions_via_script():
     """
     Wraps the standalone verification script in a pytest test.
