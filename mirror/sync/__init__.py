@@ -155,8 +155,10 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
         except Exception as e:
             pkglogger.error(f"Plugin on_sync_done failed: {e}")
 
-    logpath = mirror.logger.get_log_path(pkglogger)
-    mirror.logger.close_logger(pkglogger)
+    # close_logger compresses the file (when gzip is enabled) and returns the
+    # final on-disk path. We must record THAT path in stat.json, not the
+    # pre-compression path from get_log_path which no longer exists after gzip.
+    logpath = mirror.logger.close_logger(pkglogger)
     package.lastsync = time.time()
     package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
 

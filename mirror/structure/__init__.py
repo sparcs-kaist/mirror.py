@@ -56,10 +56,19 @@ class Package:
         lastsuccesslog: Optional[str] = None
         runninglog: Optional[str] = None
         errorcount: int = 0
+        lastsuccesstime: float = 0.0
+        lasterrortime: float = 0.0
 
         @classmethod
         def from_dict(cls, data: dict) -> "Package.StatusInfo":
-            known_fields = {"lasterrorlog", "lastsuccesslog", "runninglog", "errorcount"}
+            known_fields = {
+                "lasterrorlog",
+                "lastsuccesslog",
+                "runninglog",
+                "errorcount",
+                "lastsuccesstime",
+                "lasterrortime",
+            }
             filtered_data = {k: v for k, v in data.items() if k in known_fields}
             return cls(**filtered_data)
 
@@ -132,14 +141,18 @@ class Package:
         self.status = status
         self.timestamp = time.time() * 1000
 
-        if status == "ERROR":
-            self.statusinfo.errorcount += 1
-
-        if logfile:
-            if status == "ACTIVE":
+        now = time.time()
+        if status == "ACTIVE":
+            self.statusinfo.lastsuccesstime = now
+            self.statusinfo.errorcount = 0
+            self.statusinfo.lasterrortime = 0.0
+            self.statusinfo.lasterrorlog = None
+            if logfile:
                 self.statusinfo.lastsuccesslog = str(logfile)
-                self.statusinfo.lasterrorlog = None
-            elif status == "ERROR":
+        elif status == "ERROR":
+            self.statusinfo.errorcount += 1
+            self.statusinfo.lasterrortime = now
+            if logfile:
                 self.statusinfo.lasterrorlog = str(logfile)
 
         mirror.event.post_event(
