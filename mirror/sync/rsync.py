@@ -1,6 +1,7 @@
 import mirror
 import mirror.structure
 import mirror.socket.worker
+import mirror.sync
 import mirror.toolbox
 import os
 import time
@@ -37,8 +38,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         if ffts_val:
             if not ffts(package, pkg_logger):
                 pkg_logger.info("FFTS check: Up to date. Skipping sync.")
-                package.lastsync = time.time()
-                package.set_status("ACTIVE")
+                mirror.sync.on_sync_done(package.pkgid, success=True, returncode=0)
                 return
 
         # 3. Prepare command and env
@@ -56,7 +56,14 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
                 logpath = Path(handler.baseFilename)
                 break
 
-        mirror.socket.worker.execute_command(job_id=package.pkgid, commandline=command, env=env, log_path=logpath)
+        mirror.socket.worker.execute_command(
+            job_id=package.pkgid,
+            commandline=command,
+            env=env,
+            uid=os.getuid(),
+            gid=os.getgid(),
+            log_path=logpath,
+        )
 
     except AttributeError as e:
         pkg_logger.error(f"Sync for {package.pkgid} failed: value not found")

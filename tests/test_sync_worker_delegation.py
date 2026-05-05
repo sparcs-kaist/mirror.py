@@ -14,6 +14,12 @@ import mirror.structure
 
 class TestSyncWorkerDelegation(unittest.TestCase):
     def setUp(self):
+        # Resync mirror submodule attributes with sys.modules in case a prior
+        # test replaced them (e.g. test_socket.py's _load_module pattern)
+        import mirror.socket
+        mirror.sync = sys.modules["mirror.sync"]
+        mirror.socket.worker = sys.modules["mirror.socket.worker"]
+
         # Mock default settings
         mirror.log = MagicMock()
         mirror.packages = {}
@@ -80,6 +86,10 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         self.assertEqual(call_kwargs['env']['RSYNC_PASSWORD'], "syncpassword")
         self.assertEqual(call_kwargs['env']['USER'], "syncuser")
 
+        # Check that uid and gid are passed
+        self.assertEqual(call_kwargs.get("uid"), os.getuid())
+        self.assertEqual(call_kwargs.get("gid"), os.getgid())
+
     @patch('mirror.socket.worker.execute_command')
     @patch('mirror.logger.create_logger')
     @patch('mirror.sync.ftpsync.setup_ftpsync')
@@ -107,6 +117,30 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         call_kwargs = mock_execute_command.call_args[1]
         self.assertEqual(call_kwargs['job_id'], "test-ftpsync")
         self.assertTrue(call_kwargs['commandline'][0].endswith("ftpsync"))
+
+    def test_rsync_ffts_uptodate_routes_through_on_sync_done(self):
+        """When FFTS reports up-to-date, rsync.execute must call on_sync_done, not execute_command."""
+        from unittest.mock import patch
+        from mirror.sync import rsync as rsync_mod
+
+        pkg = MagicMock()
+        pkg.pkgid = "ffts_uptodate_test"
+        pkg.name = "FFTS Test"
+        pkg.settings.src = "rsync://example.org/test"
+        pkg.settings.dst = "/tmp/test_dst"
+        pkg.settings.options = {"ffts": True, "fftsfile": "filelist"}
+        pkg_logger = MagicMock()
+        pkg_logger.handlers = []
+
+        with patch.object(rsync_mod, "ffts", return_value=False) as ffts_mock, \
+             patch("mirror.sync.on_sync_done") as on_done, \
+             patch("mirror.socket.worker.execute_command") as exec_cmd:
+            rsync_mod.execute(pkg, pkg_logger)
+
+        ffts_mock.assert_called_once_with(pkg, pkg_logger)
+        on_done.assert_called_once_with(pkg.pkgid, success=True, returncode=0)
+        exec_cmd.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
