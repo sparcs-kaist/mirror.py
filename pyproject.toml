@@ -1,5 +1,5 @@
 [project]
-name = "mirror-py"
+name = "mirror.py"
 version = "1.0.0rc4"
 description = "Mirror manager daemon that maintains local mirrors of remote package repositories via rsync, ftpsync, and other sync protocols."
 readme = "README.md"

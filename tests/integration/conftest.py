@@ -54,7 +54,7 @@ def docker_compose_file(project_root: Path, integration_tmp: Path) -> str:
     """Absolute path to docker-compose.yml.
 
     Depends on integration_tmp so INTEGRATION_TMP is set before pytest-docker
-    invokes compose up. The mirror image installs mirror-py from PyPI at build
+    invokes compose up. The mirror image installs mirror.py from PyPI at build
     time, so no local wheel build is required.
 
     Args:

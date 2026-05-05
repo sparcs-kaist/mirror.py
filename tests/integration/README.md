@@ -9,7 +9,7 @@ uv pip install -e ".[dev]"
 uv run pytest -m integration -v
 ```
 
-The mirror image installs `mirror-py` from PyPI at the version pinned in
+The mirror image installs `mirror.py` from PyPI at the version pinned in
 `docker/mirror/Dockerfile` (`MIRROR_PY_VERSION` build arg). The version under
 test is therefore the actually-published artifact, not the local working tree —
 to test in-progress changes, bump the version, push a tag, wait for the
@@ -74,13 +74,13 @@ All test interactions go through the `mirror_stack` fixture (defined in `conftes
 
 ## Package source
 
-The mirror image installs `mirror-py` from PyPI rather than a locally-built
+The mirror image installs `mirror.py` from PyPI rather than a locally-built
 wheel. The exact version is pinned via the `MIRROR_PY_VERSION` build arg in
 `docker/mirror/Dockerfile`:
 
 ```dockerfile
 ARG MIRROR_PY_VERSION=1.0.0rc4
-RUN pip install --no-cache-dir "mirror-py==${MIRROR_PY_VERSION}"
+RUN pip install --no-cache-dir "mirror.py==${MIRROR_PY_VERSION}"
 ```
 
 Publishing flow: bump `pyproject.toml` and `mirror/__init__.py` versions
