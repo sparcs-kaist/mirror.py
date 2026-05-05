@@ -134,5 +134,3 @@ ___*
 # Claude Code session files
 .claude/
 
-# Integration test build artifacts
-tests/integration/docker/mirror/dist/

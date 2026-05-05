@@ -9,7 +9,14 @@ uv pip install -e ".[dev]"
 uv run pytest -m integration -v
 ```
 
-First run builds a wheel and three Docker images (~1–2 min). Subsequent runs reuse cached images.
+The mirror image installs `mirror-py` from PyPI at the version pinned in
+`docker/mirror/Dockerfile` (`MIRROR_PY_VERSION` build arg). The version under
+test is therefore the actually-published artifact, not the local working tree —
+to test in-progress changes, bump the version, push a tag, wait for the
+`pypi.yaml` workflow to publish, and update the Dockerfile pin.
+
+First run builds three Docker images (~30s–1min). Subsequent runs reuse cached
+images.
 
 ## Container topology
 
@@ -65,16 +72,22 @@ All test interactions go through the `mirror_stack` fixture (defined in `conftes
 | Swap upstream content | `mirror_stack.swap_rsync_fixture_tree(...)` runs `docker cp` into rsync-fixture |
 | Network isolation | `subprocess.run(["docker", "network", "disconnect", …])` on host (offline fallback test) |
 
-## Wheel build
+## Package source
 
-`conftest.py:built_wheel` (session-scoped):
+The mirror image installs `mirror-py` from PyPI rather than a locally-built
+wheel. The exact version is pinned via the `MIRROR_PY_VERSION` build arg in
+`docker/mirror/Dockerfile`:
 
-1. Rewrites `pyproject.toml` and `mirror/__init__.py` version to `1.0.0-rc.test`.
-2. Runs `uv build --wheel --out-dir tests/integration/docker/mirror/dist/`.
-3. Restores both files in a `try/finally` (restoration runs even on build failure).
-4. Subsequent runs check a SHA marker and skip rebuild if source is unchanged.
+```dockerfile
+ARG MIRROR_PY_VERSION=1.0.0rc4
+RUN pip install --no-cache-dir "mirror-py==${MIRROR_PY_VERSION}"
+```
 
-`tests/integration/docker/mirror/dist/` is gitignored. The mirror Dockerfile `COPY dist/mirror_py-*.whl /tmp/` and `pip install`s it.
+Publishing flow: bump `pyproject.toml` and `mirror/__init__.py` versions
+together, push a `v<version>` tag, and the `.github/workflows/pypi.yaml`
+workflow builds and publishes via PyPI Trusted Publisher (OIDC). After PyPI
+shows the new version, update the `MIRROR_PY_VERSION` pin in the Dockerfile
+to test against it.
 
 ## Per-test isolation
 
@@ -146,13 +159,13 @@ Three packages baked into the image:
 
 ```
 tests/integration/
-├── conftest.py              # session/per-test fixtures, wheel build, INTEGRATION_TMP
+├── conftest.py              # session/per-test fixtures, INTEGRATION_TMP
 ├── helpers.py               # MirrorStack class — all docker/host interactions
 ├── docker-compose.yml       # 3 services with pinned container_name
 ├── docker/
 │   ├── rsync-fixture/       # Dockerfile + rsyncd.conf + data/
 │   ├── ftpsync-fixture/     # Dockerfile + rsyncd.conf + data/
-│   └── mirror/              # Dockerfile + supervisord.conf + config.json + dist/ (gitignored)
+│   └── mirror/              # Dockerfile + supervisord.conf + config.json
 ├── fixtures/
 │   └── tree_v2/             # Alternate rsync content for FFTS-changed test
 └── test_*.py                # 9 test files, 14 tests total
