@@ -10,7 +10,7 @@ authors = [
     { name = "Roul", email = "roul@ftp.kaist.ac.kr" },
     { name = "SPARCS@KAIST", email = "ftp@ftp.kaist.ac.kr" },
 ]
-keywords = ["mirror", "rsync", "ftpsync", "debian", "pypi", "daemon"]
+keywords = ["mirror", "rsync", "ftpsync", "debian", "daemon"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: No Input/Output (Daemon)",
