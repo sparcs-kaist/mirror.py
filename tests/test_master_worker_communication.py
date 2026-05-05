@@ -66,21 +66,20 @@ class TestMasterWorkerCommunication(unittest.TestCase):
         
         with client:
             # Send command
-            response = client.start_sync(
+            response = client.execute_command(
                 job_id=test_job_id,
-                sync_method="rsync",
                 commandline=test_command,
                 env=test_env,
                 uid=os.getuid(),
                 gid=os.getgid(),
                 nice=10
             )
-            
+
             # 4. Verify worker response
             self.assertEqual(response["job_id"], test_job_id)
             self.assertEqual(response["status"], "started")
             self.assertEqual(response["job_pid"], 1234)
-            
+
             # 5. Verify worker server internal logic call (check if command arrived)
             mock_create.assert_called_once_with(
                 job_id=test_job_id,

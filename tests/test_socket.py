@@ -297,7 +297,7 @@ class TestWorkerServer:
                 server.stop()
 
     def test_worker_stop_sync(self):
-        """Test stop_sync command"""
+        """Test stop_command (by job_id)"""
         with tempfile.TemporaryDirectory() as tmpdir:
             socket_path = Path(tmpdir) / "worker.sock"
 
@@ -308,16 +308,16 @@ class TestWorkerServer:
             try:
                 with WorkerClient(socket_path) as client:
                     # First start a sync so we can stop it
-                    client.start_sync(
+                    client.execute_command(
                         job_id="test-job-stop",
                         sync_method="test",
-                        commandline=["ls"],
+                        commandline=["sleep", "60"],
                         env={},
                         uid=os.getuid(),
                         gid=os.getgid()
                     )
 
-                    result = client.stop_sync()
+                    result = client.stop_command(job_id="test-job-stop")
                     assert result["job_id"] == "test-job-stop"
                     assert result["status"] == "stopped"
             finally:
@@ -339,19 +339,20 @@ class TestWorkerServer:
                     assert result["syncing"] == False
 
                     # Start sync
-                    client.start_sync(
+                    client.execute_command(
                         job_id="test-job-progress",
                         sync_method="test",
-                        commandline=["ls"],
+                        commandline=["sleep", "60"],
                         env={},
                         uid=os.getuid(),
                         gid=os.getgid()
                     )
 
-                    # Check progress (mocked)
+                    # Aggregate progress (no-arg): returns {"syncing", "jobs"}
                     result = client.get_progress()
                     assert result["syncing"] == True
-                    assert result["job_id"] == "test-job-progress"
+                    assert "jobs" in result
+                    assert isinstance(result["jobs"], dict)
             finally:
                 server.stop()
 
@@ -374,7 +375,7 @@ class TestMasterWorkerCommunication:
             try:
                 # Connect to worker and send sync command
                 with WorkerClient(worker_path) as worker_client:
-                    result = worker_client.start_sync(
+                    result = worker_client.execute_command(
                         job_id="test-master-job",
                         sync_method="test",
                         commandline=["ls"],

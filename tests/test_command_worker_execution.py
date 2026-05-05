@@ -61,7 +61,7 @@ def test_worker_execution_and_tasks(worker_process):
     uid = os.getuid()
     gid = os.getgid()
     
-    response = client.start_sync(
+    response = client.execute_command(
         job_id=job_id_1,
         sync_method="rsync",
         commandline=cmd_1,
@@ -69,20 +69,19 @@ def test_worker_execution_and_tasks(worker_process):
         uid=uid,
         gid=gid
     )
-    
+
     assert response["job_id"] == job_id_1
     assert response["status"] == "started"
-    
-    # Stop sync 1
-    response = client.stop_sync()
-    assert response["job_id"] == job_id_1
-    assert response["status"] == "stopped"
+
+    # Stop sync 1 (no-arg form returns all_stopped aggregate)
+    response = client.stop_command()
+    assert "stopped_jobs" in response
 
     # Task 2
     job_id_2 = "job_2"
     cmd_2 = ["echo", "task2"]
     
-    response = client.start_sync(
+    response = client.execute_command(
         job_id=job_id_2,
         sync_method="rsync",
         commandline=cmd_2,
@@ -90,14 +89,13 @@ def test_worker_execution_and_tasks(worker_process):
         uid=uid,
         gid=gid
     )
-    
+
     assert response["job_id"] == job_id_2
     assert response["status"] == "started"
-    
-    # Stop sync 2
-    response = client.stop_sync()
-    assert response["job_id"] == job_id_2
-    assert response["status"] == "stopped"
+
+    # Stop sync 2 (no-arg form returns all_stopped aggregate)
+    response = client.stop_command()
+    assert "stopped_jobs" in response
 
     # Verify SIGINT handling
     os.kill(process.pid, signal.SIGINT)
