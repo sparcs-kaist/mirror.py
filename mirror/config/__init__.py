@@ -132,6 +132,11 @@ def generate_and_save_web_status():
             "syncurl": package.settings.src,
             "href": package.href,
             "lastsync": package.lastsync,
+            "lastsuccesstime": package.statusinfo.lastsuccesstime,
+            "lasterrortime": package.statusinfo.lasterrortime,
+            "lastsuccesslog": package.statusinfo.lastsuccesslog,
+            "lasterrorlog": package.statusinfo.lasterrorlog,
+            "errorcount": package.statusinfo.errorcount,
             "links": [link.to_dict() for link in package.link],
         }
 
