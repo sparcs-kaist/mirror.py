@@ -1,0 +1,95 @@
+{
+  "mirrorname": "test-mirror",
+  "hostname": "mirror.test",
+  "settings": {
+    "logfolder": "/var/log/mirror",
+    "webroot": "/var/www/mirror",
+    "statusfile": "/var/www/mirror/status.json",
+    "statfile": "/var/lib/mirror/stat.json",
+    "localtimezone": "UTC",
+    "errorcontinuetime": 10,
+    "maintainer": {"name": "test", "email": "test@example.com"},
+    "logger": {
+      "level": "INFO",
+      "packagelevel": "INFO",
+      "format": "[%(asctime)s] %(levelname)s # %(message)s",
+      "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
+      "fileformat": {
+        "base": "/var/log/mirror",
+        "folder": "{year}/{month}",
+        "filename": "{year}-{month}-{day}.log",
+        "gzip": true
+      },
+      "packagefileformat": {
+        "base": "/var/log/mirror/packages",
+        "folder": "{year}/{month}/{day}",
+        "filename": "{hour}:{minute}:{second}.{microsecond}.{packageid}.log",
+        "gzip": true
+      }
+    },
+    "ftpsync": {
+      "maintainer": "test <test@example.com>",
+      "sponsor": "test",
+      "country": "ZZ",
+      "location": "test",
+      "throughput": "1Gb"
+    },
+    "plugins": []
+  },
+  "packages": {
+    "rsync-test": {
+      "name": "rsync-test",
+      "id": "rsync-test",
+      "href": "/rsync-test",
+      "synctype": "rsync",
+      "syncrate": "PT5S",
+      "link": [],
+      "settings": {
+        "hidden": false,
+        "src": "rsync://rsync-fixture/data",
+        "dst": "/srv/publish/rsync-test",
+        "options": {
+          "username": "",
+          "password": "",
+          "ffts": true,
+          "fftsfile": "fullfiletimelist-test"
+        }
+      }
+    },
+    "ftpsync-test": {
+      "name": "ftpsync-test",
+      "id": "ftpsync-test",
+      "href": "/ftpsync-test",
+      "synctype": "ftpsync",
+      "syncrate": "PT1H",
+      "link": [],
+      "settings": {
+        "hidden": false,
+        "src": "ftpsync-fixture",
+        "dst": "/srv/publish/ftpsync-test",
+        "options": {
+          "email": "test@example.com",
+          "hub": false,
+          "path": "debian"
+        }
+      }
+    },
+    "error-test": {
+      "name": "error-test",
+      "id": "error-test",
+      "href": "/error-test",
+      "synctype": "rsync",
+      "syncrate": "PT5S",
+      "link": [],
+      "settings": {
+        "hidden": false,
+        "src": "rsync://rsync-fixture/nonexistent",
+        "dst": "/srv/publish/error-test",
+        "options": {
+          "username": "",
+          "password": ""
+        }
+      }
+    }
+  }
+}

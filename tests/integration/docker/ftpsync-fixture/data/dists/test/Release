@@ -1,0 +1,8 @@
+Origin: test
+Label: test
+Suite: test
+Codename: test
+Date: Thu, 01 Jan 2026 00:00:00 UTC
+Architectures: amd64
+Components: main
+Description: Integration test fixture
