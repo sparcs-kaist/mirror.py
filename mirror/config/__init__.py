@@ -7,6 +7,8 @@ import mirror.config.stat
 import mirror.config.status
 import mirror.toolbox
 import time
+import os
+import tempfile
 
 from pathlib import Path
 import json
@@ -16,6 +18,31 @@ CONFIG_PATH: Path
 STAT_DATA_PATH: Path
 STATUS_PATH: Path
 SOCKET_PATH: str
+
+
+# --- Private Helpers ---
+
+def _atomic_write_json(path: Path, payload: dict, indent: int = 4) -> None:
+    """Write JSON atomically: tempfile in same dir, then os.replace.
+
+    Args:
+        path(Path): Final destination path.
+        payload(dict): JSON-serializable content.
+        indent(int): json.dumps indent.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=indent)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
 
 # --- Loading Functions ---
 
@@ -153,8 +180,16 @@ def generate_and_save_web_status():
             if plugin_extras:
                 web_status[pkg_id]["plugins"] = plugin_extras
 
+    import mirror.plugin as _plugin
+    if _plugin._web_status_transform_owner is not None:
+        plugin_name, transform_fn = _plugin._web_status_transform_owner
+        try:
+            web_status = transform_fn(web_status)
+        except Exception as e:
+            mirror.log.warning(f"Web status transform from plug-in '{plugin_name}' failed: {e}")
+
     try:
-        STATUS_PATH.write_text(json.dumps(web_status, indent=4))
+        _atomic_write_json(STATUS_PATH, web_status)
         mirror.log.info(f"Web status successfully generated and saved to {STATUS_PATH}")
     except Exception as e:
         mirror.log.error(f"Failed to save web status to {STATUS_PATH}: {e}")
@@ -186,13 +221,63 @@ def save_stat_data():
         "mirrorname": mirror.conf.name,
         "packages": packages_dict,
     }
+
+    import mirror.plugin as _plugin
+    if _plugin._stat_transform_owner is not None:
+        plugin_name, transform_fn = _plugin._stat_transform_owner
+        try:
+            full_stat = transform_fn(full_stat)
+        except Exception as e:
+            mirror.log.warning(f"Stat transform from plug-in '{plugin_name}' failed: {e}")
+
     try:
-        STAT_DATA_PATH.write_text(json.dumps(full_stat, indent=4))
+        _atomic_write_json(STAT_DATA_PATH, full_stat)
     except Exception as e:
         mirror.log.error(f"Failed to save stat data to {STAT_DATA_PATH}: {e}")
+
+def _resolve_output_path(plugin_name: str, output) -> Path:
+    """Resolve the path for a StatusOutput, honoring config-based override.
+
+    Args:
+        plugin_name(str): Owning plug-in name.
+        output(mirror.plugin.StatusOutput): Output declaration.
+
+    Return:
+        path(Path): Resolved filesystem path.
+    """
+    import mirror.plugin as _plugin
+    if output.config_path_key:
+        try:
+            cfg = _plugin.get_config(plugin_name)
+            override = cfg.get(output.config_path_key)
+            if override:
+                return Path(override)
+        except KeyError:
+            pass
+    return Path(output.default_path)
+
+
+def _write_status_outputs() -> None:
+    """Write each plug-in-declared status output file.
+
+    Per-plug-in isolation: failures are logged via mirror.log.warning and
+    other outputs proceed.
+    """
+    import mirror.plugin as _plugin
+    for output_name, (plugin_name, output) in _plugin._status_outputs.items():
+        try:
+            path = _resolve_output_path(plugin_name, output)
+            payload = output.build(list(mirror.packages.values()))
+            _atomic_write_json(path, payload)
+        except Exception as e:
+            mirror.log.warning(
+                f"Status output '{output_name}' from plug-in '{plugin_name}' failed: {e}"
+            )
+
 
 @mirror.event.listener("MASTER.PACKAGE_STATUS_UPDATE.POST")
 def _on_package_status_update(*args, **kwargs):
     """Automatically save status and stats when a package status changes."""
     generate_and_save_web_status()
     save_stat_data()
+    _write_status_outputs()
