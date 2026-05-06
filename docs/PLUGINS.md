@@ -152,16 +152,21 @@ Listeners run in a thread pool (`ThreadPoolExecutor`, 20 workers). If you mutate
 
 ### `status` plug-ins
 
+Status plug-ins shape what mirror.py writes to `stat.json` and the web status
+JSON. There are three modes — a single plug-in may use any combination.
+
+#### Mode 1 — Extend (additive)
+
+Add fields nested under a per-plug-in key. Multiple plug-ins coexist;
+namespacing prevents collisions.
+
 ```python
 from mirror.plugin import status_plugin
 
 def extend_stat_fields(package) -> dict:
-    """Optional. Return dict to merge into stat.json under
-    statusinfo.plugins['<plugin-name>']."""
     return {"my_metric": compute(package)}
 
 def extend_web_status_fields(package) -> dict:
-    """Optional. Same idea for web status JSON."""
     return {"freshness": classify(package.lastsync)}
 
 def plugin():
@@ -170,7 +175,95 @@ def plugin():
                         extend_web_status_fields=extend_web_status_fields)
 ```
 
-Each plug-in's contribution is **nested under its own key** — `statusinfo.plugins["my-stats"]` and `web_status[pkgid]["plugins"]["my-stats"]` — so two plug-ins can return overlapping field names safely. Hooks run synchronously per status write (not via the event thread pool), in registration order. A hook raising an exception is logged via `mirror.log.warning` and other plug-ins are unaffected.
+Contributions appear under `statusinfo.plugins["my-stats"]` and
+`web_status[pkgid]["plugins"]["my-stats"]` respectively.
+
+#### Mode 2 — Transform (replace fields)
+
+Receive the entire payload mirror.py just built (extend hooks already
+applied) and return a transformed dict. Useful when the plug-in needs to
+restructure or replace fields, not just add them.
+
+```python
+def transform_stat_payload(payload: dict) -> dict:
+    payload["mirrorname"] = payload["mirrorname"].upper()
+    return payload
+
+def plugin():
+    return status_plugin(name="upper-name", transform_stat_payload=transform_stat_payload)
+```
+
+**Single owner per channel.** Each of `transform_stat_payload` and
+`transform_web_status_payload` can be claimed by **at most one** plug-in. A
+second registration raises `ValueError` at load time.
+
+#### Mode 3 — Additional output files
+
+Declare extra status files written alongside (not instead of) mirror.py's
+own outputs. Each output is single-owner by `name`.
+
+```python
+from mirror.plugin import status_plugin, StatusOutput
+
+def build_kaist_payload(packages):
+    return {
+        "timestamp": datetime.now(timezone(timedelta(hours=9))).isoformat(),
+        "package": {p.pkgid: kaist_shape(p) for p in packages},
+    }
+
+def plugin():
+    return status_plugin(
+        name="kaist-status",
+        outputs=[
+            StatusOutput(
+                name="kaist-status",
+                default_path="/var/www/mirror/kaist-status.json",
+                build=build_kaist_payload,
+                config_path_key="output_path",  # operator can override default_path via config
+            ),
+        ],
+    )
+```
+
+Operator can override the path through plug-in config:
+
+```json
+"plugins": {
+  "kaist-status": {
+    "enabled": true,
+    "config": {"output_path": "/var/lib/mirror/kaist-status.json"}
+  }
+}
+```
+
+#### Hook ordering and isolation
+
+For each `MASTER.PACKAGE_STATUS_UPDATE.POST` event, mirror.py runs the
+write pipeline in this order:
+
+1. Build mirror.py's default payload.
+2. Apply each registered `extend_*_fields` hook (additive, namespaced).
+3. Apply the `transform_*_payload` owner if any (single owner, gets the
+   already-extended dict).
+4. Atomic write to `stat.json` (or `status.json` for web).
+5. Iterate `outputs` and atomic-write each.
+
+Per-plug-in failures (transform raising, build raising, write raising) are
+logged via `mirror.log.warning` and do not block sibling writes.
+
+#### `StatusOutput` reference
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `str` | Globally unique across all plug-ins' outputs |
+| `default_path` | `str` | Filesystem path (operator can override per-plug-in) |
+| `build` | `Callable[[Iterable[Package]], dict]` | Produces the JSON payload |
+| `config_path_key` | `Optional[str]` | If set, plug-in's `config[<this key>]` overrides `default_path` |
+
+#### Atomic writes
+
+All status files (stat.json, status.json, plug-in outputs) are written via
+tempfile + `os.replace` so readers never observe a partially-written file.
 
 ## API reference
 
@@ -187,6 +280,9 @@ A frozen dataclass produced by the factory helpers. Fields:
 | `setup` | `Callable | None` | Required for `event`; optional for the rest |
 | `extend_stat_fields` | `Callable | None` | Optional for `status` |
 | `extend_web_status_fields` | `Callable | None` | Optional for `status` |
+| `transform_stat_payload` | `Callable | None` | Optional for `status`; single-owner |
+| `transform_web_status_payload` | `Callable | None` | Optional for `status`; single-owner |
+| `outputs` | `list[StatusOutput] | None` | Optional for `status` |
 
 You should not construct `PluginRecord` directly — always use the factory functions.
 
@@ -195,10 +291,25 @@ You should not construct `PluginRecord` directly — always use the factory func
 ```python
 mirror.plugin.sync_plugin(name, execute, on_sync_done=None, setup=None) -> PluginRecord
 mirror.plugin.event_plugin(name, setup) -> PluginRecord
-mirror.plugin.status_plugin(name, extend_stat_fields=None, extend_web_status_fields=None, setup=None) -> PluginRecord
+mirror.plugin.status_plugin(name, extend_stat_fields=None, extend_web_status_fields=None,
+                           transform_stat_payload=None, transform_web_status_payload=None,
+                           outputs=None, setup=None) -> PluginRecord
 ```
 
 Each validates its required arguments and raises `TypeError` on contract violation, so a plug-in author with a typo gets a clear error at import time.
+
+### `mirror.plugin.StatusOutput`
+
+A dataclass representing an additional output file written by a `status` plug-in.
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `str` | Globally unique across all plug-ins' outputs |
+| `default_path` | `str` | Filesystem path (operator can override per-plug-in) |
+| `build` | `Callable[[Iterable[Package]], dict]` | Produces the JSON payload |
+| `config_path_key` | `Optional[str]` | If set, plug-in's `config[<this key>]` overrides `default_path` |
+
+Import via `from mirror.plugin import StatusOutput`.
 
 ### Lookups
 
