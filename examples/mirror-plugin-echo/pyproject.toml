@@ -1,0 +1,23 @@
+[project]
+name = "mirror-plugin-echo"
+version = "0.1.0"
+description = "Example mirror.py event plug-in: log every package status change."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "Apache-2.0"
+authors = [
+    { name = "mirror.py contributors" },
+]
+dependencies = [
+    "mirror.py>=1.0.0rc10",
+]
+
+[project.entry-points."mirror.event"]
+echo = "mirror_plugin_echo:plugin"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mirror_plugin_echo*"]
