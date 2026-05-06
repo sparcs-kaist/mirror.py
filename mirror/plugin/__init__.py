@@ -15,11 +15,34 @@ import importlib
 import importlib.metadata
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Optional
+from typing import Callable, Iterable, Literal, Optional
 
 import mirror
 
 log = logging.getLogger("mirror")
+
+# ---------------------------------------------------------------------------
+# StatusOutput
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class StatusOutput:
+    """Declarative description of an additional status output file written by a status plug-in.
+
+    Args:
+        name(str): Globally unique output name (across all plug-ins).
+        default_path(str): Filesystem path to write the output to. Operator can
+            override via plug-in config if config_path_key is set.
+        build(Callable): Callable producing the JSON payload from an iterable of packages.
+        config_path_key(Optional[str]): If set, the plug-in's config dict key whose
+            value (when present) overrides default_path.
+    """
+
+    name: str
+    default_path: str
+    build: Callable
+    config_path_key: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # PluginRecord
@@ -37,6 +60,12 @@ class PluginRecord:
         setup(Callable, optional): Setup callable (required for event plug-ins).
         extend_stat_fields(Callable, optional): Returns extra stat.json fields for a package.
         extend_web_status_fields(Callable, optional): Returns extra web status fields for a package.
+        transform_stat_payload(Callable, optional): Transforms the full stat.json payload dict.
+            Single-owner: only one plug-in may register this per daemon instance.
+        transform_web_status_payload(Callable, optional): Transforms the full web status payload dict.
+            Single-owner: only one plug-in may register this per daemon instance.
+        outputs(list, optional): List of StatusOutput instances describing additional
+            output files this plug-in writes on every status update.
     """
 
     name: str
@@ -46,6 +75,9 @@ class PluginRecord:
     setup: Optional[Callable] = field(default=None)
     extend_stat_fields: Optional[Callable] = field(default=None)
     extend_web_status_fields: Optional[Callable] = field(default=None)
+    transform_stat_payload: Optional[Callable] = field(default=None)
+    transform_web_status_payload: Optional[Callable] = field(default=None)
+    outputs: Optional[list] = field(default=None)  # list[StatusOutput] — kept generic to avoid forward-ref issues
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +149,9 @@ def status_plugin(
     name: str,
     extend_stat_fields: Optional[Callable] = None,
     extend_web_status_fields: Optional[Callable] = None,
+    transform_stat_payload: Optional[Callable] = None,
+    transform_web_status_payload: Optional[Callable] = None,
+    outputs: Optional[list] = None,
     setup: Optional[Callable] = None,
 ) -> PluginRecord:
     """Build a PluginRecord for a status plug-in with contract validation.
@@ -125,19 +160,29 @@ def status_plugin(
         name(str): Unique plug-in name.
         extend_stat_fields(Callable, optional): Returns extra stat.json fields for a package.
         extend_web_status_fields(Callable, optional): Returns extra web status fields for a package.
+        transform_stat_payload(Callable, optional): Transforms the full stat.json payload dict.
+        transform_web_status_payload(Callable, optional): Transforms the full web status payload dict.
+        outputs(list, optional): List of StatusOutput instances for additional output files.
         setup(Callable, optional): Optional setup callable.
 
     Return:
         record(PluginRecord): Validated status PluginRecord.
 
     Raises:
-        TypeError: If neither extend_stat_fields nor extend_web_status_fields is provided,
-            or if any callable argument is not actually callable.
+        TypeError: If none of extend_*, transform_*, or outputs is provided,
+            or if any callable argument is not actually callable, or if outputs
+            items are not StatusOutput instances.
     """
-    if extend_stat_fields is None and extend_web_status_fields is None:
+    has_outputs = outputs is not None and len(outputs) > 0
+    if (
+        extend_stat_fields is None
+        and extend_web_status_fields is None
+        and transform_stat_payload is None
+        and transform_web_status_payload is None
+        and not has_outputs
+    ):
         raise TypeError(
-            f"status_plugin '{name}': at least one of extend_stat_fields or "
-            "extend_web_status_fields must be provided"
+            "status_plugin requires at least one of extend_*, transform_*, or outputs"
         )
     if extend_stat_fields is not None and not callable(extend_stat_fields):
         raise TypeError(
@@ -149,6 +194,23 @@ def status_plugin(
             f"status_plugin '{name}': extend_web_status_fields must be callable, "
             f"got {type(extend_web_status_fields)!r}"
         )
+    if transform_stat_payload is not None and not callable(transform_stat_payload):
+        raise TypeError(
+            f"status_plugin '{name}': transform_stat_payload must be callable, "
+            f"got {type(transform_stat_payload)!r}"
+        )
+    if transform_web_status_payload is not None and not callable(transform_web_status_payload):
+        raise TypeError(
+            f"status_plugin '{name}': transform_web_status_payload must be callable, "
+            f"got {type(transform_web_status_payload)!r}"
+        )
+    if outputs is not None:
+        for item in outputs:
+            if not isinstance(item, StatusOutput):
+                raise TypeError(
+                    f"status_plugin '{name}': each item in outputs must be a StatusOutput instance, "
+                    f"got {type(item)!r}"
+                )
     if setup is not None and not callable(setup):
         raise TypeError(
             f"status_plugin '{name}': setup must be callable or None, got {type(setup)!r}"
@@ -158,6 +220,9 @@ def status_plugin(
         type="status",
         extend_stat_fields=extend_stat_fields,
         extend_web_status_fields=extend_web_status_fields,
+        transform_stat_payload=transform_stat_payload,
+        transform_web_status_payload=transform_web_status_payload,
+        outputs=outputs,
         setup=setup,
     )
 
@@ -170,6 +235,9 @@ _registry: dict[str, PluginRecord] = {}
 _BUILTIN_NAMES: set[str] = set()
 _status_stat_hooks: list[tuple[str, Callable]] = []
 _status_web_hooks: list[tuple[str, Callable]] = []
+_stat_transform_owner: Optional[tuple] = None  # (plugin_name, callable)
+_web_status_transform_owner: Optional[tuple] = None  # (plugin_name, callable)
+_status_outputs: dict = {}  # output_name -> (plugin_name, StatusOutput)
 
 # Hard-coded built-in entry-point references (module_path:attr)
 _BUILTIN_ENTRY_POINTS: list[tuple[str, str]] = [
@@ -231,22 +299,100 @@ def _register_event(record: PluginRecord) -> None:
 def _register_status(record: PluginRecord) -> None:
     """Register a status plug-in and append its hooks to the hook lists.
 
+    Validates all conflicts before any mutation so a ValueError halfway through
+    does not leave partial registration in _registry or hook lists.
+
     Args:
         record(PluginRecord): A validated status PluginRecord.
 
     Raises:
-        ValueError: If a plug-in with the same name is already registered.
+        ValueError: If a plug-in with the same name is already registered,
+            if a single-owner transform channel is already claimed, or if an
+            output name is already claimed by another plug-in.
     """
+    global _stat_transform_owner, _web_status_transform_owner
+
+    # Phase 1: validate everything — no side effects.
     if record.name in _registry:
         raise ValueError(
             f"Plug-in name '{record.name}' is already registered "
             f"(type={_registry[record.name].type!r})"
         )
+    if record.transform_stat_payload is not None and _stat_transform_owner is not None:
+        raise ValueError(
+            f"stat transform already owned by '{_stat_transform_owner[0]}'"
+        )
+    if record.transform_web_status_payload is not None and _web_status_transform_owner is not None:
+        raise ValueError(
+            f"web_status transform already owned by '{_web_status_transform_owner[0]}'"
+        )
+    if record.outputs:
+        seen_names: set[str] = set()
+        for out in record.outputs:
+            if out.name in seen_names:
+                raise ValueError(
+                    f"status_plugin '{record.name}': duplicate output name '{out.name}' "
+                    "within the same plug-in's outputs list"
+                )
+            seen_names.add(out.name)
+            if out.name in _status_outputs:
+                raise ValueError(
+                    f"output '{out.name}' already owned by '{_status_outputs[out.name][0]}'"
+                )
+
+    # Phase 2: mutate atomically — all validation passed.
     _registry[record.name] = record
     if record.extend_stat_fields is not None:
         _status_stat_hooks.append((record.name, record.extend_stat_fields))
     if record.extend_web_status_fields is not None:
         _status_web_hooks.append((record.name, record.extend_web_status_fields))
+    if record.transform_stat_payload is not None:
+        _stat_transform_owner = (record.name, record.transform_stat_payload)
+    if record.transform_web_status_payload is not None:
+        _web_status_transform_owner = (record.name, record.transform_web_status_payload)
+    if record.outputs:
+        for out in record.outputs:
+            _status_outputs[out.name] = (record.name, out)
+
+
+def _unregister(name: str) -> None:
+    """Remove a plug-in from all state stores. Idempotent: no-op if unknown.
+
+    Cleans up from _registry, _status_stat_hooks, _status_web_hooks,
+    _stat_transform_owner, _web_status_transform_owner, _status_outputs, and
+    mirror.sync.methods (for sync plug-ins).
+
+    Does NOT undo setup() side effects (e.g. event listener registrations).
+
+    Args:
+        name(str): Plug-in name to remove.
+    """
+    global _stat_transform_owner, _web_status_transform_owner
+
+    record = _registry.pop(name, None)
+    if record is None:
+        return
+
+    # Clean hook lists.
+    _status_stat_hooks[:] = [(n, h) for n, h in _status_stat_hooks if n != name]
+    _status_web_hooks[:] = [(n, h) for n, h in _status_web_hooks if n != name]
+
+    # Clean transform owners.
+    if _stat_transform_owner is not None and _stat_transform_owner[0] == name:
+        _stat_transform_owner = None
+    if _web_status_transform_owner is not None and _web_status_transform_owner[0] == name:
+        _web_status_transform_owner = None
+
+    # Clean named outputs.
+    keys_to_drop = [k for k, (owner, _) in _status_outputs.items() if owner == name]
+    for k in keys_to_drop:
+        del _status_outputs[k]
+
+    # Clean sync methods.
+    if record.type == "sync":
+        import mirror.sync
+        if name in mirror.sync.methods:
+            mirror.sync.methods.remove(name)
 
 
 _REGISTER_DISPATCH: dict[str, Callable[[PluginRecord], None]] = {
@@ -335,32 +481,15 @@ def load_external_plugins(plugin_settings: dict) -> None:
         )
         return
 
-    # Pass 1: disable built-ins that the operator turned off.
+    # Pass 1: disable built-ins (and any already-registered externals) that the operator turned off.
     for name, settings in plugin_settings.items():
         enabled = getattr(settings, "enabled", True)
         if enabled:
             continue
-        if name not in _BUILTIN_NAMES:
+        if name not in _registry:
             continue
-        # Remove from registry.
-        record = _registry.pop(name, None)
-        if record is None:
-            continue
-        # Remove from sync.methods and sync namespace.
-        if record.type == "sync":
-            if name in mirror.sync.methods:
-                mirror.sync.methods.remove(name)
-            if hasattr(mirror.sync, name):
-                delattr(mirror.sync, name)
-        # Remove from status hook lists.
-        if record.type == "status":
-            _status_stat_hooks[:] = [
-                (n, h) for n, h in _status_stat_hooks if n != name
-            ]
-            _status_web_hooks[:] = [
-                (n, h) for n, h in _status_web_hooks if n != name
-            ]
-        log.info("Disabled built-in plug-in %r per config.", name)
+        _unregister(name)
+        log.info("Disabled plug-in %r per config.", name)
 
     # Pass 2: discover and load external (non-built-in) plug-ins.
     newly_registered: list[PluginRecord] = []
