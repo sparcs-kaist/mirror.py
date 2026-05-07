@@ -2,7 +2,7 @@ DEFAULT_CONFIG = {
     "mirrorname": "My Mirror",
     "hostname": "ftp.kaist.ac.kr",
     "settings": {
-        "logfolder": "/mirror/logs",
+        "logfolder": "/var/log/mirror/ftpsync",
         "webroot": "/var/www/mirror",
         "statusfile": "/var/www/mirror/status.json",
         "statfile": "/var/lib/mirror/stat.json",
@@ -38,35 +38,8 @@ DEFAULT_CONFIG = {
             "country": "KR", # only ftpsync
             "location": "Seoul", # only ftpsync
             "throughput": "1G", # only ftpsync
-        },
-        "plugins": [
-            "/mirror/plugin/someof.py",
-            "/mirror/plugin/"
-        ]
-    },
-    "packages": {
-        "mirror": {
-            "name": "Name Mirror",
-            "id": "mirror",
-            "href": "/mirror",
-            "synctype": "rsync",
-            "syncrate": "PT1H",
-            "link": [
-                {
-                    "rel": "HOME",
-                    "href": "http://www.example.com"
-                },
-            ],
-            "settings": {
-                "hidden": False,
-                "src": "rsync://test.org/mirror", # ftp://test.org/mirror
-                "dst": "/disk/mirror",
-                "options": {
-                    "ffts": True,
-                    "fftsfile": "fullfiletimelist-mirror", # only FFTS
-                }
-            }
         }
-    }
+    },
+    "packages": {}
 }
 
