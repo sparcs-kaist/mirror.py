@@ -26,7 +26,8 @@ _SYSTEMD_PATH = Path("/etc/systemd/system")
 
 _MIRROR_SERVICE = """[Unit]
 Description=Mirror Daemon
-After=network.target
+Wants=mirror-worker.service
+After=network.target mirror-worker.service
 
 [Service]
 ExecStart=mirror daemon --config /etc/mirror/config.json

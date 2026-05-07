@@ -212,6 +212,38 @@ def test_default_config_has_no_legacy_plugins_key():
     assert DEFAULT_CONFIG["settings"]["logfolder"] == "/var/log/mirror/ftpsync"
 
 
+def test_systemd_unit_files_declare_worker_ordering(monkeypatch, tmp_path):
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+
+    setup_mod.setup()
+
+    master_unit = (tmp_path / "etc/systemd/system" / "mirror.service").read_text()
+    worker_unit = (tmp_path / "etc/systemd/system" / "mirror-worker.service").read_text()
+
+    after_lines = [
+        line for line in master_unit.splitlines()
+        if line.startswith("After=")
+    ]
+    wants_lines = [
+        line for line in master_unit.splitlines()
+        if line.startswith("Wants=")
+    ]
+    assert after_lines, master_unit
+    assert wants_lines, master_unit
+
+    after_targets = set()
+    for line in after_lines:
+        after_targets.update(line[len("After="):].split())
+    wants_targets = set()
+    for line in wants_lines:
+        wants_targets.update(line[len("Wants="):].split())
+
+    assert "mirror-worker.service" in after_targets, after_targets
+    assert "mirror-worker.service" in wants_targets, wants_targets
+    assert "mirror.service" not in worker_unit
+
+
 def test_required_directories_are_declared():
     fresh = importlib.reload(importlib.import_module("mirror.command.setup"))
     expected = {
