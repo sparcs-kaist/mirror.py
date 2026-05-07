@@ -5,13 +5,14 @@ Provides WorkerServer/WorkerClient classes,
 module-level instance management, and convenience functions.
 """
 
+import contextlib
 import os
 import socket
 import logging
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import mirror
 
@@ -398,6 +399,24 @@ def stop_instance() -> None:
     _instance = None
 
 
+@contextlib.contextmanager
+def _worker_client(socket_path: Optional[Path | str] = None) -> Iterator["WorkerClient"]:
+    """Yield a WorkerClient, reusing the supervised connection when available."""
+    candidate = _instance
+    if (
+        socket_path is None
+        and isinstance(candidate, BaseClient)
+        and candidate.is_connected
+    ):
+        logger.debug("worker RPC: reusing supervised WorkerClient")
+        yield candidate
+        return
+
+    logger.debug("worker RPC: opening temporary WorkerClient")
+    with WorkerClient(socket_path) as client:
+        yield client
+
+
 # --- Convenience functions ---
 
 
@@ -417,27 +436,27 @@ def send_finished_notification(job_id: str, success: bool, returncode: Optional[
 
 
 def ping(socket_path: Optional[Path | str] = None) -> dict:
-    """Health check via a temporary client"""
-    with WorkerClient(socket_path) as client:
-        return client.ping()
+    """Health check via the persistent or a temporary client"""
+    with _worker_client(socket_path) as c:
+        return c.ping()
 
 
 def status(socket_path: Optional[Path | str] = None) -> dict:
-    """Get worker status via a temporary client"""
-    with WorkerClient(socket_path) as client:
-        return client.status()
+    """Get worker status via the persistent or a temporary client"""
+    with _worker_client(socket_path) as c:
+        return c.status()
 
 
 def stop_command(job_id: Optional[str] = None, socket_path: Optional[Path | str] = None) -> dict:
-    """Stop a job via a temporary client"""
-    with WorkerClient(socket_path) as client:
-        return client.stop_command(job_id)
+    """Stop a job via the persistent or a temporary client"""
+    with _worker_client(socket_path) as c:
+        return c.stop_command(job_id)
 
 
 def get_progress(job_id: Optional[str] = None, socket_path: Optional[Path | str] = None) -> dict:
-    """Get current sync progress via a temporary client"""
-    with WorkerClient(socket_path) as client:
-        return client.get_progress(job_id)
+    """Get current sync progress via the persistent or a temporary client"""
+    with _worker_client(socket_path) as c:
+        return c.get_progress(job_id)
 
 
 def execute_command(
@@ -451,9 +470,9 @@ def execute_command(
     log_path: Optional[Path | str] = None,
     socket_path: Optional[Path | str] = None,
 ) -> dict:
-    """Execute a shell command via a temporary client"""
-    with WorkerClient(socket_path) as client:
-        return client.execute_command(
+    """Execute a shell command via the persistent or a temporary client"""
+    with _worker_client(socket_path) as c:
+        return c.execute_command(
             job_id,
             commandline,
             env,
@@ -475,11 +494,11 @@ def is_worker_running(job_id: Optional[str] = None) -> bool:
         alive(bool): True if worker responds (and job is running, if specified)
     """
     try:
-        with WorkerClient(_default_worker_socket_path()) as client:
+        with _worker_client() as c:
             if job_id:
-                progress = client.get_progress(job_id)
+                progress = c.get_progress(job_id)
                 return progress.get("syncing", False)
-            client.ping()
+            c.ping()
             return True
     except Exception:
         return False
