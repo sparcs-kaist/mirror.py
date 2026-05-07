@@ -29,6 +29,11 @@ services:
     container_name: mirror
     build:
       context: docker/mirror
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /run/lock
     depends_on:
       rsync-fixture:
         condition: service_healthy

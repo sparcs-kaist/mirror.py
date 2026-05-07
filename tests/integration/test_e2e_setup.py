@@ -15,42 +15,11 @@ Three scenarios:
 """
 
 import json
-import shutil
 import subprocess
 import time
 import uuid
-from pathlib import Path
 
 import pytest
-
-IMAGE_TAG = "mirror-setup-test:latest"
-
-
-@pytest.fixture(scope="session")
-def setup_test_image(built_wheel: Path, project_root: Path) -> str:
-    """Build the systemd-enabled setup-test docker image once per session.
-
-    Args:
-        built_wheel(Path): Wheel produced by the `built_wheel` fixture.
-        project_root(Path): Project root for resolving the docker context.
-
-    Return:
-        tag(str): Docker image tag of the built setup-test image.
-    """
-    context = project_root / "tests" / "integration" / "docker" / "setup-test"
-    dist_dir = context / "dist"
-    dist_dir.mkdir(parents=True, exist_ok=True)
-
-    for old in dist_dir.glob("mirror_py-*.whl"):
-        old.unlink()
-    shutil.copy2(built_wheel, dist_dir / built_wheel.name)
-
-    subprocess.run(
-        ["docker", "build", "-t", IMAGE_TAG, str(context)],
-        check=True,
-        capture_output=True,
-    )
-    return IMAGE_TAG
 
 
 def _start_systemd_container(image: str) -> str:
