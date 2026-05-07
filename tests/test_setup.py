@@ -183,6 +183,27 @@ def test_setup_warns_when_systemctl_fails(monkeypatch, tmp_path, capsys):
     assert "boom" in captured.out
 
 
+def test_setup_warns_when_systemctl_binary_missing(monkeypatch, tmp_path, capsys):
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+
+    def raise_not_found(*a, **kw):
+        raise FileNotFoundError(2, "No such file or directory", "systemctl")
+
+    monkeypatch.setattr(setup_mod.subprocess, "run", raise_not_found)
+
+    setup_mod.setup()
+
+    out = capsys.readouterr().out
+    assert "'systemctl' not found" in out
+    edit_pos = out.find("Edit /etc/mirror/config.json")
+    enable_pos = out.find("systemctl enable")
+    assert edit_pos != -1 and enable_pos != -1, out
+    assert edit_pos < enable_pos
+    config_path = tmp_path / "etc/mirror/config.json"
+    assert config_path.exists()
+
+
 def test_default_config_has_no_legacy_plugins_key():
     from mirror.config.config import DEFAULT_CONFIG
 

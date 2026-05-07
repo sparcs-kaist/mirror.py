@@ -113,12 +113,19 @@ def _write_systemd_units() -> None:
 
 def _reload_systemd() -> None:
     """Reload the systemd daemon to pick up new unit files."""
-    result = subprocess.run(
-        ["systemctl", "daemon-reload"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["systemctl", "daemon-reload"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        print_formatted_text(
+            "Warning: 'systemctl' not found. Skipping daemon-reload — "
+            "run it manually on a systemd host before starting the services."
+        )
+        return
     if result.returncode != 0:
         stderr_snippet = result.stderr[:200]
         print_formatted_text(
