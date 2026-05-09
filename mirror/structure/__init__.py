@@ -83,6 +83,7 @@ class Package:
     lastsync: float = 0.0
     disabled: bool = False
     timestamp: float = 0.0
+    max_runtime_seconds: int = 0
     statusinfo: StatusInfo = field(default_factory=StatusInfo)
     
     @staticmethod
@@ -113,6 +114,7 @@ class Package:
             href=config["href"],
             synctype=synctype,
             syncrate=parse_iso_duration(config["syncrate"]),
+            max_runtime_seconds=parse_iso_duration(config.get("max_runtime", "")),
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
             settings=PackageSettings.from_dict(config["settings"]),
             lastsync=lastsync,
@@ -168,6 +170,7 @@ class Package:
             data(dict): Package fields with "id" key and ISO 8601 syncrate.
         """
         package_dict = asdict(self)
+        package_dict.pop("max_runtime_seconds", None)
         # Convert pkgid -> id
         package_dict["id"] = package_dict.pop("pkgid")
         package_dict["syncrate"] = mirror.toolbox.format_iso_duration(self.syncrate)

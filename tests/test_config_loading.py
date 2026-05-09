@@ -232,6 +232,35 @@ def test_socket_path_from_config_overrides_default(tmp_path, monkeypatch):
                 pass
 
 
+def _make_pkg_config(extra: dict = None) -> dict:
+    cfg = {
+        "id": "pkg1",
+        "name": "Pkg 1",
+        "href": "/pkg1",
+        "synctype": "rsync",
+        "syncrate": "PT1H",
+        "link": [],
+        "settings": {"hidden": False, "src": "rsync://example.com/pkg1", "dst": "/tmp/pkg1"},
+    }
+    if extra:
+        cfg.update(extra)
+    return cfg
+
+
+def test_max_runtime_parses_to_seconds():
+    """A package config with max_runtime = PT12H yields max_runtime_seconds == 43200."""
+    import mirror.structure
+    pkg = mirror.structure.Package.from_dict(_make_pkg_config({"max_runtime": "PT12H"}))
+    assert pkg.max_runtime_seconds == 43200
+
+
+def test_max_runtime_missing_defaults_to_zero():
+    """A package config without max_runtime yields max_runtime_seconds == 0."""
+    import mirror.structure
+    pkg = mirror.structure.Package.from_dict(_make_pkg_config())
+    assert pkg.max_runtime_seconds == 0
+
+
 # Define mirror.toolbox.parse_iso_duration temporarily as it's needed (in case the actual module is not loaded)
 if not hasattr(mirror, 'toolbox') or not hasattr(mirror.toolbox, 'parse_iso_duration'):
     class MockToolbox:

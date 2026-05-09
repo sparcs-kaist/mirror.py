@@ -140,3 +140,16 @@ def test_on_sync_done_records_post_compression_path(tmp_path, monkeypatch):
         f"Expected post-compression path; got {pkg.statusinfo.lastsuccesslog!r}"
     )
     assert pkg.statusinfo.lastsuccesslog != str(pre_path)
+
+
+def test_to_dict_excludes_max_runtime_seconds():
+    """Package.to_dict() must not include max_runtime_seconds in its output.
+
+    The field is config-side only; leaking it into stat.json would be schema drift.
+    """
+    pkg = _make_package()
+    pkg.max_runtime_seconds = 43200
+    result = pkg.to_dict()
+    assert "max_runtime_seconds" not in result, (
+        "max_runtime_seconds leaked into stat.json serialization; drop it in to_dict()"
+    )
