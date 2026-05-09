@@ -94,3 +94,39 @@ def test_daemon_signal_handling(mock_master_server, mock_dependencies):
         signal_handler(signal.SIGINT, None)
         server_instance.stop.assert_called()
         mock_exit.assert_called_with(0)
+
+
+def test_loop_calls_watchdog_for_syncing_package(mock_master_server, mock_dependencies):
+    """The daemon loop must call _watchdog_check for a syncing package in _in_progress."""
+    import mirror.sync
+
+    pkgid = "syncing_pkg"
+
+    pkg = MagicMock()
+    pkg.pkgid = pkgid
+    pkg.is_disabled.return_value = False
+    pkg.is_syncing.return_value = True
+
+    mirror.packages = {pkgid: pkg}
+
+    # Place the package in _in_progress so the first syncing branch fires.
+    with mirror.sync._start_lock:
+        mirror.sync._in_progress.add(pkgid)
+
+    try:
+        watchdog_calls = []
+
+        with patch("mirror.command.daemon._watchdog_check", side_effect=watchdog_calls.append), \
+             patch("time.sleep", side_effect=KeyboardInterrupt), \
+             patch("sys.exit"):
+            try:
+                daemon("config.json")
+            except KeyboardInterrupt:
+                pass
+
+        assert any(c is pkg for c in watchdog_calls), (
+            f"_watchdog_check was not called with the syncing package; calls={watchdog_calls}"
+        )
+    finally:
+        with mirror.sync._start_lock:
+            mirror.sync._in_progress.discard(pkgid)
