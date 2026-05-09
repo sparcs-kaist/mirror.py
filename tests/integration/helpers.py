@@ -8,6 +8,11 @@ from pathlib import Path
 
 MIRROR_CONTAINER = "mirror"
 
+_UNIT_BY_NAME = {
+    "master": "mirror.service",
+    "worker": "mirror-worker.service",
+}
+
 
 class MirrorStack:
     """Wrapper for the running compose stack with convenience methods.
@@ -109,6 +114,10 @@ class MirrorStack:
     def trigger_sync(self, pkgid: str) -> None:
         """Trigger an immediate sync for a package via the master socket RPC.
 
+        If a sync is already in progress for the package, the call is treated
+        as a no-op since the post-condition (sync running for pkgid) is already
+        satisfied.
+
         Args:
             pkgid(str): Package identifier to sync.
         """
@@ -116,34 +125,66 @@ class MirrorStack:
             "from mirror.socket.master import start_sync; "
             f"start_sync({pkgid!r})"
         )
-        self.docker_exec("python", "-c", script)
+        result = self.docker_exec("python", "-c", script, check=False)
+        if result.returncode == 0:
+            return
+        if "already syncing" in (result.stderr or ""):
+            return
+        raise RuntimeError(
+            f"trigger_sync({pkgid!r}) failed (rc={result.returncode}): "
+            f"stderr={result.stderr!r}"
+        )
+
+    def _systemctl_robust(self, action: str, unit: str) -> None:
+        """Run `systemctl <action> <unit>`, retrying once after `reset-failed`.
+
+        systemd applies a start-rate limit (StartLimitBurst within
+        StartLimitIntervalSec) that fires when integration tests restart
+        services rapidly. The retry transparently clears the failed counter
+        without altering the production unit definition.
+
+        Args:
+            action(str): systemctl verb ("start", "stop", "restart").
+            unit(str): Unit name.
+        """
+        result = self.docker_exec("systemctl", action, unit, check=False)
+        if result.returncode == 0:
+            return
+        if "start of the service was attempted too often" in (result.stderr or ""):
+            self.docker_exec("systemctl", "reset-failed", unit, check=False)
+            self.docker_exec("systemctl", action, unit)
+            return
+        raise RuntimeError(
+            f"systemctl {action} {unit} failed (rc={result.returncode}): "
+            f"stderr={result.stderr!r}"
+        )
 
     def restart_process(self, name: str) -> None:
-        """Restart a supervised process by name.
+        """Restart a managed daemon process by symbolic name.
 
         Args:
             name(str): Process name (e.g. "master" or "worker").
         """
-        self.docker_exec("supervisorctl", "restart", name)
+        self._systemctl_robust("restart", _UNIT_BY_NAME[name])
 
     def stop_process(self, name: str) -> None:
-        """Stop a supervised process by name.
+        """Stop a managed daemon process by symbolic name.
 
         Args:
             name(str): Process name (e.g. "master" or "worker").
         """
-        self.docker_exec("supervisorctl", "stop", name)
+        self._systemctl_robust("stop", _UNIT_BY_NAME[name])
 
     def start_process(self, name: str) -> None:
-        """Start a supervised process by name.
+        """Start a managed daemon process by symbolic name.
 
         Args:
             name(str): Process name (e.g. "master" or "worker").
         """
-        self.docker_exec("supervisorctl", "start", name)
+        self._systemctl_robust("start", _UNIT_BY_NAME[name])
 
     def process_pid(self, name: str) -> int:
-        """Return the PID of a supervised process.
+        """Return the MainPID of a managed daemon process.
 
         Args:
             name(str): Process name.
@@ -151,11 +192,15 @@ class MirrorStack:
         Return:
             pid(int): Process PID. Returns 0 if not running.
         """
-        result = self.docker_exec("supervisorctl", "pid", name)
+        result = self.docker_exec(
+            "systemctl", "show", "--property=MainPID", "--value",
+            _UNIT_BY_NAME[name],
+        )
         try:
-            return int(result.stdout.strip())
+            pid = int(result.stdout.strip())
         except (ValueError, AttributeError):
             return 0
+        return pid if pid > 0 else 0
 
     def swap_rsync_fixture_tree(self, src_dir: Path) -> None:
         """Replace the rsync-fixture data directory with new content via docker cp.
@@ -252,28 +297,32 @@ class MirrorStack:
 
 
 def _wait_for_process_running(name: str, timeout: float = 30) -> None:
-    """Poll supervisorctl status for a process until it shows RUNNING.
+    """Poll systemctl is-active for a managed unit until it reports active.
 
     Args:
-        name(str): Supervisord process name.
+        name(str): Symbolic process name (e.g. "master" or "worker").
         timeout(float): Maximum seconds to wait.
 
     Raises:
-        TimeoutError: If process does not become RUNNING within timeout.
+        TimeoutError: If the unit does not become active within timeout.
     """
+    unit = _UNIT_BY_NAME[name]
     deadline = time.monotonic() + timeout
+    last_state = ""
     while time.monotonic() < deadline:
         result = subprocess.run(
-            ["docker", "exec", MIRROR_CONTAINER, "supervisorctl", "status", name],
+            ["docker", "exec", MIRROR_CONTAINER,
+             "systemctl", "is-active", unit],
             capture_output=True,
             text=True,
         )
-        if "RUNNING" in result.stdout:
+        last_state = result.stdout.strip()
+        if last_state == "active":
             return
         time.sleep(1)
     raise TimeoutError(
-        f"Process '{name}' did not reach RUNNING state within {timeout}s. "
-        f"Last supervisorctl output: {result.stdout!r}"
+        f"Unit '{unit}' did not reach active state within {timeout}s. "
+        f"Last systemctl is-active output: {last_state!r}"
     )
 
 

@@ -6,7 +6,9 @@ Integration tests talk to containerized services and do NOT import mirror.* dire
 
 import hashlib
 import os
+import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -75,6 +77,41 @@ def built_wheel(project_root: Path) -> Path:
     if wheel is None:
         raise FileNotFoundError(f"uv build succeeded but no wheel found in {dist_dir}")
     return wheel
+
+
+SETUP_TEST_IMAGE_TAG = "mirror-setup-test:latest"
+
+
+@pytest.fixture(scope="session")
+def setup_test_image(built_wheel: Path, project_root: Path) -> str:
+    """Build the systemd-enabled setup-test docker image once per session.
+
+    Used by integration tests that need a clean systemd container with the
+    daemon prerequisites (rsync, lftp, bandersnatch) installed but no
+    pre-baked config or enabled units — i.e. the starting state an operator
+    sees before running `mirror setup`.
+
+    Args:
+        built_wheel(Path): Wheel produced by the `built_wheel` fixture.
+        project_root(Path): Project root for resolving the docker context.
+
+    Return:
+        tag(str): Docker image tag of the built setup-test image.
+    """
+    context = project_root / "tests" / "integration" / "docker" / "setup-test"
+    dist_dir = context / "dist"
+    dist_dir.mkdir(parents=True, exist_ok=True)
+
+    for old in dist_dir.glob("mirror_py-*.whl"):
+        old.unlink()
+    shutil.copy2(built_wheel, dist_dir / built_wheel.name)
+
+    subprocess.run(
+        ["docker", "build", "-t", SETUP_TEST_IMAGE_TAG, str(context)],
+        check=True,
+        capture_output=True,
+    )
+    return SETUP_TEST_IMAGE_TAG
 
 
 @pytest.fixture(scope="session")
@@ -170,10 +207,12 @@ def mirror_stack(docker_services, integration_tmp: Path) -> MirrorStack:
     """
     stack = MirrorStack(integration_tmp)
 
-    # Stop master before cleanup so we don't race with in-flight syncs that
-    # hold open file descriptors under /var/lib/mirror. Worker keeps running
-    # so that worker.sock stays bound and master can reconnect on start.
+    # Stop both daemons before cleanup. Stopping the worker is required because
+    # worker spawns sync subprocesses (rsync, ftpsync, lftp) under its cgroup;
+    # systemd's default KillMode=control-group propagates the stop to those
+    # children, ensuring no rsync is mid-write when we wipe /srv/publish.
     stack.stop_process("master")
+    stack.stop_process("worker")
 
     # Cleanup is done entirely from inside the container because mirror runs
     # as root and produces root-owned files; host-side rmtree as the test user
@@ -187,7 +226,41 @@ def mirror_stack(docker_services, integration_tmp: Path) -> MirrorStack:
         "2>/dev/null; true"
     )
 
+    # Start order: worker first so its socket is bound before master tries to
+    # connect on startup.
+    stack.start_process("worker")
+    stack.wait_for_worker_ready()
     stack.start_process("master")
     stack.wait_for_master_ready()
+    # systemctl is-active flips to "active" the moment the process is forked,
+    # which is BEFORE mirror.config.load() has rewritten stat.json. Wait for
+    # the freshly written stat.json to appear so wait_for_status() polls a
+    # current state instead of any stale-but-still-on-disk file.
+    deadline = time.monotonic() + 10
+    stat_path = stack.state_dir / "stat.json"
+    while time.monotonic() < deadline and not stat_path.exists():
+        time.sleep(0.1)
+
+    # Master triggers auto-syncs immediately on a fresh stat.json (lastsync=0
+    # makes every package due). Tests that probe the system independently must
+    # not race those in-flight syncs, so wait until none are SYNC.
+    deadline = time.monotonic() + 60
+    statuses: dict[str, str] = {}
+    while time.monotonic() < deadline:
+        data = stack.stat_json()
+        statuses = {
+            pkgid: pkg.get("status", {}).get("status", "UNKNOWN")
+            for pkgid, pkg in data.get("packages", {}).items()
+        }
+        if all(s != "SYNC" for s in statuses.values()):
+            break
+        time.sleep(0.5)
+    else:
+        stuck = [pkgid for pkgid, s in statuses.items() if s == "SYNC"]
+        if stuck:
+            raise TimeoutError(
+                f"mirror_stack: package(s) {stuck} stuck in SYNC after 60s; "
+                f"all statuses: {statuses}"
+            )
 
     yield stack

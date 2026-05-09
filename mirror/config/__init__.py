@@ -22,19 +22,24 @@ SOCKET_PATH: str
 
 # --- Private Helpers ---
 
-def _atomic_write_json(path: Path, payload: dict, indent: int = 4) -> None:
+def _atomic_write_json(path: Path, payload: dict, indent: int = 4, mode: int | None = None) -> None:
     """Write JSON atomically: tempfile in same dir, then os.replace.
 
     Args:
         path(Path): Final destination path.
         payload(dict): JSON-serializable content.
         indent(int): json.dumps indent.
+        mode(int, optional): If set, chmod the file before the swap. tempfile.mkstemp
+            produces 0o600 by default; pass 0o644 for files the web UI / monitoring
+            must read. Plug-in outputs leave this unset to inherit the secure default.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=indent)
+        if mode is not None:
+            os.chmod(tmp_name, mode)
         os.replace(tmp_name, path)
     except Exception:
         try:
@@ -189,7 +194,7 @@ def generate_and_save_web_status():
             mirror.log.warning(f"Web status transform from plug-in '{plugin_name}' failed: {e}")
 
     try:
-        _atomic_write_json(STATUS_PATH, web_status)
+        _atomic_write_json(STATUS_PATH, web_status, mode=0o644)
         mirror.log.info(f"Web status successfully generated and saved to {STATUS_PATH}")
     except Exception as e:
         mirror.log.error(f"Failed to save web status to {STATUS_PATH}: {e}")
@@ -231,7 +236,7 @@ def save_stat_data():
             mirror.log.warning(f"Stat transform from plug-in '{plugin_name}' failed: {e}")
 
     try:
-        _atomic_write_json(STAT_DATA_PATH, full_stat)
+        _atomic_write_json(STAT_DATA_PATH, full_stat, mode=0o644)
     except Exception as e:
         mirror.log.error(f"Failed to save stat data to {STAT_DATA_PATH}: {e}")
 
