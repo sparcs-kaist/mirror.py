@@ -67,6 +67,7 @@
             "href": "/debian",
             "synctype": "ftpsync",
             "syncrate": "PUSH",
+            "max_runtime": "PT12H",
             "link": [
                 {
                     "rel": "HOME",
@@ -96,6 +97,7 @@
             "href": "/pub/rocky",
             "synctype": "rsync",
             "syncrate": "PT10M",
+            "max_runtime": "PT12H",
             "link": [
                 {
                     "rel": "HOME",
