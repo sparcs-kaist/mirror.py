@@ -261,6 +261,45 @@ def test_max_runtime_missing_defaults_to_zero():
     assert pkg.max_runtime_seconds == 0
 
 
+def test_max_runtime_below_6h_emits_warning(caplog):
+    """A max_runtime below 6h triggers a warning recommending 12h+."""
+    import logging
+    import mirror.structure
+
+    with caplog.at_level(logging.WARNING, logger="mirror"):
+        mirror.structure.Package.from_dict(_make_pkg_config({"max_runtime": "PT3H"}))
+
+    matched = [r for r in caplog.records if r.levelno == logging.WARNING and "max_runtime" in r.message]
+    assert matched, "expected a warning about max_runtime below 6h"
+    assert "below 6h" in matched[0].message
+    assert "12h or more" in matched[0].message
+
+
+def test_max_runtime_at_or_above_6h_is_silent(caplog):
+    """max_runtime >= 6h must not emit a warning."""
+    import logging
+    import mirror.structure
+
+    for duration in ("PT6H", "PT12H", "PT1D"):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="mirror"):
+            mirror.structure.Package.from_dict(_make_pkg_config({"max_runtime": duration}))
+        matched = [r for r in caplog.records if "max_runtime" in r.message]
+        assert not matched, f"expected no warning for max_runtime={duration}, got {matched}"
+
+
+def test_max_runtime_zero_is_silent(caplog):
+    """max_runtime unset (==0) must not emit the watchdog warning."""
+    import logging
+    import mirror.structure
+
+    with caplog.at_level(logging.WARNING, logger="mirror"):
+        mirror.structure.Package.from_dict(_make_pkg_config())
+
+    matched = [r for r in caplog.records if "max_runtime" in r.message]
+    assert not matched
+
+
 # Define mirror.toolbox.parse_iso_duration temporarily as it's needed (in case the actual module is not loaded)
 if not hasattr(mirror, 'toolbox') or not hasattr(mirror.toolbox, 'parse_iso_duration'):
     class MockToolbox:

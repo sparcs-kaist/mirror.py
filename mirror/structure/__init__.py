@@ -88,6 +88,7 @@ class Package:
     
     @staticmethod
     def from_dict(config: dict) -> "Package":
+        import mirror
         import mirror.sync
         from mirror.toolbox import parse_iso_duration
         # Validation
@@ -107,6 +108,15 @@ class Package:
         # Pull lastsync from statusinfo if present (matching mirror/config/__init__.py behavior)
         lastsync = statusinfo_dict.get("lastsync", config.get("lastsync", 0.0))
 
+        max_runtime_seconds = parse_iso_duration(config.get("max_runtime", ""))
+        # 6 hours; many real syncs (initial Debian, large rsync) legitimately
+        # run several hours, so a sub-6h cap is almost always a misconfiguration.
+        if 0 < max_runtime_seconds < 21600:
+            mirror.log.warning(
+                f"Package {config['id']}: max_runtime={max_runtime_seconds}s is below 6h; "
+                "12h or more is recommended to avoid killing legitimate long-running syncs"
+            )
+
         return Package(
             pkgid=config["id"],
             name=config["name"],
@@ -114,7 +124,7 @@ class Package:
             href=config["href"],
             synctype=synctype,
             syncrate=parse_iso_duration(config["syncrate"]),
-            max_runtime_seconds=parse_iso_duration(config.get("max_runtime", "")),
+            max_runtime_seconds=max_runtime_seconds,
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
             settings=PackageSettings.from_dict(config["settings"]),
             lastsync=lastsync,
