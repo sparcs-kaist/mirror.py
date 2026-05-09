@@ -8,6 +8,7 @@
         "statfile": "/var/lib/mirror/stat.json",
         "localtimezone": "Asia/Seoul",
         "errorcontinuetime": 60,
+        "max_runtime": "PT12H",
         "maintainer": {
             "name": "Roul",
             "email": "roul@ftp.kaist.ac.kr"

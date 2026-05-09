@@ -14,6 +14,61 @@ import os
 from pathlib import Path
 
 
+def _watchdog_check(package: mirror.structure.Package) -> None:
+    """Probe the worker for uptime and kill the sync if max_runtime exceeded.
+
+    Reads the global cap from `mirror.conf.max_runtime_seconds`. The cap is
+    operator-wide; per-package overrides are intentionally not supported.
+
+    Args:
+        package(Package): Currently-syncing package to inspect.
+    """
+    max_runtime_seconds = getattr(mirror.conf, "max_runtime_seconds", 0)
+    if max_runtime_seconds <= 0:
+        return
+
+    try:
+        progress = mirror.socket.worker.get_progress(package.pkgid)
+    except Exception as exc:
+        mirror.log.debug(f"watchdog: get_progress failed for {package.pkgid}: {exc}")
+        return
+
+    if not progress.get("syncing"):
+        return
+
+    info = progress.get("info") or {}
+    uptime = info.get("uptime")
+    if not mirror.sync.should_kill_for_max_runtime(uptime, max_runtime_seconds):
+        return
+
+    if not mirror.sync.mark_watchdog_fired(package.pkgid):
+        return
+
+    mirror.log.error(
+        f"Package {package.pkgid} sync exceeded max_runtime "
+        f"(limit={max_runtime_seconds}s, ran={uptime:.0f}s); killing"
+    )
+    try:
+        result = mirror.socket.worker.stop_command(job_id=package.pkgid)
+    except Exception as exc:
+        # Release the marker so the next iteration can retry. Without this a
+        # transient RPC error would leave the package locked out of watchdog
+        # retries and stuck in SYNC indefinitely.
+        mirror.sync.release_watchdog_fired(package.pkgid)
+        mirror.log.error(f"watchdog: stop_command failed for {package.pkgid}: {exc}")
+        return
+
+    status = result.get("status") if isinstance(result, dict) else None
+    if status != "stopped":
+        # Worker did not actually stop the job (e.g. "not_found"). Release the
+        # marker so subsequent iterations can re-evaluate; if on_sync_done has
+        # already fired the release is a harmless no-op.
+        mirror.sync.release_watchdog_fired(package.pkgid)
+        mirror.log.warning(
+            f"watchdog: stop_command for {package.pkgid} returned status={status!r}"
+        )
+
+
 def should_auto_sync(package: mirror.structure.Package, now: float, errorcontinuetime: int) -> bool:
     """Decide whether the daemon auto-loop should start a sync for this package.
 
@@ -94,8 +149,10 @@ def daemon(config: str) -> None:
                         # is_worker_running can return False even when the sync
                         # is healthy.
                         if package.pkgid in mirror.sync._in_progress:
+                            _watchdog_check(package)
                             continue
                         if mirror.socket.worker.is_worker_running(package.pkgid):
+                            _watchdog_check(package)
                             continue
                         mirror.log.warning(f"Package {package.pkgid} marked as syncing but no worker found.")
                         pkg_logger = mirror.logger.get(package.pkgid)

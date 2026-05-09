@@ -14,6 +14,7 @@ methods = []
 _start_lock = threading.Lock()
 _in_progress: set[str] = set()
 _extra_args: dict[str, dict[str, str]] = {}
+_watchdog_fired: set[str] = set()
 
 
 def get_module(method: str) -> Callable:
@@ -59,6 +60,52 @@ def _validate_extra_args(extra_args: dict[str, str]) -> dict[str, str]:
     return clean
 
 
+def mark_watchdog_fired(pkgid: str) -> bool:
+    """Atomically claim the watchdog kill for this pkgid.
+
+    Args:
+        pkgid(str): Package identifier.
+
+    Return:
+        first(bool): True if this is the first time the watchdog fired for
+            pkgid since its last sync start; False if already fired.
+    """
+    with _start_lock:
+        if pkgid in _watchdog_fired:
+            return False
+        _watchdog_fired.add(pkgid)
+        return True
+
+
+def release_watchdog_fired(pkgid: str) -> None:
+    """Release a previously-claimed watchdog marker (e.g., on stop_command failure).
+
+    Args:
+        pkgid(str): Package identifier.
+    """
+    with _start_lock:
+        _watchdog_fired.discard(pkgid)
+
+
+def should_kill_for_max_runtime(uptime: Optional[float], max_runtime_seconds: int) -> bool:
+    """Decide whether the watchdog should kill a sync for exceeding max_runtime.
+
+    Args:
+        uptime(float, optional): Seconds since the sync started, as reported by
+            the worker, or None if the worker did not return uptime info.
+        max_runtime_seconds(int): The package's configured cap; 0 disables the
+            watchdog.
+
+    Return:
+        kill(bool): True if uptime is known and exceeds the cap.
+    """
+    if max_runtime_seconds <= 0:
+        return False
+    if uptime is None:
+        return False
+    return uptime > max_runtime_seconds
+
+
 def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args: Optional[dict[str, str]] = None) -> None:
     """Start sync for a package.
 
@@ -94,12 +141,14 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
         if pkgid in _in_progress:
             raise RuntimeError(f"Package {pkgid} sync already in progress")
         _in_progress.add(pkgid)
-        # We now own the slot; write or evict the extra_args entry.
+        # We now own the slot; write or evict the extra_args entry, and
+        # discard any stale watchdog marker left by a prior failed cycle.
         if clean:
             _extra_args[pkgid] = clean
             registered_extra_args = True
         else:
             _extra_args.pop(pkgid, None)
+        _watchdog_fired.discard(pkgid)
 
     started = False
     try:
@@ -135,6 +184,7 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
                 with _start_lock:
                     _in_progress.discard(pkgid)
                     _extra_args.pop(pkgid, None)
+                    _watchdog_fired.discard(pkgid)
 
         thread = Thread(target=_runner, daemon=True)
         thread.start()
@@ -145,6 +195,7 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
                 _in_progress.discard(pkgid)
                 if registered_extra_args:
                     _extra_args.pop(pkgid, None)
+                _watchdog_fired.discard(pkgid)
 
 def get_extra_args(pkgid: str) -> dict[str, str]:
     """Return a shallow copy of the extra_args registered for an in-flight sync, or empty.
@@ -202,6 +253,7 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
     with _start_lock:
         _in_progress.discard(pkgid)
         _extra_args.pop(pkgid, None)
+        _watchdog_fired.discard(pkgid)
 
 
 def execute(package: "mirror.structure.Package", logger: logging.Logger) -> None:

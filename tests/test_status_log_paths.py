@@ -140,3 +140,5 @@ def test_on_sync_done_records_post_compression_path(tmp_path, monkeypatch):
         f"Expected post-compression path; got {pkg.statusinfo.lastsuccesslog!r}"
     )
     assert pkg.statusinfo.lastsuccesslog != str(pre_path)
+
+
