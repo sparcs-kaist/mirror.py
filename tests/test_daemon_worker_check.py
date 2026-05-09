@@ -92,16 +92,19 @@ class TestDaemonWorkerCheck(unittest.TestCase):
         mock_setup_logger.side_effect = setup_logger_side_effect
 
         # Setup a package whose timing-based sync condition is unambiguously
-        # true on iteration 1: time.time() - 0 > -1 is always True.
+        # true on iteration 1: time.time() - 0 > 10 is always True (lastsync=0
+        # means epoch start, syncrate=10 seconds).
         pkg = MagicMock()
         pkg.pkgid = "test_pkg"
         pkg.is_disabled.return_value = False
         pkg.is_syncing.return_value = False
         pkg.lastsync = 0
-        pkg.syncrate = -1
+        pkg.syncrate = 10
         pkg.status = "ACTIVE"
 
         mirror.packages = {"test_pkg": pkg}
+        mirror.conf = MagicMock()
+        mirror.conf.errorcontinuetime = 60
 
         # Run exactly one iteration before raising.
         mock_sleep.side_effect = [KeyboardInterrupt]
@@ -119,7 +122,7 @@ class TestDaemonWorkerCheck(unittest.TestCase):
         mock_sync_start.assert_called_with(pkg)
 
         mock_log.info.assert_any_call(
-            f"Package {pkg.pkgid} requires sync (Last sync: {pkg.lastsync}, Rate: {pkg.syncrate})"
+            f"Package {pkg.pkgid} requires sync (last_sync={pkg.lastsync}, syncrate={pkg.syncrate}, status={pkg.status})"
         )
 
 if __name__ == '__main__':

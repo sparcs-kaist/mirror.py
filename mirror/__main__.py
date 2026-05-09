@@ -47,3 +47,15 @@ def worker_cmd(config: str) -> None:
         config(str): Path to the config file.
     """
     mirror.command.worker(config)
+
+@main.command("push")
+@click.argument("packageid")
+@click.option("--config", default="/etc/mirror/config.json", help="Path to the config file.")
+def push(packageid: str, config: str) -> None:
+    """Trigger a one-shot push sync of the given package.
+
+    Args:
+        packageid(str): Package ID to push.
+        config(str): Path to the config file.
+    """
+    mirror.command.push(packageid, config)

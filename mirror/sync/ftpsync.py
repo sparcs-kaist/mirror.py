@@ -84,11 +84,12 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
 
         logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
 
+        env = dict(mirror.sync.get_extra_args(package.pkgid))
         mirror.socket.worker.execute_command(
             job_id=package.pkgid,
             sync_method="ftpsync",
             commandline=command,
-            env={},
+            env=env,
             uid=os.getuid(),
             gid=os.getgid(),
             log_path=log_path,

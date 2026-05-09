@@ -85,6 +85,53 @@ class MasterServer(BaseServer):
         mirror.sync.start(package, trigger="manual")
         return {"package_id": package_id, "status": "started"}
 
+    @expose("push_sync")
+    def _handle_push_sync(self, package_id: str, extra_args: Optional[dict] = None) -> dict:
+        """Trigger a one-shot push sync of a package.
+
+        Args:
+            package_id(str): Package identifier.
+            extra_args(dict[str, str], optional): Extra env-shaped entries to forward
+                to the sync layer. Validated as a flat str->str dict; rejected
+                otherwise with ValueError.
+
+        Return:
+            result(dict): {"package_id", "status"} where status is "started" on
+                success, or "already_running" if a sync was in flight.
+        """
+        import mirror.sync
+
+        package = mirror.packages.get(package_id)
+        if package is None:
+            raise ValueError(f"Package not found: {package_id}")
+        if package.is_disabled():
+            raise RuntimeError(f"Package {package_id} is disabled")
+
+        # Type-validate extra_args at the RPC boundary; the deeper validator in
+        # mirror.sync handles content rules (NUL, '=' in keys, etc).
+        if extra_args is not None:
+            if not isinstance(extra_args, dict):
+                raise ValueError("extra_args must be a dict[str, str] or null")
+            for k, v in extra_args.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise ValueError("extra_args entries must map str -> str")
+
+        with mirror.sync._start_lock:
+            if package.is_syncing() or package_id in mirror.sync._in_progress:
+                return {"package_id": package_id, "status": "already_running"}
+
+        try:
+            mirror.sync.start(package, trigger="push", extra_args=extra_args)
+        except RuntimeError as exc:
+            # Only the in_progress-race RuntimeError is idempotent. Any other
+            # RuntimeError (e.g. missing execute callable, plugin failure) is a
+            # real configuration problem that must surface to the caller.
+            if "already in progress" in str(exc):
+                return {"package_id": package_id, "status": "already_running"}
+            raise
+
+        return {"package_id": package_id, "status": "started"}
+
     @expose("stop_sync")
     def _handle_stop_sync(self, package_id: str) -> dict:
         """Stop sync for a package"""
@@ -135,6 +182,10 @@ class MasterClient(BaseClient):
     def start_sync(self, package_id: str) -> dict:
         """Start sync for a package"""
         return self.send_command("start_sync", package_id=package_id)
+
+    def push_sync(self, package_id: str, extra_args: Optional[dict[str, str]] = None) -> dict:
+        """Trigger a one-shot push sync"""
+        return self.send_command("push_sync", package_id=package_id, extra_args=extra_args)
 
     def stop_sync(self, package_id: str) -> dict:
         """Stop sync for a package"""
@@ -217,6 +268,16 @@ def start_sync(package_id: str, socket_path: Optional[Path | str] = None) -> dic
         return client.start_sync(package_id)
 
 
+def push_sync(
+    package_id: str,
+    extra_args: Optional[dict[str, str]] = None,
+    socket_path: Optional[Path | str] = None,
+) -> dict:
+    """Trigger a one-shot push sync via a temporary client"""
+    with MasterClient(socket_path) as client:
+        return client.push_sync(package_id, extra_args=extra_args)
+
+
 def stop_sync(package_id: str, socket_path: Optional[Path | str] = None) -> dict:
     """Stop sync for a package via a temporary client"""
     with MasterClient(socket_path) as client:
@@ -269,4 +330,5 @@ __all__ = [
     "stop_instance",
     "get_master_client",
     "is_master_running",
+    "push_sync",
 ]

@@ -502,6 +502,258 @@ class TestContextManager:
                 server.stop()
 
 
+class TestMasterPushSync:
+    """Test push_sync RPC on MasterServer"""
+
+    def _make_fake_pkg(self, pkgid="test", disabled=False, syncing=False):
+        class FakePkg:
+            pass
+        pkg = FakePkg()
+        pkg.pkgid = pkgid
+        pkg.synctype = "rsync"
+        pkg.is_disabled = lambda: disabled
+        pkg.is_syncing = lambda: syncing
+        return pkg
+
+    def test_push_sync_unknown_package(self, monkeypatch):
+        """push_sync with unknown pkgid raises an error on the client side"""
+        import mirror
+
+        original = getattr(mirror, "packages", None)
+        monkeypatch.setattr(mirror, "packages", {}, raising=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    with pytest.raises(Exception):
+                        client.push_sync("nonexistent")
+            finally:
+                server.stop()
+
+    def test_push_sync_disabled_package(self, monkeypatch):
+        """push_sync for a disabled package raises an error on the client side"""
+        import mirror
+
+        pkg = self._make_fake_pkg(pkgid="disabled-pkg", disabled=True)
+        monkeypatch.setattr(mirror, "packages", {"disabled-pkg": pkg}, raising=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    with pytest.raises(Exception):
+                        client.push_sync("disabled-pkg")
+            finally:
+                server.stop()
+
+    def test_push_sync_already_running(self, monkeypatch):
+        """push_sync returns already_running when pkgid is in _in_progress"""
+        import mirror
+        import mirror.sync
+
+        pkgid = "running-pkg"
+        pkg = self._make_fake_pkg(pkgid=pkgid)
+        monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
+
+        start_called = []
+
+        def fake_start(package, trigger, extra_args=None):
+            start_called.append(True)
+
+        monkeypatch.setattr(mirror.sync, "start", fake_start)
+        mirror.sync._in_progress.add(pkgid)
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                socket_path = Path(tmpdir) / "master.sock"
+                server = MasterServer(socket_path)
+                server.start()
+                time.sleep(0.1)
+
+                try:
+                    with MasterClient(socket_path) as client:
+                        result = client.push_sync(pkgid)
+                        assert result["package_id"] == pkgid
+                        assert result["status"] == "already_running"
+                        assert start_called == [], "mirror.sync.start must not be called"
+                finally:
+                    server.stop()
+        finally:
+            mirror.sync._in_progress.discard(pkgid)
+
+    def test_push_sync_extra_args_none(self, monkeypatch):
+        """push_sync with no extra_args passes None to mirror.sync.start"""
+        import mirror
+        import mirror.sync
+
+        pkgid = "test-pkg"
+        pkg = self._make_fake_pkg(pkgid=pkgid)
+        monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
+
+        recorded = {}
+
+        def fake_start(package, trigger, extra_args=None):
+            recorded["extra_args"] = extra_args
+            recorded["trigger"] = trigger
+
+        monkeypatch.setattr(mirror.sync, "start", fake_start)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    result = client.push_sync(pkgid)
+                    assert result["status"] == "started"
+                    assert result["package_id"] == pkgid
+                    assert recorded["extra_args"] is None
+                    assert recorded["trigger"] == "push"
+            finally:
+                server.stop()
+
+    def test_push_sync_extra_args_valid(self, monkeypatch):
+        """push_sync with valid extra_args dict forwards it to mirror.sync.start"""
+        import mirror
+        import mirror.sync
+
+        pkgid = "test-pkg"
+        pkg = self._make_fake_pkg(pkgid=pkgid)
+        monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
+
+        recorded = {}
+
+        def fake_start(package, trigger, extra_args=None):
+            recorded["extra_args"] = extra_args
+
+        monkeypatch.setattr(mirror.sync, "start", fake_start)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    result = client.push_sync(pkgid, extra_args={"FOO": "bar"})
+                    assert result["status"] == "started"
+                    assert recorded["extra_args"] == {"FOO": "bar"}
+            finally:
+                server.stop()
+
+    def test_push_sync_extra_args_non_string_value(self, monkeypatch):
+        """push_sync with non-string value in extra_args raises an error on client side"""
+        import mirror
+        import mirror.sync
+
+        pkgid = "test-pkg"
+        pkg = self._make_fake_pkg(pkgid=pkgid)
+        monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    with pytest.raises(Exception):
+                        client.push_sync(pkgid, extra_args={"FOO": 1})
+            finally:
+                server.stop()
+
+    def test_push_sync_extra_args_not_dict(self, monkeypatch):
+        """push_sync with extra_args as a string raises an error on client side"""
+        import mirror
+        import mirror.sync
+
+        pkgid = "test-pkg"
+        pkg = self._make_fake_pkg(pkgid=pkgid)
+        monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    with pytest.raises(Exception):
+                        client.push_sync(pkgid, extra_args="not-a-dict")
+            finally:
+                server.stop()
+
+    def test_push_sync_race_translates_runtime_error(self, monkeypatch):
+        """push_sync returns already_running when start raises the in-progress race error"""
+        import mirror
+        import mirror.sync
+
+        pkgid = "race-pkg"
+        pkg = self._make_fake_pkg(pkgid=pkgid)
+        monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
+
+        def fake_start(package, trigger, extra_args=None):
+            raise RuntimeError(f"Package {pkgid} sync already in progress")
+
+        monkeypatch.setattr(mirror.sync, "start", fake_start)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    result = client.push_sync(pkgid)
+                    assert result["status"] == "already_running"
+                    assert result["package_id"] == pkgid
+            finally:
+                server.stop()
+
+    def test_push_sync_non_race_runtime_error_surfaces(self, monkeypatch):
+        """push_sync re-raises RuntimeError that does not match the in-progress race"""
+        import mirror
+        import mirror.sync
+
+        pkgid = "config-error-pkg"
+        pkg = self._make_fake_pkg(pkgid=pkgid)
+        monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
+
+        def fake_start(package, trigger, extra_args=None):
+            raise RuntimeError(f"Sync plug-in '{package.synctype}' has no execute callable")
+
+        monkeypatch.setattr(mirror.sync, "start", fake_start)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    with pytest.raises(Exception) as ei:
+                        client.push_sync(pkgid)
+                    assert "no execute callable" in str(ei.value)
+            finally:
+                server.stop()
+
+
 def test_recv_message_handles_fragmented_header(tmp_path):
     """recv_message must reassemble headers split across multiple recv() calls."""
     import socket as _socket

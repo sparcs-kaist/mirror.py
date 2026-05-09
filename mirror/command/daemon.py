@@ -5,12 +5,34 @@ import mirror.sync
 import mirror.socket
 import mirror.socket.worker
 import mirror.event
+import mirror.structure
 
 import time
 import signal
 import sys
 import os
 from pathlib import Path
+
+
+def should_auto_sync(package: mirror.structure.Package, now: float, errorcontinuetime: int) -> bool:
+    """Decide whether the daemon auto-loop should start a sync for this package.
+
+    Args:
+        package(Package): Package to evaluate.
+        now(float): Current epoch seconds (injected for testability).
+        errorcontinuetime(int): Seconds to wait before retrying after an ERROR.
+
+    Return:
+        should_sync(bool): True if the auto-loop should call sync.start(package).
+    """
+    if package.syncrate < 0:
+        return False
+    if now - package.lastsync > package.syncrate:
+        return True
+    if package.status == "ERROR" and now - package.lastsync > errorcontinuetime:
+        return True
+    return False
+
 
 def daemon(config: str) -> None:
     """Run the mirror master daemon.
@@ -86,11 +108,8 @@ def daemon(config: str) -> None:
                         package.set_status("SYNC")
                         continue
 
-                    if time.time() - package.lastsync > package.syncrate:
-                        mirror.log.info(f"Package {package.pkgid} requires sync (Last sync: {package.lastsync}, Rate: {package.syncrate})")
-                        mirror.sync.start(package)
-                    elif package.status == "ERROR" and time.time() - package.lastsync > mirror.conf.errorcontinuetime:
-                        mirror.log.info(f"Package {package.pkgid} is in {package.status} state. Retrying sync.")
+                    if should_auto_sync(package, time.time(), mirror.conf.errorcontinuetime):
+                        mirror.log.info(f"Package {package.pkgid} requires sync (last_sync={package.lastsync}, syncrate={package.syncrate}, status={package.status})")
                         mirror.sync.start(package)
                 except Exception as e:
                     # A single package failing must not crash the whole daemon.
