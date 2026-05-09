@@ -247,27 +247,51 @@ def _make_pkg_config(extra: dict = None) -> dict:
     return cfg
 
 
+def _make_settings_config(extra: dict = None) -> dict:
+    settings = {
+        "logfolder": "/tmp/mirror_logs",
+        "webroot": "/tmp/mirror_web",
+        "statusfile": "/tmp/mirror_status.json",
+        "localtimezone": "Asia/Seoul",
+        "ftpsync": {
+            "maintainer": "X",
+            "sponsor": "Y",
+            "country": "KR",
+            "location": "Daejeon",
+            "throughput": "1G",
+        },
+        "logger": {},
+    }
+    if extra:
+        settings.update(extra)
+    return {"mirrorname": "M", "hostname": "h", "settings": settings}
+
+
 def test_max_runtime_parses_to_seconds():
-    """A package config with max_runtime = PT12H yields max_runtime_seconds == 43200."""
+    """settings.max_runtime = PT12H yields conf.max_runtime_seconds == 43200."""
     import mirror.structure
-    pkg = mirror.structure.Package.from_dict(_make_pkg_config({"max_runtime": "PT12H"}))
-    assert pkg.max_runtime_seconds == 43200
+    conf = mirror.structure.Config.load_from_dict(
+        _make_settings_config({"max_runtime": "PT12H"})
+    )
+    assert conf.max_runtime_seconds == 43200
 
 
 def test_max_runtime_missing_defaults_to_zero():
-    """A package config without max_runtime yields max_runtime_seconds == 0."""
+    """settings without max_runtime yields conf.max_runtime_seconds == 0."""
     import mirror.structure
-    pkg = mirror.structure.Package.from_dict(_make_pkg_config())
-    assert pkg.max_runtime_seconds == 0
+    conf = mirror.structure.Config.load_from_dict(_make_settings_config())
+    assert conf.max_runtime_seconds == 0
 
 
 def test_max_runtime_below_6h_emits_warning(caplog):
-    """A max_runtime below 6h triggers a warning recommending 12h+."""
+    """A global max_runtime below 6h triggers a warning recommending 12h+."""
     import logging
     import mirror.structure
 
     with caplog.at_level(logging.WARNING, logger="mirror"):
-        mirror.structure.Package.from_dict(_make_pkg_config({"max_runtime": "PT3H"}))
+        mirror.structure.Config.load_from_dict(
+            _make_settings_config({"max_runtime": "PT3H"})
+        )
 
     matched = [r for r in caplog.records if r.levelno == logging.WARNING and "max_runtime" in r.message]
     assert matched, "expected a warning about max_runtime below 6h"
@@ -276,25 +300,27 @@ def test_max_runtime_below_6h_emits_warning(caplog):
 
 
 def test_max_runtime_at_or_above_6h_is_silent(caplog):
-    """max_runtime >= 6h must not emit a warning."""
+    """settings.max_runtime >= 6h must not emit a warning."""
     import logging
     import mirror.structure
 
     for duration in ("PT6H", "PT12H", "PT1D"):
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="mirror"):
-            mirror.structure.Package.from_dict(_make_pkg_config({"max_runtime": duration}))
+            mirror.structure.Config.load_from_dict(
+                _make_settings_config({"max_runtime": duration})
+            )
         matched = [r for r in caplog.records if "max_runtime" in r.message]
         assert not matched, f"expected no warning for max_runtime={duration}, got {matched}"
 
 
 def test_max_runtime_zero_is_silent(caplog):
-    """max_runtime unset (==0) must not emit the watchdog warning."""
+    """settings.max_runtime unset (==0) must not emit the watchdog warning."""
     import logging
     import mirror.structure
 
     with caplog.at_level(logging.WARNING, logger="mirror"):
-        mirror.structure.Package.from_dict(_make_pkg_config())
+        mirror.structure.Config.load_from_dict(_make_settings_config())
 
     matched = [r for r in caplog.records if "max_runtime" in r.message]
     assert not matched

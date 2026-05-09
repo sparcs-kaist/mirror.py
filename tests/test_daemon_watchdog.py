@@ -12,20 +12,26 @@ from mirror.command.daemon import _watchdog_check
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_package(pkgid: str = "testpkg", max_runtime_seconds: int = 60) -> MagicMock:
+def make_package(pkgid: str = "testpkg") -> MagicMock:
     """Build a minimal Package stub for _watchdog_check tests.
 
     Args:
         pkgid(str): Package identifier.
-        max_runtime_seconds(int): Watchdog runtime cap in seconds.
 
     Return:
-        package(MagicMock): Stub exposing pkgid and max_runtime_seconds.
+        package(MagicMock): Stub exposing pkgid only. The watchdog cap now
+            lives on `mirror.conf.max_runtime_seconds`, set per-test.
     """
     pkg = MagicMock()
     pkg.pkgid = pkgid
-    pkg.max_runtime_seconds = max_runtime_seconds
     return pkg
+
+
+def _set_max_runtime(monkeypatch, seconds: int) -> None:
+    """Install a fake mirror.conf with the given max_runtime_seconds."""
+    fake_conf = MagicMock()
+    fake_conf.max_runtime_seconds = seconds
+    monkeypatch.setattr(mirror, "conf", fake_conf, raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +58,8 @@ def _mock_mirror_log(monkeypatch):
 
 def test_watchdog_disabled_when_max_runtime_zero(monkeypatch):
     """_watchdog_check must not call get_progress when max_runtime_seconds == 0."""
-    pkg = make_package(max_runtime_seconds=0)
+    _set_max_runtime(monkeypatch, 0)
+    pkg = make_package()
 
     monkeypatch.setattr(
         "mirror.socket.worker.get_progress",
@@ -74,7 +81,8 @@ def _make_stop_recorder(stop_calls, status="stopped"):
 def test_watchdog_kills_when_uptime_exceeds(monkeypatch):
     """_watchdog_check must call stop_command when uptime exceeds max_runtime."""
     pkgid = "pkg-over"
-    pkg = make_package(pkgid=pkgid, max_runtime_seconds=60)
+    _set_max_runtime(monkeypatch, 60)
+    pkg = make_package(pkgid=pkgid)
 
     monkeypatch.setattr(
         "mirror.socket.worker.get_progress",
@@ -95,7 +103,8 @@ def test_watchdog_kills_when_uptime_exceeds(monkeypatch):
 def test_watchdog_idempotent_on_repeat(monkeypatch):
     """A second _watchdog_check call in the same sync window must not call stop_command again."""
     pkgid = "pkg-idempotent"
-    pkg = make_package(pkgid=pkgid, max_runtime_seconds=60)
+    _set_max_runtime(monkeypatch, 60)
+    pkg = make_package(pkgid=pkgid)
 
     monkeypatch.setattr(
         "mirror.socket.worker.get_progress",
@@ -114,7 +123,8 @@ def test_watchdog_idempotent_on_repeat(monkeypatch):
 def test_watchdog_handles_get_progress_error(monkeypatch):
     """_watchdog_check must swallow get_progress exceptions without raising."""
     pkgid = "pkg-conn-err"
-    pkg = make_package(pkgid=pkgid, max_runtime_seconds=60)
+    _set_max_runtime(monkeypatch, 60)
+    pkg = make_package(pkgid=pkgid)
 
     monkeypatch.setattr(
         "mirror.socket.worker.get_progress",
@@ -138,7 +148,8 @@ def test_watchdog_handles_get_progress_error(monkeypatch):
 def test_watchdog_skips_when_not_syncing(monkeypatch):
     """_watchdog_check must do nothing when get_progress reports syncing=False."""
     pkgid = "pkg-not-syncing"
-    pkg = make_package(pkgid=pkgid, max_runtime_seconds=60)
+    _set_max_runtime(monkeypatch, 60)
+    pkg = make_package(pkgid=pkgid)
 
     monkeypatch.setattr(
         "mirror.socket.worker.get_progress",
@@ -161,7 +172,8 @@ def test_watchdog_skips_when_not_syncing(monkeypatch):
 def test_watchdog_under_cap(monkeypatch):
     """_watchdog_check must not kill when uptime is below the cap."""
     pkgid = "pkg-under-cap"
-    pkg = make_package(pkgid=pkgid, max_runtime_seconds=60)
+    _set_max_runtime(monkeypatch, 60)
+    pkg = make_package(pkgid=pkgid)
 
     monkeypatch.setattr(
         "mirror.socket.worker.get_progress",
@@ -184,7 +196,8 @@ def test_watchdog_under_cap(monkeypatch):
 def test_watchdog_releases_marker_on_stop_failure(monkeypatch):
     """When stop_command raises, the watchdog marker must be released so a retry is possible."""
     pkgid = "pkg-transient"
-    pkg = make_package(pkgid=pkgid, max_runtime_seconds=60)
+    _set_max_runtime(monkeypatch, 60)
+    pkg = make_package(pkgid=pkgid)
 
     monkeypatch.setattr(
         "mirror.socket.worker.get_progress",
@@ -222,7 +235,8 @@ def test_watchdog_releases_marker_on_not_found_response(monkeypatch):
     not stay claimed forever.
     """
     pkgid = "pkg-not-found"
-    pkg = make_package(pkgid=pkgid, max_runtime_seconds=60)
+    _set_max_runtime(monkeypatch, 60)
+    pkg = make_package(pkgid=pkgid)
 
     monkeypatch.setattr(
         "mirror.socket.worker.get_progress",

@@ -17,10 +17,14 @@ from pathlib import Path
 def _watchdog_check(package: mirror.structure.Package) -> None:
     """Probe the worker for uptime and kill the sync if max_runtime exceeded.
 
+    Reads the global cap from `mirror.conf.max_runtime_seconds`. The cap is
+    operator-wide; per-package overrides are intentionally not supported.
+
     Args:
         package(Package): Currently-syncing package to inspect.
     """
-    if package.max_runtime_seconds <= 0:
+    max_runtime_seconds = getattr(mirror.conf, "max_runtime_seconds", 0)
+    if max_runtime_seconds <= 0:
         return
 
     try:
@@ -34,7 +38,7 @@ def _watchdog_check(package: mirror.structure.Package) -> None:
 
     info = progress.get("info") or {}
     uptime = info.get("uptime")
-    if not mirror.sync.should_kill_for_max_runtime(uptime, package.max_runtime_seconds):
+    if not mirror.sync.should_kill_for_max_runtime(uptime, max_runtime_seconds):
         return
 
     if not mirror.sync.mark_watchdog_fired(package.pkgid):
@@ -42,7 +46,7 @@ def _watchdog_check(package: mirror.structure.Package) -> None:
 
     mirror.log.error(
         f"Package {package.pkgid} sync exceeded max_runtime "
-        f"(limit={package.max_runtime_seconds}s, ran={uptime:.0f}s); killing"
+        f"(limit={max_runtime_seconds}s, ran={uptime:.0f}s); killing"
     )
     try:
         result = mirror.socket.worker.stop_command(job_id=package.pkgid)

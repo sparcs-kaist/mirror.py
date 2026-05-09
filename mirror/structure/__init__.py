@@ -83,12 +83,10 @@ class Package:
     lastsync: float = 0.0
     disabled: bool = False
     timestamp: float = 0.0
-    max_runtime_seconds: int = 0
     statusinfo: StatusInfo = field(default_factory=StatusInfo)
     
     @staticmethod
     def from_dict(config: dict) -> "Package":
-        import mirror
         import mirror.sync
         from mirror.toolbox import parse_iso_duration
         # Validation
@@ -108,15 +106,6 @@ class Package:
         # Pull lastsync from statusinfo if present (matching mirror/config/__init__.py behavior)
         lastsync = statusinfo_dict.get("lastsync", config.get("lastsync", 0.0))
 
-        max_runtime_seconds = parse_iso_duration(config.get("max_runtime", ""))
-        # 6 hours; many real syncs (initial Debian, large rsync) legitimately
-        # run several hours, so a sub-6h cap is almost always a misconfiguration.
-        if 0 < max_runtime_seconds < 21600:
-            mirror.log.warning(
-                f"Package {config['id']}: max_runtime={max_runtime_seconds}s is below 6h; "
-                "12h or more is recommended to avoid killing legitimate long-running syncs"
-            )
-
         return Package(
             pkgid=config["id"],
             name=config["name"],
@@ -124,7 +113,6 @@ class Package:
             href=config["href"],
             synctype=synctype,
             syncrate=parse_iso_duration(config["syncrate"]),
-            max_runtime_seconds=max_runtime_seconds,
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
             settings=PackageSettings.from_dict(config["settings"]),
             lastsync=lastsync,
@@ -180,7 +168,6 @@ class Package:
             data(dict): Package fields with "id" key and ISO 8601 syncrate.
         """
         package_dict = asdict(self)
-        package_dict.pop("max_runtime_seconds", None)
         # Convert pkgid -> id
         package_dict["id"] = package_dict.pop("pkgid")
         package_dict["syncrate"] = mirror.toolbox.format_iso_duration(self.syncrate)
@@ -334,6 +321,7 @@ class Config:
 
     localtimezone: str
     logger: dict
+    max_runtime_seconds: int = 0
     plugins: dict[str, PluginSettings] = field(default_factory=dict)
 
     @staticmethod
@@ -376,7 +364,18 @@ class Config:
         Return:
             conf(Config): Populated Config instance.
         """
+        from mirror.toolbox import parse_iso_duration
+
         raw_plugins = config["settings"].get("plugins")
+        max_runtime_seconds = parse_iso_duration(config["settings"].get("max_runtime", ""))
+        # 6 hours; many real syncs (initial Debian, large rsync) legitimately
+        # run several hours, so a sub-6h cap is almost always a misconfiguration.
+        if 0 < max_runtime_seconds < 21600:
+            mirror.log.warning(
+                f"settings.max_runtime={max_runtime_seconds}s is below 6h; "
+                "12h or more is recommended to avoid killing legitimate long-running syncs"
+            )
+
         return Config(
             name=config.get("mirrorname", ""),
             hostname=config.get("hostname", ""),
@@ -391,6 +390,7 @@ class Config:
             maintainer=config["settings"].get("maintainer", {}),
             localtimezone=config["settings"]["localtimezone"],
             logger=config["settings"]["logger"],
+            max_runtime_seconds=max_runtime_seconds,
             plugins=Config._parse_plugins(raw_plugins),
         )
 
@@ -407,6 +407,8 @@ class Config:
         Return:
             data(dict): Config as a serializable dict.
         """
+        from mirror.toolbox import format_iso_duration
+
         return {
             "mirrorname": self.name,
             "hostname": self.hostname,
@@ -416,6 +418,7 @@ class Config:
                 "statusfile": str(self.statusfile),
                 "localtimezone": self.localtimezone,
                 "errorcontinuetime": self.errorcontinuetime,
+                "max_runtime": format_iso_duration(self.max_runtime_seconds),
                 "maintainer": self.maintainer,
                 "gid": self.gid,
                 "uid": self.uid,

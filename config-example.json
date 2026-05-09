@@ -8,6 +8,7 @@
         "statfile": "/var/lib/mirror/stat.json",
         "localtimezone": "Asia/Seoul",
         "errorcontinuetime": 60,
+        "max_runtime": "PT12H",
         "maintainer": {
             "name": "Roul",
             "email": "roul@ftp.kaist.ac.kr"
@@ -67,7 +68,6 @@
             "href": "/debian",
             "synctype": "ftpsync",
             "syncrate": "PUSH",
-            "max_runtime": "PT12H",
             "link": [
                 {
                     "rel": "HOME",
@@ -97,7 +97,6 @@
             "href": "/pub/rocky",
             "synctype": "rsync",
             "syncrate": "PT10M",
-            "max_runtime": "PT12H",
             "link": [
                 {
                     "rel": "HOME",
