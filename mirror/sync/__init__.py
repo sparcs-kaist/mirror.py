@@ -13,6 +13,8 @@ methods = []
 
 _start_lock = threading.Lock()
 _in_progress: set[str] = set()
+_extra_args: dict[str, dict[str, str]] = {}
+
 
 def get_module(method: str) -> Callable:
     """Return the loaded sync module for the given method name.
@@ -26,7 +28,38 @@ def get_module(method: str) -> Callable:
     import mirror.sync
     return getattr(mirror.sync, method)
 
-def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
+def _validate_extra_args(extra_args: dict[str, str]) -> dict[str, str]:
+    """Coerce and validate an extra_args mapping for subprocess env use.
+
+    Args:
+        extra_args(dict[str, str]): Caller-supplied mapping.
+
+    Return:
+        clean(dict[str, str]): Validated copy with str keys/values.
+
+    Raises:
+        ValueError: keys/values are not strings, key is empty, or any string
+            contains characters disallowed in subprocess env (NUL, '=' in key).
+    """
+    clean: dict[str, str] = {}
+    for k, v in extra_args.items():
+        if not isinstance(k, str):
+            raise ValueError(f"extra_args key must be str, got {type(k)!r}")
+        if not isinstance(v, str):
+            raise ValueError(f"extra_args value for key {k!r} must be str, got {type(v)!r}")
+        if not k:
+            raise ValueError("extra_args key must not be empty")
+        if "=" in k:
+            raise ValueError(f"extra_args key {k!r} must not contain '='")
+        if "\x00" in k:
+            raise ValueError(f"extra_args key {k!r} must not contain NUL")
+        if "\x00" in v:
+            raise ValueError(f"extra_args value for key {k!r} must not contain NUL")
+        clean[k] = v
+    return clean
+
+
+def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args: Optional[dict[str, str]] = None) -> None:
     """Start sync for a package.
 
     Rejects if a sync for the same pkgid is already in progress.
@@ -34,9 +67,15 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
     Args:
         package(mirror.structure.Package): Package to sync.
         trigger(str): Source of the trigger ("auto", "manual", etc.).
+        extra_args(dict[str, str], optional): Extra key-value pairs to associate
+            with this sync (str->str). Validated before the lock is acquired.
+            Cleared from the registry on completion or on scoped launch failure.
+            Raises ValueError on bad input (non-str keys/values, empty key,
+            '=' or NUL in key, NUL in value). Raises RuntimeError if a sync
+            for this pkgid is already in progress (existing behavior unchanged).
 
     Raises:
-        ValueError: If sync method is unknown.
+        ValueError: If sync method is unknown or extra_args is invalid.
         RuntimeError: If a sync for this pkgid is already in progress.
     """
     import mirror.sync
@@ -46,11 +85,21 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
     if method not in methods:
         raise ValueError(f"Unknown sync method: {method}")
 
+    # Validate before acquiring the lock so bad input never touches shared state.
+    clean: dict[str, str] = _validate_extra_args(extra_args) if extra_args is not None else {}
+
     pkgid = package.pkgid
+    registered_extra_args = False
     with _start_lock:
         if pkgid in _in_progress:
             raise RuntimeError(f"Package {pkgid} sync already in progress")
         _in_progress.add(pkgid)
+        # We now own the slot; write or evict the extra_args entry.
+        if clean:
+            _extra_args[pkgid] = clean
+            registered_extra_args = True
+        else:
+            _extra_args.pop(pkgid, None)
 
     started = False
     try:
@@ -85,6 +134,7 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
                 # itself raised (set.discard is idempotent).
                 with _start_lock:
                     _in_progress.discard(pkgid)
+                    _extra_args.pop(pkgid, None)
 
         thread = Thread(target=_runner, daemon=True)
         thread.start()
@@ -93,6 +143,21 @@ def start(package: "mirror.structure.Package", trigger: str = "auto") -> None:
         if not started:
             with _start_lock:
                 _in_progress.discard(pkgid)
+                if registered_extra_args:
+                    _extra_args.pop(pkgid, None)
+
+def get_extra_args(pkgid: str) -> dict[str, str]:
+    """Return a shallow copy of the extra_args registered for an in-flight sync, or empty.
+
+    Args:
+        pkgid(str): Package ID.
+
+    Return:
+        extra_args(dict[str, str]): Copy of the stored mapping (empty if none).
+    """
+    with _start_lock:
+        return dict(_extra_args.get(pkgid, {}))
+
 
 def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
     """Handle sync completion: log result, call per-module hook, update package status.
@@ -136,6 +201,7 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
 
     with _start_lock:
         _in_progress.discard(pkgid)
+        _extra_args.pop(pkgid, None)
 
 
 def execute(package: "mirror.structure.Package", logger: logging.Logger) -> None:
