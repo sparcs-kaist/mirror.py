@@ -118,6 +118,31 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         self.assertEqual(call_kwargs['job_id'], "test-ftpsync")
         self.assertTrue(call_kwargs['commandline'][0].endswith("ftpsync"))
 
+    @patch('mirror.socket.worker.execute_command')
+    @patch('mirror.sync.ftpsync.setup_ftpsync')
+    def test_ftpsync_extra_args_passed_as_env(self, mock_setup_ftpsync, mock_execute_command):
+        # Seed extra_args directly to simulate an in-flight sync started with extra_args
+        pkgid = self.ftp_pkg.pkgid
+        seeded = {
+            "SSH_ORIGINAL_COMMAND": "ftpsync sync:archive:debian",
+            "SSH_CONNECTION": "203.0.113.10 54321 198.51.100.5 22",
+        }
+        mirror.sync._extra_args[pkgid] = seeded
+
+        mock_logger = MagicMock()
+        mock_logger.handlers = []
+        mock_execute_command.return_value = {"status": "started", "job_pid": 789}
+
+        import mirror.sync.ftpsync as ftpsync_module
+        try:
+            ftpsync_module.execute(self.ftp_pkg, mock_logger)
+        finally:
+            mirror.sync._extra_args.pop(pkgid, None)
+
+        mock_execute_command.assert_called_once()
+        call_kwargs = mock_execute_command.call_args[1]
+        self.assertEqual(call_kwargs['env'], seeded)
+
     def test_rsync_ffts_uptodate_routes_through_on_sync_done(self):
         """When FFTS reports up-to-date, rsync.execute must call on_sync_done, not execute_command."""
         from unittest.mock import patch
