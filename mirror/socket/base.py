@@ -375,15 +375,21 @@ class BaseClient:
             self._sock = None
         self._server_info = None
 
-    def send_command(self, command: str, **kwargs: Any) -> Any:
-        """Send a command to server and wait for the response
+    def send_command(self, command: str, recv_timeout: float | None = None, **kwargs: Any) -> Any:
+        """Send a command to server and wait for the response.
 
         Args:
-            command(str): Command name
-            **kwargs: Command arguments
+            command(str): Command name.
+            recv_timeout(float, optional): How many seconds to wait for the
+                server's response before raising TimeoutError. Defaults to 30s.
+                NOTE: this parameter is consumed client-side and is NOT forwarded
+                to the server. Any server-side kwarg named ``recv_timeout`` would
+                be silently shadowed — callers must rename such kwargs before
+                calling this method.
+            **kwargs: Command arguments forwarded to the server.
 
         Return:
-            data(Any): Response payload from the server
+            data(Any): Response payload from the server.
         """
         if not self._connected or not self._sock:
             raise ConnectionError("Not connected to server")
@@ -395,7 +401,7 @@ class BaseClient:
             })
 
             try:
-                response = self._response_queue.get(timeout=30)
+                response = self._response_queue.get(timeout=recv_timeout if recv_timeout is not None else 30)
             except queue.Empty:
                 raise TimeoutError(f"Command '{command}' timed out")
 

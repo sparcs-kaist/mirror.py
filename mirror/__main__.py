@@ -4,6 +4,7 @@ import mirror
 import mirror.command
 
 from mirror import __version__
+from mirror.command.config import config_group
 
 @click.version_option(prog_name="mirror", version=__version__)
 @click.group()
@@ -59,3 +60,5 @@ def push(packageid: str, config: str) -> None:
         config(str): Path to the config file.
     """
     mirror.command.push(packageid, config)
+
+main.add_command(config_group)

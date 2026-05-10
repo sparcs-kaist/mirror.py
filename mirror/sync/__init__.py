@@ -219,41 +219,56 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
         returncode(int, optional): Process return code, or None if unavailable.
     """
     import mirror.sync
+    import mirror.config
 
-    package = mirror.packages.get(pkgid)
-    if not package:
-        raise ValueError(f"Unknown package: {pkgid}")
+    with mirror.config._reload_state_lock:
+        package = mirror.packages.get(pkgid)
+        pkglogger = mirror.logger.get(pkgid)
 
-    pkglogger = mirror.logger.get(pkgid)
+        if package is None:
+            mirror.log.warning(
+                f"on_sync_done({pkgid}): package no longer in config "
+                "(likely removed via reload); cleaning up sync state without status update"
+            )
+            if pkglogger and pkglogger.handlers:
+                try:
+                    mirror.logger.close_logger(pkglogger)
+                except Exception as exc:
+                    mirror.log.error(f"on_sync_done({pkgid}): close_logger failed: {exc}")
+            with _start_lock:
+                _in_progress.discard(pkgid)
+                _extra_args.pop(pkgid, None)
+                _watchdog_fired.discard(pkgid)
+            return
 
-    if success:
-        pkglogger.info("Sync done successfully")
-        pkglogger.info(f"Returncode: {returncode}")
-    else:
-        pkglogger.error("Sync failed")
-        pkglogger.error(f"Returncode: {returncode}")
+        if success:
+            pkglogger.info("Sync done successfully")
+            pkglogger.info(f"Returncode: {returncode}")
+        else:
+            pkglogger.error("Sync failed")
+            pkglogger.error(f"Returncode: {returncode}")
 
-    # Call plugin-specific on_sync_done if defined
-    import mirror.plugin
-    sync_record = mirror.plugin.get_record(package.synctype)
-    on_done_hook = getattr(sync_record, "on_sync_done", None) if sync_record else None
-    if on_done_hook is not None:
-        try:
-            on_done_hook(package, pkglogger, success, returncode)
-        except Exception as e:
-            pkglogger.error(f"Plugin on_sync_done failed: {e}")
+        # Call plugin-specific on_sync_done if defined
+        import mirror.plugin
+        sync_record = mirror.plugin.get_record(package.synctype)
+        on_done_hook = getattr(sync_record, "on_sync_done", None) if sync_record else None
+        if on_done_hook is not None:
+            try:
+                on_done_hook(package, pkglogger, success, returncode)
+            except Exception as e:
+                pkglogger.error(f"Plugin on_sync_done failed: {e}")
 
-    # close_logger compresses the file (when gzip is enabled) and returns the
-    # final on-disk path. We must record THAT path in stat.json, not the
-    # pre-compression path from get_log_path which no longer exists after gzip.
-    logpath = mirror.logger.close_logger(pkglogger)
-    package.lastsync = time.time()
-    package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
+        # close_logger compresses the file (when gzip is enabled) and returns the
+        # final on-disk path. We must record THAT path in stat.json, not the
+        # pre-compression path from get_log_path which no longer exists after gzip.
+        logpath = mirror.logger.close_logger(pkglogger)
+        package.lastsync = time.time()
+        package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
 
-    with _start_lock:
-        _in_progress.discard(pkgid)
-        _extra_args.pop(pkgid, None)
-        _watchdog_fired.discard(pkgid)
+        with _start_lock:
+            _in_progress.discard(pkgid)
+            _extra_args.pop(pkgid, None)
+            _watchdog_fired.discard(pkgid)
 
 
 def execute(package: "mirror.structure.Package", logger: logging.Logger) -> None:
