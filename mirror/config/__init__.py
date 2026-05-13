@@ -86,6 +86,13 @@ def _merge_package_config_with_stat(pkg_config: dict, existing_stat: dict | None
     return merged
 
 
+def _to_stat_package_dict(package_data: dict) -> dict:
+    """Return package data without config-only fields persisted to stat.json."""
+    stat_data = package_data.copy()
+    stat_data.pop("disabled", None)
+    return stat_data
+
+
 # --- Loading Functions ---
 
 def load(conf_path: Path):
@@ -155,7 +162,10 @@ def _load_from_dict(config_dict: dict, *, source_path: Path | None = None, load_
         # 3. Construct the full stat dictionary and save it atomically
         full_stat_to_save = {
             "mirrorname": config_dict.get("mirrorname"),
-            "packages": final_stat_packages
+            "packages": {
+                pkg_id: _to_stat_package_dict(pkg_data)
+                for pkg_id, pkg_data in final_stat_packages.items()
+            },
         }
         try:
             _atomic_write_json(STAT_DATA_PATH, full_stat_to_save, mode=0o644)
@@ -165,7 +175,7 @@ def _load_from_dict(config_dict: dict, *, source_path: Path | None = None, load_
 
         # 4. Prepare for in-memory loading
         loader_packages = {}
-        for pkg_id, pkg_data in full_stat_to_save.get("packages", {}).items():
+        for pkg_id, pkg_data in final_stat_packages.items():
             loader_packages[pkg_id] = pkg_data
 
         # 5. Load into application

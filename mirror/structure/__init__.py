@@ -181,6 +181,7 @@ class Package:
             "status": self.status,
             "statusinfo": self.statusinfo.to_dict()
         }
+        package_dict.pop("disabled", None)
         if "statusinfo" in package_dict:
             del package_dict["statusinfo"]
 
