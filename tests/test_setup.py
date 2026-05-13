@@ -210,6 +210,7 @@ def test_default_config_has_no_legacy_plugins_key():
     assert "plugins" not in DEFAULT_CONFIG["settings"]
     assert DEFAULT_CONFIG["packages"] == {}
     assert DEFAULT_CONFIG["settings"]["logfolder"] == "/var/log/mirror/ftpsync"
+    assert DEFAULT_CONFIG["settings"]["ftpsync"]["maintainer"] == "Admins <admins@example.com>"
 
 
 def test_systemd_unit_files_declare_worker_ordering(monkeypatch, tmp_path):

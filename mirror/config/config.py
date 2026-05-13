@@ -33,7 +33,7 @@ DEFAULT_CONFIG = {
             }
         },
         "ftpsync": {
-            "maintainer": "Admins <admins@examile.com>", # only ftpsync
+            "maintainer": "Admins <admins@example.com>", # only ftpsync
             "sponsor": "Example <https://example.com>", # only ftpsync
             "country": "KR", # only ftpsync
             "location": "Seoul", # only ftpsync
@@ -42,4 +42,3 @@ DEFAULT_CONFIG = {
     },
     "packages": {}
 }
-
