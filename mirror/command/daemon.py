@@ -80,7 +80,7 @@ def should_auto_sync(package: mirror.structure.Package, now: float, errorcontinu
     Return:
         should_sync(bool): True if the auto-loop should call sync.start(package).
     """
-    if package.syncrate < 0:
+    if package.syncrate <= 0:
         return False
     if now - package.lastsync > package.syncrate:
         return True
