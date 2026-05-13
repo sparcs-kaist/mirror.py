@@ -116,6 +116,7 @@ class Package:
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
             settings=PackageSettings.from_dict(config["settings"]),
             lastsync=lastsync,
+            disabled=bool(config.get("disabled", False)),
             timestamp=config.get("timestamp", 0.0),
             statusinfo=Package.StatusInfo.from_dict(statusinfo_dict),
         )
