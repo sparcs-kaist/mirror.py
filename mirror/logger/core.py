@@ -58,6 +58,10 @@ def create_logger(name: str, start_time: float) -> logging.Logger:
         mirror.conf.logger["packagefileformat"] = DEFAULT_PACKAGE_FILE_FORMAT
 
     pkg_logger = logging.getLogger(f"mirror.package.{name}")
+    for handler in pkg_logger.handlers[:]:
+        handler.close()
+        pkg_logger.removeHandler(handler)
+
     formatter = logging.Formatter(
         mirror.conf.logger["packageformat"].format(package=name, packageid=name)
     )
@@ -88,8 +92,8 @@ def create_logger(name: str, start_time: float) -> logging.Logger:
     pkg_logger.addHandler(filehandler)
 
     if mirror.debug:
-        pkg_logger.handlers[0].setLevel(logging.DEBUG)
-        pkg_logger.handlers[1].setLevel(logging.DEBUG)
+        for handler in pkg_logger.handlers:
+            handler.setLevel(logging.DEBUG)
 
     return pkg_logger
 
