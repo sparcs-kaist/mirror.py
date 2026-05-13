@@ -20,13 +20,20 @@ def parse_iso_duration(iso8601: str) -> int:
     if iso8601 == "PUSH":
         return -1
 
-    match = re.match(
+    match = re.fullmatch(
         r'P((?P<years>\d+)Y)?((?P<months>\d+)M)?((?P<weeks>\d+)W)?((?P<days>\d+)D)?(T((?P<hours>\d+)H)?((?P<minutes>\d+)M)?((?P<seconds>\d+)S)?)?',
         iso8601
     )
     if not match:
         raise ValueError("Invalid ISO8601 duration string")
     match = match.groupdict()
+    if match["years"] or match["months"] or match["weeks"]:
+        raise ValueError("Unsupported ISO8601 duration unit")
+    supported = (match["days"], match["hours"], match["minutes"], match["seconds"])
+    if not any(supported):
+        raise ValueError("Invalid ISO8601 duration string")
+    if "T" in iso8601 and not any((match["hours"], match["minutes"], match["seconds"])):
+        raise ValueError("Invalid ISO8601 duration string")
     return int(match['days'] or 0)*24*3600 + \
         int(match['hours'] or 0)*3600 + \
         int(match['minutes'] or 0)*60 + \
