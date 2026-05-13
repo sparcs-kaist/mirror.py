@@ -114,6 +114,13 @@ def daemon(config: str) -> None:
     # Start Master Server socket
     socket_server = mirror.socket.init("master")
 
+    sock_path_file = mirror.RUN_PATH / "master.sock.path"
+    try:
+        sock_path_file.write_text(str(socket_server.socket_path))
+        sock_path_file.chmod(0o644)
+    except OSError as e:
+        mirror.log.warning(f"Failed to write socket path metadata to {sock_path_file}: {e}")
+
     mirror.log.info(f"Master Daemon listening on {socket_server.socket_path}")
     mirror.log.info("Daemon started and configuration loaded.")
 
@@ -127,15 +134,41 @@ def daemon(config: str) -> None:
         mirror.socket.stop()
         if pid_file.exists():
             pid_file.unlink()
+        if sock_path_file.exists():
+            sock_path_file.unlink()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    def sighup_handler(sig, frame):
+        # SIGNAL-HANDLER SAFETY: this MUST do as little as possible.
+        # request_signal() ONLY does `self._sighup_pending = True` (no lock, no Event).
+        from mirror.config.reload_controller import reload_controller
+        reload_controller.request_signal()
+
+    signal.signal(signal.SIGHUP, sighup_handler)
+
+    from mirror.config.reload_controller import reload_controller
+
     mirror.event.post_event("MASTER.INIT.POST")
-    
+
     try:
         while True:
+            should_reload, responses = reload_controller.consume_pending()
+            if should_reload:
+                t0 = time.monotonic()
+                try:
+                    result = mirror.config._perform_reload()
+                    result.setdefault("status", "ok")
+                except Exception as e:
+                    mirror.log.error(f"Reload failed: {e}")
+                    result = {"status": "error", "error": str(e)}
+                result["duration_seconds"] = round(time.monotonic() - t0, 3)
+                if result.get("status") == "ok":
+                    mirror.log.info(f"Reload done: {result}")
+                reload_controller.signal_done(responses, result)
+
             for package in mirror.packages.values():
                 try:
                     if package.is_disabled():
@@ -178,4 +211,6 @@ def daemon(config: str) -> None:
         socket_server.stop()
         if pid_file.exists():
             pid_file.unlink()
+        if sock_path_file.exists():
+            sock_path_file.unlink()
         sys.exit(1)

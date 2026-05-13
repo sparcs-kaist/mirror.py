@@ -63,11 +63,12 @@ def test_daemon_initialization(mock_master_server, mock_signal, mock_dependencie
     server_instance.start.assert_called()
     
     # Verify Signal handlers
-    assert mock_signal.call_count == 2
+    assert mock_signal.call_count == 3
     args_list = mock_signal.call_args_list
     signals_registered = [args[0][0] for args in args_list]
     assert signal.SIGINT in signals_registered
     assert signal.SIGTERM in signals_registered
+    assert signal.SIGHUP in signals_registered
     
     # Verify exit called (due to exception)
     mock_sys_exit.assert_called_with(1)

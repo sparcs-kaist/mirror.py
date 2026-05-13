@@ -154,6 +154,20 @@ class MasterServer(BaseServer):
             raise ValueError(f"Package not found: {package_id}")
         return package.to_dict()
 
+    @expose("reload")
+    def _handle_reload(self, timeout: float = 30.0) -> dict:
+        """Request a config reload; blocks the socket thread until the main loop processes it.
+
+        Args:
+            timeout(float): Server-side wait budget (seconds). Returns an error
+                dict if the main loop does not signal completion in time.
+
+        Return:
+            result(dict): The reload result from ``_perform_reload`` (or a timeout error).
+        """
+        from mirror.config.reload_controller import reload_controller
+        return reload_controller.request_sync(timeout=float(timeout))
+
 
 class MasterClient(BaseClient):
     """Client for connecting to Master daemon
@@ -194,6 +208,16 @@ class MasterClient(BaseClient):
     def get_package(self, package_id: str) -> dict:
         """Get package details"""
         return self.send_command("get_package", package_id=package_id)
+
+    def reload(self, timeout: float = 30.0) -> dict:
+        """Send a reload RPC and return the result.
+
+        ``timeout`` is sent as an RPC kwarg consumed server-side by
+        ``ReloadController.request_sync``. ``recv_timeout`` is consumed locally
+        by ``send_command`` (client-side socket recv); +5s slack so the client
+        does not give up before the server can respond.
+        """
+        return self.send_command("reload", recv_timeout=timeout + 5.0, timeout=timeout)
 
 
 # --- Instance management ---
@@ -290,6 +314,20 @@ def get_package(package_id: str, socket_path: Optional[Path | str] = None) -> di
         return client.get_package(package_id)
 
 
+def reload(socket_path: Optional[Path | str] = None, timeout: float = 30.0) -> dict:
+    """Convenience wrapper for ``MasterClient.reload`` with auto-connect.
+
+    Args:
+        socket_path: Override for the master socket path. None falls back to default.
+        timeout: Seconds to wait for the daemon to apply the reload.
+
+    Return:
+        result(dict): Reload result from the master daemon.
+    """
+    with MasterClient(socket_path=socket_path) as client:
+        return client.reload(timeout=timeout)
+
+
 def get_master_client(socket_path: Optional[Path | str] = None) -> MasterClient:
     """Create and connect a MasterClient instance
 
@@ -331,4 +369,5 @@ __all__ = [
     "get_master_client",
     "is_master_running",
     "push_sync",
+    "reload",
 ]
