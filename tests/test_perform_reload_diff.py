@@ -230,6 +230,34 @@ def test_perform_reload_detects_modified_package(reload_env):
     assert "pkg-one" in result["modified"]
 
 
+def test_perform_reload_preserves_lastsync_and_applies_config_changes(reload_env):
+    """Reload must keep runtime stat fields without hiding config edits."""
+    reload_env["stat_path"].write_text(json.dumps({
+        "packages": {
+            "pkg-one": {
+                **_make_pkg_entry("pkg-one", src="rsync://old/a", syncrate="PT1H"),
+                "lastsync": 2222.0,
+                "timestamp": 3333.0,
+                "status": {"status": "ACTIVE", "statusinfo": {"errorcount": 0}},
+            }
+        }
+    }))
+    modified_pkgs = {
+        "pkg-one": _make_pkg_entry("pkg-one", src="rsync://new/a", syncrate="PT2H")
+    }
+    _write_config(reload_env, modified_pkgs)
+
+    result = mirror.config._perform_reload()
+
+    assert result["status"] == "ok"
+    pkg = mirror.packages.get("pkg-one")
+    assert pkg.lastsync == 2222.0
+    assert pkg.timestamp == 3333.0
+    assert pkg.status == "ACTIVE"
+    assert pkg.syncrate == 7200
+    assert pkg.settings.src == "rsync://new/a"
+
+
 # ---------------------------------------------------------------------------
 # Test 5: path-setting change → warns and ignores
 # ---------------------------------------------------------------------------

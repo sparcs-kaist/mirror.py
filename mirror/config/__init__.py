@@ -52,6 +52,40 @@ def _atomic_write_json(path: Path, payload: dict, indent: int = 4, mode: int | N
         raise
 
 
+def _default_package_status() -> dict:
+    return {
+        "status": "UNKNOWN",
+        "statusinfo": {"errorcount": 0},
+    }
+
+
+def _merge_package_config_with_stat(pkg_config: dict, existing_stat: dict | None) -> dict:
+    """Merge config-owned package fields with known runtime-only stat fields."""
+    merged = pkg_config.copy()
+    if not existing_stat:
+        merged["status"] = _default_package_status()
+        return merged
+
+    if "status" in existing_stat:
+        merged["status"] = existing_stat["status"]
+    else:
+        merged["status"] = _default_package_status()
+
+    if "lastsync" in existing_stat:
+        merged["lastsync"] = existing_stat["lastsync"]
+    else:
+        legacy_status = existing_stat.get("status")
+        if isinstance(legacy_status, dict):
+            legacy_statusinfo = legacy_status.get("statusinfo", {})
+            if "lastsync" in legacy_statusinfo:
+                merged["lastsync"] = legacy_statusinfo["lastsync"]
+
+    if "timestamp" in existing_stat:
+        merged["timestamp"] = existing_stat["timestamp"]
+
+    return merged
+
+
 # --- Loading Functions ---
 
 def load(conf_path: Path):
@@ -111,23 +145,12 @@ def _load_from_dict(config_dict: dict, *, source_path: Path | None = None, load_
         # 2. Load stat file and synchronize with config
         stat_dict = json.loads(STAT_DATA_PATH.read_text()) if STAT_DATA_PATH.exists() else {"packages": {}}
         config_packages = config_dict.get("packages", {})
-        final_stat_packages = stat_dict.get("packages", {})
-
-        for pkg_id in list(final_stat_packages.keys()):
-            if pkg_id not in config_packages:
-                del final_stat_packages[pkg_id]
+        stat_packages = stat_dict.get("packages", {})
+        final_stat_packages = {}
 
         for pkg_id, pkg_config in config_packages.items():
-            existing_stat = final_stat_packages.get(pkg_id)
-            status_to_preserve = existing_stat.get("status") if existing_stat else None
-            final_stat_packages[pkg_id] = pkg_config.copy()
-            if status_to_preserve:
-                final_stat_packages[pkg_id]["status"] = status_to_preserve
-            else:
-                final_stat_packages[pkg_id]["status"] = {
-                    "status": "UNKNOWN",
-                    "statusinfo": {"errorcount": 0, "lastsync": 0.0}
-                }
+            existing_stat = stat_packages.get(pkg_id)
+            final_stat_packages[pkg_id] = _merge_package_config_with_stat(pkg_config, existing_stat)
 
         # 3. Construct the full stat dictionary and save it atomically
         full_stat_to_save = {
@@ -196,15 +219,7 @@ def _validate_candidate_packages(sanitized_dict: dict) -> None:
     simulated: dict = {}
     for pkgid, pkg_config in config_packages.items():
         existing = current_stat_packages.get(pkgid)
-        merged = pkg_config.copy()
-        if existing and "status" in existing:
-            merged["status"] = existing["status"]
-        else:
-            merged["status"] = {
-                "status": "UNKNOWN",
-                "statusinfo": {"errorcount": 0, "lastsync": 0.0},
-            }
-        simulated[pkgid] = merged
+        simulated[pkgid] = _merge_package_config_with_stat(pkg_config, existing)
 
     mirror.structure.Packages(simulated)
 

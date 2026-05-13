@@ -232,6 +232,118 @@ def test_socket_path_from_config_overrides_default(tmp_path, monkeypatch):
                 pass
 
 
+def test_load_preserves_runtime_stat_fields(tmp_path, monkeypatch):
+    """Config load must preserve lastsync/timestamp while applying config changes."""
+    stat_path = tmp_path / "stat.json"
+    status_path = tmp_path / "status.json"
+    config = {
+        "mirrorname": "TestMirror",
+        "hostname": "test.local",
+        "settings": _make_settings_config({
+            "statfile": str(stat_path),
+            "statusfile": str(status_path),
+            "socket_path": str(tmp_path / "sockets"),
+        })["settings"],
+        "packages": {
+            "pkg1": _make_pkg_config({
+                "syncrate": "PT2H",
+                "settings": {"hidden": False, "src": "rsync://new/pkg1", "dst": "/tmp/new"},
+            })
+        },
+    }
+    stat_path.write_text(json.dumps({
+        "packages": {
+            "pkg1": {
+                **_make_pkg_config({
+                    "syncrate": "PT1H",
+                    "settings": {"hidden": False, "src": "rsync://old/pkg1", "dst": "/tmp/old"},
+                }),
+                "lastsync": 1234.5,
+                "timestamp": 5678.0,
+                "status": {"status": "ACTIVE", "statusinfo": {"errorcount": 0}},
+            }
+        }
+    }))
+    status_path.write_text(json.dumps({}))
+    monkeypatch.setattr(mirror, "STATE_PATH", tmp_path / "state", raising=False)
+    monkeypatch.setattr(mirror, "log", type("Log", (), {"warning": lambda *a, **k: None, "error": lambda *a, **k: None})(), raising=False)
+
+    mirror.config._load_from_dict(config, source_path=tmp_path / "config.json", load_plugins=False)
+
+    pkg = mirror.packages.get("pkg1")
+    assert pkg.lastsync == 1234.5
+    assert pkg.timestamp == 5678.0
+    assert pkg.status == "ACTIVE"
+    assert pkg.syncrate == 7200
+    assert pkg.settings.src == "rsync://new/pkg1"
+
+    saved = json.loads(stat_path.read_text())["packages"]["pkg1"]
+    assert saved["lastsync"] == 1234.5
+    assert saved["timestamp"] == 5678.0
+    assert saved["settings"]["src"] == "rsync://new/pkg1"
+
+
+def test_load_promotes_legacy_statusinfo_lastsync(tmp_path, monkeypatch):
+    """Legacy status.statusinfo.lastsync is migrated to top-level lastsync."""
+    stat_path = tmp_path / "stat.json"
+    status_path = tmp_path / "status.json"
+    config = {
+        "mirrorname": "TestMirror",
+        "hostname": "test.local",
+        "settings": _make_settings_config({
+            "statfile": str(stat_path),
+            "statusfile": str(status_path),
+        })["settings"],
+        "packages": {"pkg1": _make_pkg_config()},
+    }
+    stat_path.write_text(json.dumps({
+        "packages": {
+            "pkg1": {
+                **_make_pkg_config(),
+                "status": {
+                    "status": "ACTIVE",
+                    "statusinfo": {"errorcount": 0, "lastsync": 4321.0},
+                },
+            }
+        }
+    }))
+    status_path.write_text(json.dumps({}))
+    monkeypatch.setattr(mirror, "STATE_PATH", tmp_path / "state", raising=False)
+    monkeypatch.setattr(mirror, "log", type("Log", (), {"warning": lambda *a, **k: None, "error": lambda *a, **k: None})(), raising=False)
+
+    mirror.config._load_from_dict(config, source_path=tmp_path / "config.json", load_plugins=False)
+
+    assert mirror.packages.get("pkg1").lastsync == 4321.0
+    saved = json.loads(stat_path.read_text())["packages"]["pkg1"]
+    assert saved["lastsync"] == 4321.0
+
+
+def test_save_stat_data_lastsync_roundtrip(tmp_path, monkeypatch):
+    """save_stat_data output must reload without resetting lastsync."""
+    stat_path = tmp_path / "stat.json"
+    status_path = tmp_path / "status.json"
+    config = {
+        "mirrorname": "TestMirror",
+        "hostname": "test.local",
+        "settings": _make_settings_config({
+            "statfile": str(stat_path),
+            "statusfile": str(status_path),
+        })["settings"],
+        "packages": {"pkg1": _make_pkg_config()},
+    }
+    stat_path.write_text(json.dumps({"packages": {}}))
+    status_path.write_text(json.dumps({}))
+    monkeypatch.setattr(mirror, "STATE_PATH", tmp_path / "state", raising=False)
+    monkeypatch.setattr(mirror, "log", type("Log", (), {"warning": lambda *a, **k: None, "error": lambda *a, **k: None})(), raising=False)
+
+    mirror.config._load_from_dict(config, source_path=tmp_path / "config.json", load_plugins=False)
+    mirror.packages.get("pkg1").lastsync = 9876.5
+    mirror.config.save_stat_data()
+    mirror.config._load_from_dict(config, source_path=tmp_path / "config.json", load_plugins=False)
+
+    assert mirror.packages.get("pkg1").lastsync == 9876.5
+
+
 def _make_pkg_config(extra: dict = None) -> dict:
     cfg = {
         "id": "pkg1",
@@ -304,7 +416,7 @@ def test_max_runtime_at_or_above_6h_is_silent(caplog):
     import logging
     import mirror.structure
 
-    for duration in ("PT6H", "PT12H", "PT1D"):
+    for duration in ("PT6H", "PT12H", "P1D"):
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger="mirror"):
             mirror.structure.Config.load_from_dict(
