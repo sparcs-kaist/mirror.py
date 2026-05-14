@@ -1,5 +1,7 @@
 import pytest
+import queue
 import tempfile
+import threading
 import time
 import sys
 import os
@@ -842,3 +844,283 @@ def test_send_command_serialized_under_concurrent_callers(tmp_path):
             client.disconnect()
     finally:
         server.stop()
+
+
+def test_send_command_does_not_hold_send_lock_while_waiting(monkeypatch):
+    """A waiting RPC must not block another caller from sending its command."""
+    client = BaseClient("/tmp/not-used.sock", role="cli")
+    client._connected = True
+    client._sock = object()
+    sent_ids = []
+    first_sent = threading.Event()
+    second_sent = threading.Event()
+
+    def fake_send_message(sock, data):
+        sent_ids.append(data["request_id"])
+        if len(sent_ids) == 1:
+            first_sent.set()
+        if len(sent_ids) == 2:
+            second_sent.set()
+
+    monkeypatch.setattr(_base_module, "send_message", fake_send_message)
+
+    results = {}
+
+    def call(name):
+        results[name] = client.send_command("slow", recv_timeout=1.0, name=name)
+
+    first = threading.Thread(target=call, args=("first",))
+    first.start()
+
+    assert first_sent.wait(1.0)
+
+    second = threading.Thread(target=call, args=("second",))
+    second.start()
+
+    assert second_sent.wait(0.2), "second send was blocked by first response wait"
+
+    for request_id, value in zip(sent_ids, ("first", "second")):
+        with client._pending_lock:
+            response_queue = client._pending_responses[request_id]
+        response_queue.put({"status": 200, "message": "OK", "data": value, "request_id": request_id})
+
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert results == {"first": "first", "second": "second"}
+
+
+def test_route_response_matches_request_id_out_of_order():
+    """Out-of-order responses must be delivered to the matching pending queue."""
+    client = BaseClient("/tmp/not-used.sock", role="cli")
+    q1 = queue.Queue()
+    q2 = queue.Queue()
+    with client._pending_lock:
+        client._pending_responses["one"] = q1
+        client._pending_responses["two"] = q2
+
+    assert client._route_response({"status": 200, "data": 2, "request_id": "two"}) is True
+    assert client._route_response({"status": 200, "data": 1, "request_id": "one"}) is True
+
+    assert q1.get_nowait()["data"] == 1
+    assert q2.get_nowait()["data"] == 2
+
+
+def test_route_response_drops_uncorrelated_and_duplicate_messages():
+    """Uncorrelated or duplicate responses must not block the listener."""
+    client = BaseClient("/tmp/not-used.sock", role="cli")
+    pending = queue.Queue(maxsize=1)
+    with client._pending_lock:
+        client._pending_responses["req"] = pending
+
+    assert client._route_response({"status": 200, "data": "missing-id"}) is False
+    assert client._route_response({"status": 200, "data": "bad-id", "request_id": []}) is False
+    assert pending.empty()
+
+    assert client._route_response({"status": 200, "data": "first", "request_id": "req"}) is True
+    assert client._route_response({"status": 200, "data": "second", "request_id": "req"}) is False
+    assert pending.get_nowait()["data"] == "first"
+
+
+def test_stale_late_response_is_dropped(monkeypatch):
+    """A timed-out response must not be available to satisfy a later request."""
+    client = BaseClient("/tmp/not-used.sock", role="cli")
+    client._connected = True
+    client._sock = object()
+    sent_ids = []
+
+    def fake_send_message(sock, data):
+        sent_ids.append(data["request_id"])
+
+    monkeypatch.setattr(_base_module, "send_message", fake_send_message)
+
+    with pytest.raises(TimeoutError):
+        client.send_command("slow", recv_timeout=0.01)
+
+    old_id = sent_ids[0]
+    assert client._route_response({"status": 200, "data": "late", "request_id": old_id}) is False
+
+    def respond_current(sock, data):
+        sent_ids.append(data["request_id"])
+        request_id = data["request_id"]
+        with client._pending_lock:
+            response_queue = client._pending_responses[request_id]
+        response_queue.put({"status": 200, "message": "OK", "data": "fresh", "request_id": request_id})
+
+    monkeypatch.setattr(_base_module, "send_message", respond_current)
+    assert client.send_command("fresh", recv_timeout=1.0) == "fresh"
+
+
+def test_notification_does_not_unblock_pending_rpc():
+    """Notifications must be handled separately from RPC response queues."""
+    class RecordingClient(BaseClient):
+        def __init__(self):
+            super().__init__("/tmp/not-used.sock", role="cli")
+            self.notifications = []
+
+        def handle_notification(self, data):
+            self.notifications.append(data)
+
+    client = RecordingClient()
+    pending = queue.Queue()
+    with client._pending_lock:
+        client._pending_responses["req"] = pending
+
+    client._handle_incoming_message({"type": "notification", "event": "job_finished"})
+
+    assert client.notifications == [{"type": "notification", "event": "job_finished"}]
+    assert pending.empty()
+
+
+def test_handle_incoming_message_drops_invalid_messages():
+    """Malformed top-level JSON messages must not crash the listener."""
+    client = BaseClient("/tmp/not-used.sock", role="cli")
+
+    client._handle_incoming_message("not-a-dict")
+    client._handle_incoming_message(["not", "a", "dict"])
+
+    assert client._pending_responses == {}
+
+
+def test_listener_disconnect_wakes_pending_requests_quickly(monkeypatch):
+    """Pending RPCs should receive ConnectionError when the listener dies."""
+    client = BaseClient("/tmp/not-used.sock", role="cli")
+    client._connected = True
+    client._sock = object()
+
+    errors = []
+    ready = threading.Event()
+
+    def fake_send_message(sock, data):
+        ready.set()
+
+    monkeypatch.setattr(_base_module, "send_message", fake_send_message)
+
+    def call_hanging_rpc():
+        try:
+            client.send_command("hang", recv_timeout=10.0)
+        except ConnectionError as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=call_hanging_rpc, daemon=True)
+    thread.start()
+    assert ready.wait(1.0)
+    client._connected = False
+    client._wake_pending_connection_error()
+    thread.join(timeout=1.0)
+
+    assert errors and isinstance(errors[0], ConnectionError)
+
+
+def test_protocol_version_mismatch_rejected_by_handshake(tmp_path):
+    """Protocol version mismatches must fail during handshake."""
+    from mirror.socket.protocol import recv_message, send_message
+    from mirror.socket.master import MasterServer
+
+    server = MasterServer(tmp_path / "version.sock")
+    server.start()
+    try:
+        raw = _base_module.socket.socket(_base_module.socket.AF_UNIX, _base_module.socket.SOCK_STREAM)
+        raw.connect(str(server.socket_path))
+        try:
+            recv_message(raw, timeout=5.0)
+            send_message(raw, {
+                "status": 200,
+                "message": "Handshake",
+                "data": {"info": {
+                    "app_name": APP_NAME,
+                    "app_version": "old",
+                    "protocol_version": PROTOCOL_VERSION - 1,
+                    "is_server": False,
+                    "role": "cli",
+                }},
+            })
+            response = recv_message(raw, timeout=5.0)
+        finally:
+            raw.close()
+    finally:
+        server.stop()
+
+    assert response["status"] == 400
+    assert "Protocol version mismatch" in response["message"]
+
+
+def test_server_echoes_request_id_for_rpc_response(tmp_path):
+    """Servers must echo request_id so clients can correlate responses."""
+    from mirror.socket.protocol import recv_message, send_message
+    from mirror.socket.master import MasterServer
+
+    server = MasterServer(tmp_path / "echo.sock")
+    server.start()
+    try:
+        raw = _base_module.socket.socket(_base_module.socket.AF_UNIX, _base_module.socket.SOCK_STREAM)
+        raw.connect(str(server.socket_path))
+        try:
+            recv_message(raw, timeout=5.0)
+            send_message(raw, {
+                "status": 200,
+                "message": "Handshake",
+                "data": {"info": {
+                    "app_name": APP_NAME,
+                    "app_version": "raw",
+                    "protocol_version": PROTOCOL_VERSION,
+                    "is_server": False,
+                    "role": "cli",
+                }},
+            })
+            confirm = recv_message(raw, timeout=5.0)
+            assert confirm["status"] == 200
+
+            send_message(raw, {"command": "ping", "kwargs": None, "request_id": "abc123"})
+            response = recv_message(raw, timeout=5.0)
+
+            send_message(raw, {"command": "ping", "kwargs": None})
+            legacy_response = recv_message(raw, timeout=5.0)
+        finally:
+            raw.close()
+    finally:
+        server.stop()
+
+    assert response["status"] == 200
+    assert response["request_id"] == "abc123"
+    assert "request_id" not in legacy_response
+
+
+def test_client_rejects_server_protocol_version_mismatch(tmp_path):
+    """Clients must reject a server that advertises another protocol version."""
+    from mirror.socket.protocol import recv_message, send_message
+
+    socket_path = tmp_path / "client-version.sock"
+    server = _base_module.socket.socket(_base_module.socket.AF_UNIX, _base_module.socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(1)
+
+    def accept_once():
+        conn, _ = server.accept()
+        try:
+            send_message(conn, {
+                "status": 200,
+                "message": "Handshake",
+                "data": {"info": {
+                    "app_name": APP_NAME,
+                    "app_version": "old",
+                    "protocol_version": PROTOCOL_VERSION - 1,
+                    "is_server": True,
+                    "role": "master",
+                }},
+            })
+            recv_message(conn, timeout=1.0)
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+    thread = threading.Thread(target=accept_once, daemon=True)
+    thread.start()
+    try:
+        client = BaseClient(socket_path, role="cli")
+        with pytest.raises(ConnectionError, match="Protocol version mismatch"):
+            client.connect()
+    finally:
+        server.close()
+        thread.join(timeout=1.0)
