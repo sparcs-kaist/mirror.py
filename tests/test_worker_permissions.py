@@ -126,6 +126,56 @@ def test_preexec_applies_nice_before_uid_changes(monkeypatch):
     assert names.index("setgid") < names.index("setuid"), f"order was {names}"
 
 
+def test_nice_zero_uses_popen_user_group_without_preexec(monkeypatch):
+    """nice=0 should avoid preexec_fn and use Popen's credential kwargs."""
+    from mirror.worker.process import Job
+
+    captured = {}
+
+    class _FakePopen:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+            self.pid = 100
+            self.returncode = None
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("mirror.worker.process.subprocess.Popen", _FakePopen)
+
+    job = Job("no_preexec_test", ["true"], {}, 1000, 1001, 0)
+    job.start()
+
+    assert "preexec_fn" not in captured
+    assert captured["user"] == 1000
+    assert captured["group"] == 1001
+
+
+def test_nonzero_nice_uses_preexec_without_popen_user_group(monkeypatch):
+    """Non-zero nice still needs preexec_fn because Popen has no nice kwarg."""
+    from mirror.worker.process import Job
+
+    captured = {}
+
+    class _FakePopen:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+            self.pid = 101
+            self.returncode = None
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("mirror.worker.process.subprocess.Popen", _FakePopen)
+
+    job = Job("preexec_test", ["true"], {}, 1000, 1001, 5)
+    job.start()
+
+    assert callable(captured["preexec_fn"])
+    assert "user" not in captured
+    assert "group" not in captured
+
+
 @pytest.mark.parametrize(
     ("uid", "gid"),
     [

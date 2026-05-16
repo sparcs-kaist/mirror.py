@@ -98,15 +98,22 @@ class Job:
             stderr_dest = subprocess.STDOUT
 
         try:
-            self.process = subprocess.Popen(
-                self.commandline,
-                env=run_env,
-                preexec_fn=preexec,
-                stdin=subprocess.DEVNULL,
-                stdout=stdout_dest,
-                stderr=stderr_dest,
-                bufsize=0,
-            )
+            popen_kwargs = {
+                "env": run_env,
+                "stdin": subprocess.DEVNULL,
+                "stdout": stdout_dest,
+                "stderr": stderr_dest,
+                "bufsize": 0,
+            }
+            # Popen has user/group support but no nice kwarg; only use
+            # preexec_fn when a niceness adjustment is actually needed.
+            if self.nice == 0:
+                popen_kwargs["group"] = self.gid
+                popen_kwargs["user"] = self.uid
+            else:
+                popen_kwargs["preexec_fn"] = preexec
+
+            self.process = subprocess.Popen(self.commandline, **popen_kwargs)
 
             # Close our handle to the log file now that subprocess has it
             if log_file_handle:
