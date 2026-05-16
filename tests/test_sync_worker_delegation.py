@@ -24,6 +24,8 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         mirror.log = MagicMock()
         mirror.packages = {}
         mirror.conf = MagicMock()
+        mirror.conf.uid = 1234
+        mirror.conf.gid = 5678
         mirror.conf.logger = {"fileformat": {"gzip": True}}
 
         # Create a virtual package (for rsync)
@@ -87,8 +89,8 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         self.assertEqual(call_kwargs['env']['USER'], "syncuser")
 
         # Check that uid and gid are passed
-        self.assertEqual(call_kwargs.get("uid"), os.getuid())
-        self.assertEqual(call_kwargs.get("gid"), os.getgid())
+        self.assertEqual(call_kwargs.get("uid"), mirror.conf.uid)
+        self.assertEqual(call_kwargs.get("gid"), mirror.conf.gid)
 
     @patch('mirror.socket.worker.execute_command')
     @patch('mirror.logger.create_logger')
@@ -117,6 +119,8 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         call_kwargs = mock_execute_command.call_args[1]
         self.assertEqual(call_kwargs['job_id'], "test-ftpsync")
         self.assertTrue(call_kwargs['commandline'][0].endswith("ftpsync"))
+        self.assertEqual(call_kwargs.get("uid"), mirror.conf.uid)
+        self.assertEqual(call_kwargs.get("gid"), mirror.conf.gid)
 
     @patch('mirror.socket.worker.execute_command')
     @patch('mirror.sync.ftpsync.setup_ftpsync')
@@ -142,6 +146,43 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         mock_execute_command.assert_called_once()
         call_kwargs = mock_execute_command.call_args[1]
         self.assertEqual(call_kwargs['env'], seeded)
+
+    @patch('mirror.socket.worker.execute_command')
+    def test_lftp_delegation_uses_configured_uid_gid(self, mock_execute_command):
+        pkg = MagicMock(spec=mirror.structure.Package)
+        pkg.pkgid = "test-lftp"
+        pkg.name = "Test LFTP"
+        pkg.settings = MagicMock()
+        pkg.settings.src = "ftp.example.org/path"
+        pkg.settings.dst = "/srv/mirror/lftp"
+
+        mock_logger = MagicMock()
+        mock_logger.handlers = []
+
+        import mirror.sync.lftp as lftp_module
+        lftp_module.execute(pkg, mock_logger)
+
+        mock_execute_command.assert_called_once()
+        call_kwargs = mock_execute_command.call_args[1]
+        self.assertEqual(call_kwargs.get("uid"), mirror.conf.uid)
+        self.assertEqual(call_kwargs.get("gid"), mirror.conf.gid)
+
+    @patch('mirror.socket.worker.execute_command')
+    def test_bandersnatch_delegation_uses_configured_uid_gid(self, mock_execute_command):
+        pkg = MagicMock(spec=mirror.structure.Package)
+        pkg.pkgid = "test-bandersnatch"
+        pkg.name = "Test Bandersnatch"
+
+        mock_logger = MagicMock()
+        mock_logger.handlers = []
+
+        import mirror.sync.bandersnatch as bandersnatch_module
+        bandersnatch_module.execute(pkg, mock_logger)
+
+        mock_execute_command.assert_called_once()
+        call_kwargs = mock_execute_command.call_args[1]
+        self.assertEqual(call_kwargs.get("uid"), mirror.conf.uid)
+        self.assertEqual(call_kwargs.get("gid"), mirror.conf.gid)
 
     def test_rsync_ffts_uptodate_routes_through_on_sync_done(self):
         """When FFTS reports up-to-date, rsync.execute must call on_sync_done, not execute_command."""

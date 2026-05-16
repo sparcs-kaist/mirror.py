@@ -378,6 +378,17 @@ class Config:
                 f"settings.max_runtime={max_runtime_seconds}s is below 6h; "
                 "12h or more is recommended to avoid killing legitimate long-running syncs"
             )
+        uid = config["settings"].get("uid", 0)
+        gid = config["settings"].get("gid", 0)
+        if uid == 0 or gid == 0:
+            root_fields = ", ".join(
+                field for field, value in (("settings.uid", uid), ("settings.gid", gid))
+                if value == 0
+            )
+            mirror.log.warning(
+                f"{root_fields} use root; configure non-root IDs "
+                "to run sync jobs and own logs with reduced privileges"
+            )
 
         return Config(
             name=config.get("mirrorname", ""),
@@ -387,8 +398,8 @@ class Config:
             logfolder=Path(config["settings"]["logfolder"]),
             webroot=Path(config["settings"]["webroot"]),
             statusfile=Path(config["settings"]["statusfile"]),
-            uid=config["settings"].get("uid", 0),
-            gid=config["settings"].get("gid", 0),
+            uid=uid,
+            gid=gid,
             ftpsync=Config.FTPSync(**config["settings"]["ftpsync"]),
             maintainer=config["settings"].get("maintainer", {}),
             localtimezone=config["settings"]["localtimezone"],

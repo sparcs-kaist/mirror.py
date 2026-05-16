@@ -1,6 +1,7 @@
 """prune_finished retries notification and force-prunes after budget."""
 import importlib
 import sys
+import os
 from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
 
@@ -35,7 +36,7 @@ def _setup_fresh_job(job_id: str) -> process.Job:
         process._jobs.pop(job_id, None)
 
     with patch("mirror.worker.process.subprocess.Popen", _FinishedFakePopen):
-        return process.create(job_id, ["true"], {}, None, None, 0)
+        return process.create(job_id, ["true"], {}, os.getuid(), os.getgid(), 0)
 
 
 @contextmanager

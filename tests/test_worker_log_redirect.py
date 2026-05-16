@@ -1,6 +1,7 @@
 """Worker log redirect: subprocess streams go to log file when log_path is set."""
 import subprocess
 import time
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +13,7 @@ def test_log_path_redirects_output(tmp_path):
     log_file = tmp_path / "worker.log"
     command = ["/bin/sh", "-c", "echo 'Line 1'; echo 'Line 2'"]
 
-    worker = process.create("log_test_worker", command, {}, None, None, 0, log_path=log_file)
+    worker = process.create("log_test_worker", command, {}, os.getuid(), os.getgid(), 0, log_path=log_file)
 
     try:
         max_retries = 30
@@ -46,7 +47,7 @@ def test_log_path_popen_kwargs(monkeypatch, tmp_path):
 
     monkeypatch.setattr("mirror.worker.process.subprocess.Popen", _FakePopen)
 
-    job = process.create("log_kwargs_test", ["true"], {}, None, None, 0, log_path=log_file)
+    job = process.create("log_kwargs_test", ["true"], {}, os.getuid(), os.getgid(), 0, log_path=log_file)
 
     try:
         assert captured["stdin"] is subprocess.DEVNULL

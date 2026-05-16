@@ -36,10 +36,30 @@ def test_execute_command_reuses_supervised_client_when_connected(monkeypatch):
     monkeypatch.setattr(worker_module, "_instance", instance_mock)
 
     with patch.object(worker_module, "WorkerClient") as cls_mock:
-        worker_module.execute_command(job_id="j", commandline=["echo"], env={})
+        worker_module.execute_command(job_id="j", commandline=["echo"], env={}, uid=1000, gid=1000)
 
     assert cls_mock.call_count == 0
     instance_mock.execute_command.assert_called_once()
+
+
+def test_execute_command_rejects_missing_uid_gid(monkeypatch):
+    instance_mock = _make_connected_client_mock()
+    monkeypatch.setattr(worker_module, "_instance", instance_mock)
+
+    with pytest.raises(ValueError, match="explicit uid and gid"):
+        worker_module.execute_command(job_id="j", commandline=["echo"], env={})
+
+    instance_mock.execute_command.assert_not_called()
+
+
+def test_worker_server_rejects_missing_uid_gid(tmp_path, monkeypatch):
+    import mirror.worker.process as process_module
+
+    monkeypatch.setattr(process_module, "prune_finished", lambda: None)
+    server = WorkerServer(socket_path=tmp_path / "worker.sock")
+
+    with pytest.raises(ValueError, match="explicit uid and gid"):
+        server._handle_execute_command(job_id="j", commandline=["echo"], env={})
 
 
 def test_helper_falls_back_when_instance_is_none(monkeypatch):

@@ -48,6 +48,8 @@ class Job:
 
     def start(self) -> None:
         """Spawn the subprocess with the configured command, uid, gid, and niceness."""
+        if self.uid is None or self.gid is None:
+            raise ValueError(f"Job {self.id}: explicit uid and gid are required")
 
         def preexec():
             # Apply niceness before changing identity so the setuid
@@ -84,8 +86,14 @@ class Job:
         log_file_handle = None
 
         if self.log_path:
+            missing_parents = self._missing_directories(self.log_path.parent)
+            file_existed = self.log_path.exists()
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            for directory in missing_parents:
+                self._apply_job_owner(directory)
             log_file_handle = open(self.log_path, "ab")
+            if not file_existed:
+                self._apply_job_owner(self.log_path)
             stdout_dest = log_file_handle
             stderr_dest = subprocess.STDOUT
 
@@ -111,6 +119,25 @@ class Job:
             logger.error(f"Failed to start worker: {e}")
             self.end_time = time.time()
             raise e
+
+    def _missing_directories(self, directory: Path) -> list[Path]:
+        missing = []
+        current = directory
+        while not current.exists():
+            missing.append(current)
+            parent = current.parent
+            if parent == current:
+                break
+            current = parent
+        return list(reversed(missing))
+
+    def _apply_job_owner(self, path: Path) -> None:
+        if os.geteuid() != 0 or self.uid is None or self.gid is None:
+            return
+        try:
+            os.chown(path, self.uid, self.gid, follow_symlinks=False)
+        except OSError as e:
+            logger.warning(f"Failed to chown {path}: {e}")
 
     def get_pipe(self, stream: str) -> Optional[int]:
         """Return the file descriptor for the specified stream.

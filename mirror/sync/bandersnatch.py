@@ -2,7 +2,6 @@ import mirror
 import mirror.structure
 import mirror.socket.worker
 import mirror.sync
-import os
 import logging
 from pathlib import Path
 
@@ -31,8 +30,8 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
             sync_method="bandersnatch",
             commandline=command,
             env={},
-            uid=os.getuid(),
-            gid=os.getgid(),
+            uid=mirror.conf.uid,
+            gid=mirror.conf.gid,
             log_path=log_path,
         )
 

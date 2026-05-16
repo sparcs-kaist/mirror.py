@@ -124,3 +124,21 @@ def test_preexec_applies_nice_before_uid_changes(monkeypatch):
     names = [c[0] for c in calls]
     assert names.index("nice") < names.index("setgid"), f"order was {names}"
     assert names.index("setgid") < names.index("setuid"), f"order was {names}"
+
+
+@pytest.mark.parametrize(
+    ("uid", "gid"),
+    [
+        (None, None),
+        (None, 1001),
+        (1000, None),
+    ],
+)
+def test_job_start_requires_uid_gid(uid, gid):
+    """Direct Job.start calls must not execute without explicit credentials."""
+    from mirror.worker.process import Job
+
+    job = Job("missing_creds_test", ["true"], {}, uid, gid, 0)
+
+    with pytest.raises(ValueError, match="explicit uid and gid"):
+        job.start()
