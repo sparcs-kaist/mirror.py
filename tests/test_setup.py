@@ -1,5 +1,7 @@
 """Tests for mirror.command.setup provisioning logic."""
 import json
+import os
+import stat
 import types
 import importlib
 from pathlib import Path
@@ -147,6 +149,21 @@ def test_setup_creates_all_directories(monkeypatch, tmp_path):
 
     for d in setup_mod._DIRECTORIES:
         assert d.exists() and d.is_dir()
+        expected_mode = 0o700 if d.as_posix().endswith("/var/run/mirror") else 0o755
+        assert stat.S_IMODE(d.stat().st_mode) == expected_mode
+
+
+def test_setup_directory_modes_ignore_umask(monkeypatch, tmp_path):
+    _redirect_paths(monkeypatch, tmp_path)
+    old_umask = os.umask(0o077)
+    try:
+        setup_mod._ensure_directories()
+    finally:
+        os.umask(old_umask)
+
+    for d in setup_mod._DIRECTORIES:
+        expected_mode = 0o700 if d.as_posix().endswith("/var/run/mirror") else 0o755
+        assert stat.S_IMODE(d.stat().st_mode) == expected_mode
 
 
 def test_setup_invokes_systemctl_daemon_reload(monkeypatch, tmp_path):

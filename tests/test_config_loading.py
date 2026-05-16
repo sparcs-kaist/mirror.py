@@ -173,6 +173,13 @@ def test_default_config_has_statfile():
     assert "statfile" in DEFAULT_CONFIG["settings"]
 
 
+def test_default_config_has_uid_gid():
+    """DEFAULT_CONFIG must expose runtime user and group IDs."""
+    from mirror.config.config import DEFAULT_CONFIG
+    assert "uid" in DEFAULT_CONFIG["settings"]
+    assert "gid" in DEFAULT_CONFIG["settings"]
+
+
 def test_socket_path_from_config_overrides_default(tmp_path, monkeypatch):
     """When config sets socket_path, master/worker socket defaults reflect it."""
     import json

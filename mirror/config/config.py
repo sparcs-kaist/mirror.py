@@ -6,6 +6,8 @@ DEFAULT_CONFIG = {
         "webroot": "/var/www/mirror",
         "statusfile": "/var/www/mirror/status.json",
         "statfile": "/var/lib/mirror/stat.json",
+        "uid": 0,
+        "gid": 0,
         "localtimezone": "Asia/Seoul",
         "errorcontinuetime": 60,
         "maintainer": {
