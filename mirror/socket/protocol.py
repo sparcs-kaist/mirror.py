@@ -14,7 +14,7 @@ from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 APP_NAME = "mirror.py"
 HANDSHAKE_TIMEOUT = 5.0
 

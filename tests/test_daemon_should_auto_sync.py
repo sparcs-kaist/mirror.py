@@ -36,6 +36,20 @@ def test_push_mode_error_past_errorcontinuetime_returns_false():
     assert should_auto_sync(pkg, now, errorcontinuetime=60) is False
 
 
+def test_zero_syncrate_active_returns_false():
+    """syncrate=0 is manual-only and must not auto-sync."""
+    now = 1000.0
+    pkg = make_package(syncrate=0, lastsync=0.0, status="ACTIVE")
+    assert should_auto_sync(pkg, now, errorcontinuetime=60) is False
+
+
+def test_zero_syncrate_error_returns_false():
+    """syncrate=0 must not auto-retry even in ERROR state."""
+    now = 10000.0
+    pkg = make_package(syncrate=0, lastsync=0.0, status="ERROR")
+    assert should_auto_sync(pkg, now, errorcontinuetime=60) is False
+
+
 def test_syncrate_not_elapsed_returns_false():
     """Package whose syncrate has not elapsed and is not in ERROR must not sync."""
     now = 1000.0

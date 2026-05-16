@@ -20,6 +20,8 @@ _DIRECTORIES = [
     Path("/var/log/mirror/packages"),
     Path("/var/www/mirror"),
 ]
+_DEFAULT_DIRECTORY_MODE = 0o755
+_RUN_DIRECTORY_MODE = 0o700
 
 _CONFIG_PATH = Path("/etc/mirror/config.json")
 _SYSTEMD_PATH = Path("/etc/systemd/system")
@@ -88,7 +90,9 @@ def _check_required_binaries() -> bool:
 def _ensure_directories() -> None:
     """Create all required mirror directories idempotently."""
     for directory in _DIRECTORIES:
-        directory.mkdir(parents=True, exist_ok=True)
+        mode = _RUN_DIRECTORY_MODE if directory.parts[-3:] == ("var", "run", "mirror") else _DEFAULT_DIRECTORY_MODE
+        directory.mkdir(parents=True, mode=mode, exist_ok=True)
+        directory.chmod(mode)
 
 
 def _write_default_config_if_absent() -> bool:

@@ -1,5 +1,7 @@
 """Tests for mirror.command.setup provisioning logic."""
 import json
+import os
+import stat
 import types
 import importlib
 from pathlib import Path
@@ -147,6 +149,21 @@ def test_setup_creates_all_directories(monkeypatch, tmp_path):
 
     for d in setup_mod._DIRECTORIES:
         assert d.exists() and d.is_dir()
+        expected_mode = 0o700 if d.as_posix().endswith("/var/run/mirror") else 0o755
+        assert stat.S_IMODE(d.stat().st_mode) == expected_mode
+
+
+def test_setup_directory_modes_ignore_umask(monkeypatch, tmp_path):
+    _redirect_paths(monkeypatch, tmp_path)
+    old_umask = os.umask(0o077)
+    try:
+        setup_mod._ensure_directories()
+    finally:
+        os.umask(old_umask)
+
+    for d in setup_mod._DIRECTORIES:
+        expected_mode = 0o700 if d.as_posix().endswith("/var/run/mirror") else 0o755
+        assert stat.S_IMODE(d.stat().st_mode) == expected_mode
 
 
 def test_setup_invokes_systemctl_daemon_reload(monkeypatch, tmp_path):
@@ -210,6 +227,7 @@ def test_default_config_has_no_legacy_plugins_key():
     assert "plugins" not in DEFAULT_CONFIG["settings"]
     assert DEFAULT_CONFIG["packages"] == {}
     assert DEFAULT_CONFIG["settings"]["logfolder"] == "/var/log/mirror/ftpsync"
+    assert DEFAULT_CONFIG["settings"]["ftpsync"]["maintainer"] == "Admins <admins@example.com>"
 
 
 def test_systemd_unit_files_declare_worker_ordering(monkeypatch, tmp_path):

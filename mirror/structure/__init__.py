@@ -103,8 +103,8 @@ class Package:
             status = status_obj
             statusinfo_dict = config.get("statusinfo", {})
 
-        # Pull lastsync from statusinfo if present (matching mirror/config/__init__.py behavior)
-        lastsync = statusinfo_dict.get("lastsync", config.get("lastsync", 0.0))
+        # Prefer the current top-level stat field, with legacy statusinfo fallback.
+        lastsync = config.get("lastsync", statusinfo_dict.get("lastsync", 0.0))
 
         return Package(
             pkgid=config["id"],
@@ -116,6 +116,8 @@ class Package:
             link=[Package.Link(lnk['rel'], lnk['href']) for lnk in config["link"]],
             settings=PackageSettings.from_dict(config["settings"]),
             lastsync=lastsync,
+            disabled=bool(config.get("disabled", False)),
+            timestamp=config.get("timestamp", 0.0),
             statusinfo=Package.StatusInfo.from_dict(statusinfo_dict),
         )
 
@@ -179,6 +181,7 @@ class Package:
             "status": self.status,
             "statusinfo": self.statusinfo.to_dict()
         }
+        package_dict.pop("disabled", None)
         if "statusinfo" in package_dict:
             del package_dict["statusinfo"]
 
@@ -431,4 +434,3 @@ class Config:
     def to_json(self) -> str:
         """Serialize Config to a JSON string."""
         return json.dumps(self.to_dict())
-

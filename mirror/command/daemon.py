@@ -14,6 +14,18 @@ import os
 from pathlib import Path
 
 
+def _cleanup_daemon(socket_server, pid_file: Path, sock_path_file: Path) -> None:
+    try:
+        socket_server.stop()
+    except Exception as exc:
+        mirror.log.debug(f"Failed to stop master socket server: {exc}")
+    mirror.socket.stop()
+    if pid_file.exists():
+        pid_file.unlink()
+    if sock_path_file.exists():
+        sock_path_file.unlink()
+
+
 def _watchdog_check(package: mirror.structure.Package) -> None:
     """Probe the worker for uptime and kill the sync if max_runtime exceeded.
 
@@ -80,7 +92,7 @@ def should_auto_sync(package: mirror.structure.Package, now: float, errorcontinu
     Return:
         should_sync(bool): True if the auto-loop should call sync.start(package).
     """
-    if package.syncrate < 0:
+    if package.syncrate <= 0:
         return False
     if now - package.lastsync > package.syncrate:
         return True
@@ -129,14 +141,11 @@ def daemon(config: str) -> None:
     else:
         mirror.log.error("Worker server is NOT running. Sync operations may fail if they rely on it.")
 
+    shutdown_requested = False
+
     def signal_handler(sig, frame):
-        mirror.log.info("Master Daemon stopping...")
-        mirror.socket.stop()
-        if pid_file.exists():
-            pid_file.unlink()
-        if sock_path_file.exists():
-            sock_path_file.unlink()
-        sys.exit(0)
+        nonlocal shutdown_requested
+        shutdown_requested = True
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -155,6 +164,9 @@ def daemon(config: str) -> None:
 
     try:
         while True:
+            if shutdown_requested:
+                break
+
             should_reload, responses = reload_controller.consume_pending()
             if should_reload:
                 t0 = time.monotonic()
@@ -206,11 +218,10 @@ def daemon(config: str) -> None:
                     mirror.log.error(f"Package {package.pkgid} loop iteration failed: {e}")
 
             time.sleep(1)
+        mirror.log.info("Master Daemon stopping...")
+        _cleanup_daemon(socket_server, pid_file, sock_path_file)
+        sys.exit(0)
     except Exception as e:
         mirror.log.error(f"Daemon failed: {e}")
-        socket_server.stop()
-        if pid_file.exists():
-            pid_file.unlink()
-        if sock_path_file.exists():
-            sock_path_file.unlink()
+        _cleanup_daemon(socket_server, pid_file, sock_path_file)
         sys.exit(1)

@@ -89,12 +89,33 @@ def test_daemon_signal_handling(mock_master_server, mock_dependencies):
                 daemon("config.json")
     
     assert signal_handler is not None
+    server_instance.stop.reset_mock()
     
-    # Trigger signal handler
+    # Triggering the handler itself must not do unsafe cleanup work.
     with patch("sys.exit") as mock_exit:
         signal_handler(signal.SIGINT, None)
-        server_instance.stop.assert_called()
-        mock_exit.assert_called_with(0)
+        server_instance.stop.assert_not_called()
+        mock_exit.assert_not_called()
+
+
+def test_daemon_signal_cleanup_runs_from_main_loop(mock_master_server, mock_dependencies):
+    """SIGTERM should request shutdown; cleanup runs outside the signal handler."""
+    server_instance = mock_master_server.return_value
+    handlers = {}
+
+    def capture_signal(sig, handler):
+        handlers[sig] = handler
+
+    def request_shutdown(_seconds):
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+    with patch("signal.signal", side_effect=capture_signal), \
+         patch("time.sleep", side_effect=request_shutdown), \
+         patch("sys.exit") as mock_exit:
+        daemon("config.json")
+
+    server_instance.stop.assert_called()
+    mock_exit.assert_called_with(0)
 
 
 def test_loop_calls_watchdog_for_syncing_package(mock_master_server, mock_dependencies):

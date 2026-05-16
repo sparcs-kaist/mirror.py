@@ -6,6 +6,8 @@ DEFAULT_CONFIG = {
         "webroot": "/var/www/mirror",
         "statusfile": "/var/www/mirror/status.json",
         "statfile": "/var/lib/mirror/stat.json",
+        "uid": 0,
+        "gid": 0,
         "localtimezone": "Asia/Seoul",
         "errorcontinuetime": 60,
         "maintainer": {
@@ -33,7 +35,7 @@ DEFAULT_CONFIG = {
             }
         },
         "ftpsync": {
-            "maintainer": "Admins <admins@examile.com>", # only ftpsync
+            "maintainer": "Admins <admins@example.com>", # only ftpsync
             "sponsor": "Example <https://example.com>", # only ftpsync
             "country": "KR", # only ftpsync
             "location": "Seoul", # only ftpsync
@@ -42,4 +44,3 @@ DEFAULT_CONFIG = {
     },
     "packages": {}
 }
-

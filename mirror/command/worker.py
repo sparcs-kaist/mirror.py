@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 import mirror
+import mirror.config
 import mirror.socket
 import mirror.worker
 
@@ -18,14 +19,17 @@ def worker(config: str, socket_path: Optional[str] = None) -> None:
         socket_path(str, optional): Override path for the worker Unix socket.
     """
     log_level = logging.INFO
+    configured_socket_path = None
     if config:
         config_path = Path(config)
         if config_path.exists():
             try:
                 with open(config_path, 'r') as f:
                     cfg = json.load(f)
-                    level_str = cfg.get("settings", {}).get("logger", {}).get("level", "INFO")
+                    settings = cfg.get("settings", {})
+                    level_str = settings.get("logger", {}).get("level", "INFO")
                     log_level = getattr(logging, level_str.upper(), logging.INFO)
+                    configured_socket_path = settings.get("socket_path")
             except Exception as e:
                 logging.warning(f"Failed to load config from {config}: {e}")
 
@@ -37,6 +41,9 @@ def worker(config: str, socket_path: Optional[str] = None) -> None:
 
     mirror.log = logging.getLogger("mirror")
     mirror.log.info("Worker started.")
+
+    if socket_path is None and isinstance(configured_socket_path, str) and configured_socket_path:
+        mirror.config.SOCKET_PATH = configured_socket_path
 
     server = mirror.socket.init("worker", socket_path=socket_path)
 

@@ -2,6 +2,7 @@ import pytest
 import signal
 import sys
 import logging
+import json
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 from mirror.command.worker import worker
@@ -104,3 +105,67 @@ def test_worker_config_usage(mock_server, mock_logging):
         format="[%(asctime)s] %(levelname)s # %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
+
+
+def test_worker_reads_socket_path_without_loading_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    stat_path = tmp_path / "stat.json"
+    socket_dir = tmp_path / "sockets"
+    stat_path.write_text('{"packages": {"pkg": {"lastsync": 123.0}}}')
+    config_path.write_text(json.dumps({
+        "settings": {
+            "logger": {"level": "INFO"},
+            "socket_path": str(socket_dir),
+            "statfile": str(stat_path),
+        }
+    }))
+    before = stat_path.read_text()
+    init_calls = []
+    monkeypatch.setattr("mirror.config.SOCKET_PATH", None, raising=False)
+
+    monkeypatch.setattr(
+        "mirror.config.load",
+        lambda path: (_ for _ in ()).throw(AssertionError("must not load config")),
+    )
+
+    def fake_init(role, **kwargs):
+        init_calls.append({"role": role, "kwargs": kwargs})
+        server = MagicMock()
+        server.socket_path = socket_dir / "worker.sock"
+        return server
+
+    monkeypatch.setattr("mirror.socket.init", fake_init)
+    monkeypatch.setattr("mirror.worker.manage", lambda: (_ for _ in ()).throw(Exception("BreakLoop")))
+    monkeypatch.setattr("sys.exit", lambda code: None)
+
+    worker(str(config_path))
+
+    assert init_calls == [{"role": "worker", "kwargs": {"socket_path": None}}]
+    import mirror.config
+    assert mirror.config.SOCKET_PATH == str(socket_dir)
+    assert stat_path.read_text() == before
+
+
+def test_worker_explicit_socket_path_takes_precedence(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "settings": {
+            "logger": {"level": "INFO"},
+            "socket_path": str(tmp_path / "configured"),
+        }
+    }))
+    init_calls = []
+
+    def fake_init(role, **kwargs):
+        init_calls.append({"role": role, "kwargs": kwargs})
+        server = MagicMock()
+        server.socket_path = Path(kwargs["socket_path"])
+        return server
+
+    monkeypatch.setattr("mirror.socket.init", fake_init)
+    monkeypatch.setattr("mirror.worker.manage", lambda: (_ for _ in ()).throw(Exception("BreakLoop")))
+    monkeypatch.setattr("sys.exit", lambda code: None)
+
+    worker(str(config_path), "/tmp/explicit.sock")
+
+    assert init_calls == [{"role": "worker", "kwargs": {"socket_path": "/tmp/explicit.sock"}}]

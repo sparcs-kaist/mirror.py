@@ -11,6 +11,7 @@ import socket
 import threading
 import traceback
 import logging
+import uuid
 from pathlib import Path
 from typing import Optional, Callable, Any
 
@@ -24,6 +25,8 @@ from .protocol import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CONNECTION_ERROR_SENTINEL = object()
 
 
 class BaseServer:
@@ -135,8 +138,11 @@ class BaseServer:
 
                 command = request.get("command")
                 kwargs = request.get("kwargs", {})
+                request_id = request.get("request_id")
 
                 response = self._dispatch_command(command, kwargs)
+                if isinstance(request_id, str):
+                    response["request_id"] = request_id
                 send_message(conn, response)
         finally:
             with self._connections_lock:
@@ -263,7 +269,8 @@ class BaseClient:
         self._sock: Optional[socket.socket] = None
         self._server_info: Optional[HandshakeInfo] = None
         self._connected = False
-        self._response_queue: queue.Queue = queue.Queue()
+        self._pending_responses: dict[str, queue.Queue] = {}
+        self._pending_lock = threading.Lock()
         self._listener_thread: Optional[threading.Thread] = None
         self._send_lock = threading.Lock()
 
@@ -290,15 +297,51 @@ class BaseClient:
         while self._connected and self._sock:
             try:
                 message = recv_message(self._sock)
-                if message.get("type") == "notification":
-                    self.handle_notification(message)
-                else:
-                    self._response_queue.put(message)
+                self._handle_incoming_message(message)
             except (ConnectionError, json.JSONDecodeError, OSError):
                 break
             except Exception:
                 logger.exception("Listener error")
         self._connected = False
+        self._wake_pending_connection_error()
+
+    def _handle_incoming_message(self, message: Any) -> None:
+        """Dispatch an incoming socket message to notification or RPC routing."""
+        if not isinstance(message, dict):
+            logger.warning("Dropping invalid socket message: %s", message)
+            return
+        if message.get("type") == "notification":
+            self.handle_notification(message)
+            return
+        self._route_response(message)
+
+    def _route_response(self, message: dict) -> bool:
+        """Route a correlated response to its pending waiter."""
+        request_id = message.get("request_id")
+        if not isinstance(request_id, str):
+            logger.debug("Dropping uncorrelated RPC response: %s", message)
+            return False
+        with self._pending_lock:
+            response_queue = self._pending_responses.get(request_id)
+        if response_queue is None:
+            logger.debug("Dropping stale RPC response for request_id=%s", request_id)
+            return False
+        try:
+            response_queue.put_nowait(message)
+        except queue.Full:
+            logger.debug("Dropping duplicate RPC response for request_id=%s", request_id)
+            return False
+        return True
+
+    def _wake_pending_connection_error(self) -> None:
+        """Wake all pending RPC calls after the listener detects disconnect."""
+        with self._pending_lock:
+            pending = list(self._pending_responses.values())
+        for response_queue in pending:
+            try:
+                response_queue.put_nowait(_CONNECTION_ERROR_SENTINEL)
+            except queue.Full:
+                pass
 
     def handle_notification(self, data: dict) -> None:
         """Handle server notification. Override in subclasses.
@@ -374,6 +417,7 @@ class BaseClient:
                 logger.debug("Failed to shut down client socket: %s", exc)
             self._sock = None
         self._server_info = None
+        self._wake_pending_connection_error()
 
     def send_command(self, command: str, recv_timeout: float | None = None, **kwargs: Any) -> Any:
         """Send a command to server and wait for the response.
@@ -394,16 +438,36 @@ class BaseClient:
         if not self._connected or not self._sock:
             raise ConnectionError("Not connected to server")
 
-        with self._send_lock:
-            send_message(self._sock, {
-                "command": command,
-                "kwargs": kwargs if kwargs else None,
-            })
+        request_id = uuid.uuid4().hex
+        response_queue: queue.Queue = queue.Queue(maxsize=1)
+
+        with self._pending_lock:
+            if not self._connected or not self._sock:
+                raise ConnectionError("Not connected to server")
+            sock = self._sock
+            self._pending_responses[request_id] = response_queue
+
+        try:
+            with self._send_lock:
+                try:
+                    send_message(sock, {
+                        "command": command,
+                        "kwargs": kwargs if kwargs else None,
+                        "request_id": request_id,
+                    })
+                except OSError as exc:
+                    raise ConnectionError(f"Failed to send command '{command}': {exc}") from exc
 
             try:
-                response = self._response_queue.get(timeout=recv_timeout if recv_timeout is not None else 30)
+                response = response_queue.get(timeout=recv_timeout if recv_timeout is not None else 30)
             except queue.Empty:
                 raise TimeoutError(f"Command '{command}' timed out")
+        finally:
+            with self._pending_lock:
+                self._pending_responses.pop(request_id, None)
+
+        if response is _CONNECTION_ERROR_SENTINEL:
+            raise ConnectionError("Connection closed")
 
         if response.get("status") == 200:
             return response.get("data")

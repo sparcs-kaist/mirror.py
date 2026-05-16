@@ -1,13 +1,11 @@
 import sys
-from pathlib import Path
 
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.output import create_output
 from prompt_toolkit.shortcuts import print_formatted_text
 
-import mirror
-import mirror.config
 import mirror.socket.master
+from mirror.command.config import _resolve_master_socket
 
 
 _STDERR = create_output(stdout=sys.stderr)
@@ -45,20 +43,16 @@ def push(pkgid: str, config: str) -> None:
         pkgid(str): Package ID to sync.
         config(str): Path to the main JSON configuration file (used to resolve socket path).
     """
-    mirror.config.load(Path(config))
+    socket_path = _resolve_master_socket(None)
 
-    if pkgid not in mirror.packages:
-        _emit_error(f"package not found: {pkgid}")
-        sys.exit(2)
-
-    if not mirror.socket.master.is_master_running():
+    if not mirror.socket.master.is_master_running(socket_path=socket_path):
         _emit_error(f"master daemon is not running; cannot push '{pkgid}'")
         sys.exit(1)
 
     extra_args = _capture_ssh_env()
 
     try:
-        result = mirror.socket.master.push_sync(pkgid, extra_args=extra_args)
+        result = mirror.socket.master.push_sync(pkgid, extra_args=extra_args, socket_path=socket_path)
     except Exception as exc:
         _emit_error(f"push_sync failed: {exc}")
         sys.exit(3)
