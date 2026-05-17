@@ -236,6 +236,43 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         on_done.assert_called_once_with(pkg.pkgid, success=True, returncode=0)
         exec_cmd.assert_not_called()
 
+    def test_rsync_ffts_check_uses_process_timeout(self):
+        from mirror.sync import rsync as rsync_mod
+
+        pkg = MagicMock()
+        pkg.pkgid = "ffts_timeout_test"
+        pkg.name = "FFTS Timeout Test"
+        pkg.settings.src = "rsync://example.org/test"
+        pkg.settings.dst = "/tmp/test_dst"
+        pkg.settings.options = {"fftsfile": "filelist"}
+        pkg_logger = MagicMock()
+
+        result = MagicMock()
+        result.returncode = 0
+        result.stdout = ""
+
+        with patch.object(rsync_mod.subprocess, "run", return_value=result) as run:
+            rsync_mod.check_ffts_update(pkg, pkg_logger)
+
+        self.assertEqual(run.call_args.kwargs["timeout"], 60)
+
+    def test_rsync_ffts_check_timeout_assumes_update_needed(self):
+        from mirror.sync import rsync as rsync_mod
+
+        pkg = MagicMock()
+        pkg.pkgid = "ffts_timeout_test"
+        pkg.name = "FFTS Timeout Test"
+        pkg.settings.src = "rsync://example.org/test"
+        pkg.settings.dst = "/tmp/test_dst"
+        pkg.settings.options = {"fftsfile": "filelist"}
+        pkg_logger = MagicMock()
+
+        timeout = rsync_mod.subprocess.TimeoutExpired(cmd=["rsync"], timeout=60)
+        with patch.object(rsync_mod.subprocess, "run", side_effect=timeout):
+            needs_update = rsync_mod.check_ffts_update(pkg, pkg_logger)
+
+        self.assertTrue(needs_update)
+
 
 if __name__ == '__main__':
     unittest.main()

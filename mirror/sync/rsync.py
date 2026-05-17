@@ -119,7 +119,8 @@ def check_ffts_update(package: mirror.structure.Package, pkg_logger: logging.Log
         src = package.settings.src
         dst = Path(package.settings.dst)
         fftsfile = package.settings.options.get("fftsfile", "")
-        timeout = 10
+        connection_timeout = 10
+        process_timeout = 60
 
         user = str(package.settings.options.get("user", ""))
         password = str(package.settings.options.get("password", ""))
@@ -129,7 +130,7 @@ def check_ffts_update(package: mirror.structure.Package, pkg_logger: logging.Log
             "--no-motd",
             "--dry-run",
             "--out-format=%n",
-            f"--contimeout={timeout}",
+            f"--contimeout={connection_timeout}",
             f"{src}/{fftsfile}",
             f"{dst}/{fftsfile}",
         ]
@@ -140,7 +141,13 @@ def check_ffts_update(package: mirror.structure.Package, pkg_logger: logging.Log
             env["RSYNC_PASSWORD"] = password
 
         pkg_logger.info(f"Executing FFTS check: {' '.join(command)}")
-        result = subprocess.run(command, env=env, capture_output=True, text=True)
+        result = subprocess.run(
+            command,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=process_timeout,
+        )
         
         if result.returncode == 0:
             if result.stdout.strip():
