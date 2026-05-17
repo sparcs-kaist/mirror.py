@@ -88,7 +88,8 @@ class TestMasterWorkerCommunication(unittest.TestCase):
                 uid=os.getuid(),
                 gid=os.getgid(),
                 nice=10,
-                log_path=None
+                log_path=None,
+                log_helper_command=None,
             )
             
             print(f"\n[SUCCESS] Command '{test_job_id}' reached worker successfully.")

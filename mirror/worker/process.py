@@ -14,6 +14,7 @@ _jobs_lock = threading.Lock()
 
 # Maximum notification attempts before force-pruning a finished job
 NOTIFY_ATTEMPT_BUDGET = 3
+HELPER_DRAIN_TIMEOUT = 5.0
 
 
 class Job:
@@ -28,6 +29,7 @@ class Job:
         gid: Optional[int],
         nice: int,
         log_path: Optional[Path] = None,
+        log_helper_command: Optional[list[str]] = None,
     ):
         self.id = job_id
         self.commandline = commandline
@@ -36,10 +38,15 @@ class Job:
         self.gid = gid
         self.nice = nice
         self.log_path = log_path
+        self.log_helper_command = log_helper_command
         self.process: Optional[subprocess.Popen] = None
+        self.log_helper_process: Optional[subprocess.Popen] = None
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
         self._notify_attempts: int = 0
+        self._main_finished_at: Optional[float] = None
+        self._helper_stop_requested_at: Optional[float] = None
+        self._lock = threading.Lock()
 
         if nice < 0 and os.geteuid() != 0:
             raise PermissionError(
@@ -50,6 +57,10 @@ class Job:
         """Spawn the subprocess with the configured command, uid, gid, and niceness."""
         if self.uid is None or self.gid is None:
             raise ValueError(f"Job {self.id}: explicit uid and gid are required")
+
+        run_env = os.environ.copy()
+        if self.env:
+            run_env.update(self.env)
 
         def preexec():
             # Apply niceness before changing identity so the setuid
@@ -75,10 +86,6 @@ class Job:
                     logger.error(f"Failed to set UID to {self.uid}: {e}")
                     raise e
 
-        run_env = os.environ.copy()
-        if self.env:
-            run_env.update(self.env)
-
         self.start_time = time.time()
 
         stdout_dest = subprocess.DEVNULL
@@ -98,22 +105,20 @@ class Job:
             stderr_dest = subprocess.STDOUT
 
         try:
-            popen_kwargs = {
-                "env": run_env,
-                "stdin": subprocess.DEVNULL,
-                "stdout": stdout_dest,
-                "stderr": stderr_dest,
-                "bufsize": 0,
-            }
-            # Popen has user/group support but no nice kwarg; only use
-            # preexec_fn when a niceness adjustment is actually needed.
-            if self.nice == 0:
-                popen_kwargs["group"] = self.gid
-                popen_kwargs["user"] = self.uid
-            else:
-                popen_kwargs["preexec_fn"] = preexec
+            with self._lock:
+                if self.log_helper_command:
+                    self.log_helper_process = subprocess.Popen(
+                        self.log_helper_command,
+                        **self._popen_kwargs(
+                            os.environ.copy(),
+                            subprocess.DEVNULL,
+                            subprocess.DEVNULL,
+                            preexec,
+                        ),
+                    )
 
-            self.process = subprocess.Popen(self.commandline, **popen_kwargs)
+                popen_kwargs = self._popen_kwargs(run_env, stdout_dest, stderr_dest, preexec)
+                self.process = subprocess.Popen(self.commandline, **popen_kwargs)
 
             # Close our handle to the log file now that subprocess has it
             if log_file_handle:
@@ -123,9 +128,27 @@ class Job:
         except Exception as e:
             if log_file_handle:
                 log_file_handle.close()
+            self._stop_log_helper(timeout=1)
             logger.error(f"Failed to start worker: {e}")
             self.end_time = time.time()
             raise e
+
+    def _popen_kwargs(self, env, stdout_dest, stderr_dest, preexec) -> dict:
+        popen_kwargs = {
+            "env": env,
+            "stdin": subprocess.DEVNULL,
+            "stdout": stdout_dest,
+            "stderr": stderr_dest,
+            "bufsize": 0,
+        }
+        # Popen has user/group support but no nice kwarg; only use
+        # preexec_fn when a niceness adjustment is actually needed.
+        if self.nice == 0:
+            popen_kwargs["group"] = self.gid
+            popen_kwargs["user"] = self.uid
+        else:
+            popen_kwargs["preexec_fn"] = preexec
+        return popen_kwargs
 
     def _missing_directories(self, directory: Path) -> list[Path]:
         missing = []
@@ -172,9 +195,13 @@ class Job:
 
     @property
     def is_running(self) -> bool:
-        if self.process is None:
-            return False
-        return self.process.poll() is None
+        with self._lock:
+            main_running = self.process is not None and self.process.poll() is None
+            helper_running = (
+                self.log_helper_process is not None
+                and self.log_helper_process.poll() is None
+            )
+            return main_running or helper_running
 
     @property
     def returncode(self) -> Optional[int]:
@@ -188,15 +215,64 @@ class Job:
         Args:
             timeout(int, optional): Seconds to wait before sending SIGKILL. Defaults to 5.
         """
-        if self.process and self.is_running:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
+        with self._lock:
+            if self.process and self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait()
 
-        if self.process:
-            self.end_time = time.time()
+            self._stop_log_helper_locked(timeout=timeout)
+
+            if self.process:
+                self.end_time = time.time()
+
+    def reap(self) -> None:
+        """Advance helper lifecycle after the main process exits."""
+        with self._lock:
+            main_done = self.process is not None and self.process.poll() is not None
+            main_failed_to_start = self.process is None and self.end_time is not None
+            main_done = main_done or main_failed_to_start
+            if main_done and self._main_finished_at is None:
+                self._main_finished_at = time.time()
+
+            helper = self.log_helper_process
+            if helper is None:
+                if main_done and self.end_time is None:
+                    self.end_time = time.time()
+                return
+
+            if not main_done:
+                return
+
+            if helper.poll() is None and self._helper_stop_requested_at is None:
+                helper.terminate()
+                self._helper_stop_requested_at = time.time()
+
+            if helper.poll() is None and self._helper_stop_requested_at is not None:
+                if time.time() - self._helper_stop_requested_at >= HELPER_DRAIN_TIMEOUT:
+                    helper.kill()
+                    helper.wait()
+
+            if helper.poll() is not None and self.end_time is None:
+                self.end_time = time.time()
+
+    def _stop_log_helper(self, timeout: int = 5) -> None:
+        with self._lock:
+            self._stop_log_helper_locked(timeout)
+
+    def _stop_log_helper_locked(self, timeout: int = 5) -> None:
+        helper = self.log_helper_process
+        if helper is None or helper.poll() is not None:
+            return
+        helper.terminate()
+        try:
+            helper.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            helper.kill()
+            helper.wait()
 
     def info(self) -> dict:
         """Return a snapshot dict of the job's current state.
@@ -204,6 +280,13 @@ class Job:
         Return:
             data(dict): Job metadata including id, pid, running status, and uptime.
         """
+        with self._lock:
+            main_running = self.process is not None and self.process.poll() is None
+            helper = self.log_helper_process
+            helper_pid = helper.pid if helper else None
+            helper_running = helper is not None and helper.poll() is None
+            helper_returncode = helper.returncode if helper else None
+
         return {
             "id": self.id,
             "pid": self.pid,
@@ -211,7 +294,11 @@ class Job:
             "uid": self.uid,
             "gid": self.gid,
             "nice": self.nice,
-            "running": self.is_running,
+            "running": main_running or helper_running,
+            "main_running": main_running,
+            "helper_pid": helper_pid,
+            "helper_running": helper_running,
+            "helper_returncode": helper_returncode,
             "start_time": self.start_time,
             "uptime": (
                 (time.time() - self.start_time)
@@ -229,6 +316,7 @@ def create(
     gid: Optional[int],
     nice: int,
     log_path: Optional[Path] = None,
+    log_helper_command: Optional[list[str]] = None,
 ) -> Job:
     """Create and start a new worker.
 
@@ -250,7 +338,7 @@ def create(
     with _jobs_lock:
         if job_id in _jobs:
             raise ValueError(f"Worker with ID '{job_id}' already exists.")
-        job = Job(job_id, commandline, env, uid, gid, nice, log_path)
+        job = Job(job_id, commandline, env, uid, gid, nice, log_path, log_helper_command)
         _jobs[job_id] = job
 
     try:
@@ -294,6 +382,12 @@ def prune_finished():
     NOTIFY_ATTEMPT_BUDGET consecutive failures the job is force-pruned.
     """
     import mirror.socket.worker
+
+    with _jobs_lock:
+        jobs = list(_jobs.items())
+
+    for _, job in jobs:
+        job.reap()
 
     with _jobs_lock:
         finished_ids = [wid for wid, w in _jobs.items() if not w.is_running]
