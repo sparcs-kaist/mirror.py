@@ -27,7 +27,7 @@ def test_tempdir_under_state_path_and_cleanup_via_handle_map(monkeypatch, tmp_pa
 
     captured_path = {}
 
-    def fake_setup(path, p):
+    def fake_setup(path, p, log_dir=None, log_name=None):
         captured_path["path"] = path
 
     monkeypatch.setattr(ftpsync_mod, "setup_ftpsync", fake_setup)

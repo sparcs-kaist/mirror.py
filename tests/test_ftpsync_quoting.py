@@ -108,6 +108,15 @@ def test_carriage_return_in_value_raises(base_opts):
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_logdir_and_name_can_be_overridden_for_run(tmp_path, base_opts):
+    pkg = _make_package(base_opts)
+    log_dir = tmp_path / "ftpsync-runs" / "pkg" / "token"
+    conf = _config(pkg, log_dir=log_dir, log_name="pkg-token")
+    assert _eval_key(conf, "LOGDIR", tmp_path) == str(log_dir)
+    assert _eval_key(conf, "NAME", tmp_path) == "pkg-token"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_optional_fields_are_quoted(tmp_path, base_opts):
     base_opts.update({
         "country": "KR; rm -rf /",

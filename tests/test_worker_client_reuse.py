@@ -192,4 +192,5 @@ def test_execute_command_forwards_all_kwargs(monkeypatch):
         gid=1000,
         nice=5,
         log_path=str(log),
+        log_helper_command=None,
     )

@@ -121,6 +121,7 @@ class WorkerServer(BaseServer):
         gid: Optional[int] = None,
         nice: int = 0,
         log_path: Optional[str] = None,
+        log_helper_command: Optional[list[str]] = None,
     ) -> dict:
         """Execute a shell command for a job"""
         import mirror.worker.process as process
@@ -138,6 +139,7 @@ class WorkerServer(BaseServer):
             gid=gid,
             nice=nice,
             log_path=Path(log_path) if log_path else None,
+            log_helper_command=log_helper_command,
         )
 
         return {
@@ -233,6 +235,7 @@ class WorkerClient(BaseClient):
         gid: Optional[int] = None,
         nice: int = 0,
         log_path: Optional[str] = None,
+        log_helper_command: Optional[list[str]] = None,
     ) -> dict:
         """Execute a shell command on the worker"""
         if uid is None or gid is None:
@@ -247,6 +250,7 @@ class WorkerClient(BaseClient):
             gid=gid,
             nice=nice,
             log_path=log_path,
+            log_helper_command=log_helper_command,
         )
 
     def stop_command(self, job_id: Optional[str] = None) -> dict:
@@ -467,6 +471,7 @@ def execute_command(
     gid: Optional[int] = None,
     nice: int = 0,
     log_path: Optional[Path | str] = None,
+    log_helper_command: Optional[list[str]] = None,
     socket_path: Optional[Path | str] = None,
 ) -> dict:
     """Execute a shell command via the persistent or a temporary client"""
@@ -482,6 +487,7 @@ def execute_command(
             gid=gid,
             nice=nice,
             log_path=str(log_path) if log_path else None,
+            log_helper_command=log_helper_command,
         )
 
 
