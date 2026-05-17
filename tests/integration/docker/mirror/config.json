@@ -76,6 +76,20 @@
         }
       }
     },
+    "lftp-test": {
+      "name": "lftp-test",
+      "id": "lftp-test",
+      "href": "/lftp-test",
+      "synctype": "lftp",
+      "syncrate": "PT1H",
+      "link": [],
+      "settings": {
+        "hidden": false,
+        "src": "lftp-fixture/data",
+        "dst": "/srv/publish/lftp-test",
+        "options": {}
+      }
+    },
     "error-test": {
       "name": "error-test",
       "id": "error-test",

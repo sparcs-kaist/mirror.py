@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import mirror
 import mirror.sync.lftp as lftp
 
 
@@ -24,12 +25,19 @@ def _logger(tmp_path):
 
 def test_lftp_valid_source_delegates_to_worker(tmp_path, monkeypatch):
     calls = []
+    conf = MagicMock()
+    conf.uid = 1234
+    conf.gid = 5678
+    monkeypatch.setattr(mirror, "conf", conf, raising=False)
     monkeypatch.setattr("mirror.socket.worker.execute_command", lambda **kwargs: calls.append(kwargs))
 
     lftp.execute(_package("example.org/debian"), _logger(tmp_path))
 
     assert len(calls) == 1
     assert calls[0]["commandline"][0] == "lftp"
+    assert calls[0]["uid"] == 1234
+    assert calls[0]["gid"] == 5678
+    assert "set ftp:anon-pass mirror@example.org;" in calls[0]["commandline"][2]
 
 
 @pytest.mark.parametrize(
@@ -58,7 +66,19 @@ def test_lftp_rejects_unsafe_source_before_worker_rpc(src, tmp_path, monkeypatch
     assert done == [False]
 
 
-@pytest.mark.parametrize("dst", ["/tmp/mirror\x00bad", "/tmp/mirror bad", "-bad", "/tmp/mirror;bad"])
+@pytest.mark.parametrize(
+    "dst",
+    [
+        "/tmp/mirror\x00bad",
+        "/tmp/mirror bad",
+        "-bad",
+        "/tmp/mirror;bad",
+        "/tmp/mirror`bad`",
+        "/tmp/mirror$bad",
+        "/tmp/mirror|bad",
+        "/tmp/mirror>bad",
+    ],
+)
 def test_lftp_rejects_unsafe_destination_before_worker_rpc(dst, tmp_path, monkeypatch):
     calls = []
     done = []

@@ -1,5 +1,6 @@
-FROM alpine:3.20
-RUN apk add --no-cache rsync
+FROM ubuntu:26.04
+RUN apt-get update && apt-get install -y --no-install-recommends rsync \
+    && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /srv/debian
 COPY data/ /srv/debian/
 COPY rsyncd.conf /etc/rsyncd.conf

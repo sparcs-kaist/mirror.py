@@ -25,6 +25,20 @@ services:
       retries: 10
       start_period: 3s
 
+  lftp-fixture:
+    container_name: lftp-fixture
+    build:
+      context: docker/lftp-fixture
+    expose:
+      - "21"
+      - "21100-21110"
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/127.0.0.1/21'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+
   mirror:
     container_name: mirror
     build:
@@ -38,6 +52,8 @@ services:
       rsync-fixture:
         condition: service_healthy
       ftpsync-fixture:
+        condition: service_healthy
+      lftp-fixture:
         condition: service_healthy
     volumes:
       - "${INTEGRATION_TMP}/publish:/srv/publish"

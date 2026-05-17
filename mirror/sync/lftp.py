@@ -55,10 +55,13 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
         dst = package.settings.dst
         _validate_lftp_src(src)
         _validate_lftp_dst(dst)
+        host = src.split("/", 1)[0]
 
         lftp_script = (
-            f"set ftp:anon-pass mirror@{src}; "
+            f"set ftp:anon-pass mirror@{host}; "
             f"set cmd:verbose yes; "
+            f"set net:max-retries 3; "
+            f"set net:timeout 60; "
             r"mirror --continue --delete --no-perms --verbose=3 "
             r"-X '\.(mirror|notar)' -x '\.in\..*\.' -X 'lost+found' "
             f"ftp://{src} {dst}"
