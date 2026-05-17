@@ -4,8 +4,6 @@ from prompt_toolkit import PromptSession
 from pathlib import Path
 import logging
 import datetime
-import gzip
-import shutil
 
 from .handler import PromptHandler, DynamicGzipRotatingFileHandler, _time_formatting, compress_file, apply_configured_owner
 

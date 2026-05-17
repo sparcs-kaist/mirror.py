@@ -1,5 +1,4 @@
 """Tests for extra_args lifecycle in mirror.sync."""
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest

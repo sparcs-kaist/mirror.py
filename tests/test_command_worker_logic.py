@@ -1,6 +1,5 @@
 import pytest
 import signal
-import sys
 import logging
 import json
 from unittest.mock import MagicMock, patch

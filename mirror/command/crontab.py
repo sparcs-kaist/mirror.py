@@ -1,4 +1,3 @@
-import mirror
 
 
 def crontab(user: str, config: str) -> None:

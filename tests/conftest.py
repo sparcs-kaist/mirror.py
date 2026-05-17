@@ -1,7 +1,6 @@
 import pytest
 from pathlib import Path
 import mirror
-import os
 import shutil
 
 @pytest.fixture(scope="session", autouse=True)

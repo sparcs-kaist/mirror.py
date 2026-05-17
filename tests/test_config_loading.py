@@ -1,9 +1,7 @@
 import os
 import json
-import shutil
 from pathlib import Path
 import pytest
-import datetime
 
 # Add project root path to sys.path (temporary)
 import sys
@@ -183,7 +181,6 @@ def test_default_config_has_uid_gid():
 def test_socket_path_from_config_overrides_default(tmp_path, monkeypatch):
     """When config sets socket_path, master/worker socket defaults reflect it."""
     import json
-    from pathlib import Path
     import mirror
 
     custom_dir = tmp_path / "custom_sockets"

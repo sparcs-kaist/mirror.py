@@ -1,6 +1,5 @@
 """Concurrent _jobs access is thread-safe."""
 import threading
-import subprocess
 import os
 from unittest.mock import patch
 

@@ -1,5 +1,4 @@
 import time
-import pytest
 import mirror.event as event
 
 def test_event_system():
@@ -56,7 +55,6 @@ def test_post_event_passes_payload_positional_args():
 
 def test_pre_listener_observes_pre_mutation_status():
     """Package.set_status must fire PRE before mutating .status (wait=True)."""
-    from unittest.mock import MagicMock
     from mirror.structure import Package
     from mirror.event import on, off
 

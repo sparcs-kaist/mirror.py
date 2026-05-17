@@ -10,10 +10,8 @@ from hashlib import sha256
 from pathlib import Path
 import subprocess
 import logging
-import tarfile
 import shutil
 import shlex
-import io
 import os
 import re
 import sys

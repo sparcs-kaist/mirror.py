@@ -2,9 +2,7 @@
 import io
 import tarfile
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
 import mirror.sync.ftpsync as ftpsync_mod
 

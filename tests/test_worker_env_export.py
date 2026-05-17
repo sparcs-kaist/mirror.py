@@ -2,9 +2,7 @@ import json
 import os
 import sys
 import time
-import tempfile
 import uuid
-from pathlib import Path
 
 import pytest
 

@@ -2,7 +2,6 @@ import os
 import sys
 import subprocess
 import pytest
-from unittest.mock import patch
 from pathlib import Path
 
 # Helper to find a suitable target user/group (e.g., 'nobody')

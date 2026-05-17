@@ -1,11 +1,7 @@
 """PromptHandler must fall back to plain text on non-TTY / TERM=dumb."""
-import io
 import logging
-import os
 import sys
-from unittest.mock import patch
 
-import pytest
 
 from mirror.logger.handler import PromptHandler
 

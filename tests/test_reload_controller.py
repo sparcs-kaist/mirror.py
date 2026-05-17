@@ -2,9 +2,8 @@
 import threading
 import time
 
-import pytest
 
-from mirror.config.reload_controller import ReloadController, _ReloadResponse
+from mirror.config.reload_controller import ReloadController
 
 
 # ---------------------------------------------------------------------------

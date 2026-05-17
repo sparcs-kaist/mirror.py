@@ -12,7 +12,6 @@ from pathlib import Path
 # subsequent tests that patched those modules.
 import mirror.socket.protocol as _protocol_module
 import mirror.socket.base as _base_module
-import mirror.socket as _init_module
 import mirror.socket.master as _master_module
 import mirror.socket.worker as _worker_module
 
@@ -762,7 +761,7 @@ def test_recv_message_handles_fragmented_header(tmp_path):
     import struct
     import threading
     import time
-    from mirror.socket.protocol import recv_message, send_message
+    from mirror.socket.protocol import recv_message
 
     sock_path = tmp_path / "frag.sock"
     server = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)

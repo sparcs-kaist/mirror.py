@@ -6,7 +6,6 @@ import re
 import shutil
 import os
 import sys
-import time
 import datetime
 from pathlib import Path
 

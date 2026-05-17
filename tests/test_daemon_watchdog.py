@@ -1,9 +1,8 @@
 """Tests for the _watchdog_check helper in mirror.command.daemon."""
 import pytest
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import mirror
-import mirror.sync as sync_mod
 from mirror.sync import _watchdog_fired, _start_lock
 from mirror.command.daemon import _watchdog_check
 

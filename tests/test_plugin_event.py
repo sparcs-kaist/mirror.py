@@ -4,7 +4,7 @@ import pytest
 import mirror.event
 import mirror.plugin
 import mirror.sync
-from mirror.plugin import PluginRecord, _register_event, event_plugin
+from mirror.plugin import _register_event, event_plugin
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,6 @@ import sys
 import os
 import argparse
 import time
-import shutil
 from pathlib import Path
 import logging
 

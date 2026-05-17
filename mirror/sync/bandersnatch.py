@@ -3,7 +3,6 @@ import mirror.structure
 import mirror.socket.worker
 import mirror.sync
 import logging
-from pathlib import Path
 
 
 def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):

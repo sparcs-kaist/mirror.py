@@ -1,9 +1,8 @@
 """Tests for mirror.config._perform_reload diff classification and sanitization."""
 import json
-import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -371,7 +370,6 @@ def test_perform_reload_kills_inflight_timeout(reload_env, monkeypatch):
     monkeypatch.setattr("mirror.socket.worker.get_progress", _fake_get_progress, raising=False)
 
     # Shorten the deadline to 1 second so the test runs fast.
-    import mirror.config as _cfg_mod
 
     original_time = time.time
     _start = original_time()

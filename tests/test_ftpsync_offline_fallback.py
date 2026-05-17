@@ -5,11 +5,7 @@ The function must (a) accept the bundled artifact at its real shape, (b) lay it
 out so setup_ftpsync can find a `bin/ftpsync` underneath an archvsync dir, and
 (c) reject corrupt data.
 """
-import base64
-import hashlib
-from pathlib import Path
 
-import pytest
 
 import mirror.sync.ftpsync as ftpsync_mod
 

@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-import mirror.command.setup
 setup_mod = importlib.import_module("mirror.command.setup")
 
 

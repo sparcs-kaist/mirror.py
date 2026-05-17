@@ -1,5 +1,4 @@
 """Regression tests for command_exists (Commit 1, finding C3)."""
-from pathlib import Path
 
 from mirror.toolbox import command_exists
 

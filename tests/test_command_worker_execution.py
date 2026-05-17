@@ -3,8 +3,6 @@ import multiprocessing
 import time
 import os
 import signal
-import sys
-from pathlib import Path
 from mirror.command.worker import worker
 from mirror.socket.worker import WorkerClient
 

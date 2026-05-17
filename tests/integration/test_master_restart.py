@@ -4,7 +4,6 @@ Verifies that restarting the master daemon does not kill the worker subprocess
 and that master reconnects to worker and resumes normal operation afterward.
 """
 
-import time
 
 import pytest
 

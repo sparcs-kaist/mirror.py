@@ -4,8 +4,6 @@ import os
 import threading
 import time
 import json
-import struct
-import array
 from mirror.socket import send_fds, recv_fds
 
 def server_thread(sock_path):

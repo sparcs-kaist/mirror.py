@@ -1,7 +1,7 @@
 import threading
 import logging
-from concurrent.futures import ThreadPoolExecutor, wait as wait_futures
-from typing import Callable, Any, Optional, Tuple
+from concurrent.futures import Future, ThreadPoolExecutor, wait as wait_futures
+from typing import Callable, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class EventManager:
         if wait and futures:
             wait_futures(futures)
 
-    def _execute_listener(self, listener: Callable, event_name: str, *args, **kwargs) -> "Future":
+    def _execute_listener(self, listener: Callable, event_name: str, *args, **kwargs) -> Future:
         """Submit a single listener to the thread pool for safe async execution."""
         def wrapper():
             try:

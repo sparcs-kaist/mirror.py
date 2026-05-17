@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import MagicMock
 
 from mirror.command.daemon import should_auto_sync

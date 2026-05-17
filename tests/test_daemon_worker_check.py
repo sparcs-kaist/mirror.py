@@ -2,8 +2,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 import sys
 import os
-import time
-from pathlib import Path
 import pytest
 
 # Ensure PYTHONPATH is set
@@ -11,7 +9,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 import mirror
 # Make sure the module is loaded
-import mirror.command.daemon as daemon_mod
 
 class TestDaemonWorkerCheck(unittest.TestCase):
     

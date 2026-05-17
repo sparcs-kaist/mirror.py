@@ -5,14 +5,12 @@ import os
 import time
 import threading
 from pathlib import Path
-import socket
 
 # Set PYTHONPATH
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from mirror.socket.worker import WorkerServer, WorkerClient
-import mirror.worker.process
 
 class TestMasterWorkerCommunication(unittest.TestCase):
     def setUp(self):
@@ -100,10 +98,8 @@ if __name__ == '__main__':
 
 def test_supervisor_reconnects_after_worker_restart(tmp_path):
     """The WorkerClientSupervisor must reconnect after the worker server restarts."""
-    import threading
     import time
     from mirror.socket.worker import WorkerServer, WorkerClientSupervisor
-    import mirror.socket.worker as worker_module
 
     sock = tmp_path / "supervisor.sock"
 
@@ -150,7 +146,6 @@ def test_supervisor_reconnects_after_worker_restart(tmp_path):
 
 def test_supervisor_fires_reconnect_event_only_after_initial(tmp_path):
     """MASTER.WORKER_RECONNECTED must fire on reconnect, not on initial connect."""
-    import threading
     import time
     from mirror.socket.worker import WorkerServer, WorkerClientSupervisor
     import mirror.event as event_mod

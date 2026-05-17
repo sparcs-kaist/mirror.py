@@ -1,5 +1,4 @@
 """get_pipe returns None when streams are redirected to DEVNULL."""
-import subprocess
 import os
 from unittest.mock import patch
 

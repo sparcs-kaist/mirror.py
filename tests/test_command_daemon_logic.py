@@ -1,9 +1,6 @@
 import pytest
 import signal
-import sys
-import logging
 from unittest.mock import MagicMock, patch
-from pathlib import Path
 from mirror.command.daemon import daemon
 import mirror
 

@@ -1,6 +1,5 @@
 """State persistence test: lastsync timestamp survives master + worker restart."""
 
-import json
 import time
 
 import pytest

@@ -1,4 +1,3 @@
-import mirror.config
 
 DEFAULT_STATUS = {
     "lastupdate": 17535432060580.473,

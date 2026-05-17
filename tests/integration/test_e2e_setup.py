@@ -14,7 +14,6 @@ Three scenarios:
     3. Missing required binary -> setup aborts before writing anything.
 """
 
-import json
 import subprocess
 import time
 import uuid

@@ -1,9 +1,7 @@
 """prune_finished retries notification and force-prunes after budget."""
-import importlib
-import sys
 import os
 from contextlib import contextmanager
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Capture the original mirror.socket.worker module at import time, before any
 # test contamination can replace the mirror.socket.worker attribute.

@@ -1,5 +1,5 @@
-from .daemon import daemon
-from .setup import setup
-from .crontab import crontab
-from .worker import worker
-from .push import push
+from .daemon import daemon as daemon
+from .setup import setup as setup
+from .crontab import crontab as crontab
+from .worker import worker as worker
+from .push import push as push

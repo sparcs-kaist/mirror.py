@@ -1,7 +1,6 @@
 """Tests for the resilient mirror.sync.on_sync_done path when pkgid is unknown."""
 import time
-import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

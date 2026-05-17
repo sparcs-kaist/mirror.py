@@ -8,7 +8,6 @@ import mirror
 import mirror.plugin
 import mirror.sync
 from mirror.plugin import (
-    PluginRecord,
     _register_event,
     _register_sync,
     event_plugin,

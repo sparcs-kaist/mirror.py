@@ -1,6 +1,5 @@
 """ftpsync tempdir is created under STATE_PATH and cleaned up via handle map."""
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 import mirror
 import mirror.sync.ftpsync as ftpsync_mod

@@ -15,7 +15,7 @@ import importlib
 import importlib.metadata
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Literal, Optional
+from typing import Callable, Literal, Optional
 
 import mirror
 
@@ -469,8 +469,6 @@ def load_external_plugins(plugin_settings: dict) -> None:
             plain list (legacy format) a deprecation warning is logged and the
             function returns without doing anything.
     """
-    import mirror.sync
-
     # Backward-compat: old config had plugins as list[str] of file paths.
     if isinstance(plugin_settings, list):
         log.warning(
