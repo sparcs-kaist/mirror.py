@@ -1,5 +1,6 @@
 """get_pipe returns None when streams are redirected to DEVNULL."""
 import subprocess
+import os
 from unittest.mock import patch
 
 from mirror.worker import process
@@ -18,7 +19,7 @@ def test_get_pipe_returns_none_when_streams_devnull():
             return None
 
     with patch("mirror.worker.process.subprocess.Popen", _FakePopen):
-        job = process.create("gp_test", ["true"], {}, None, None, 0)
+        job = process.create("gp_test", ["true"], {}, os.getuid(), os.getgid(), 0)
         try:
             assert job.get_pipe("stdin") is None
             assert job.get_pipe("stdout") is None

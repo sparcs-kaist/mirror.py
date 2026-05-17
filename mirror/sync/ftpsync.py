@@ -14,7 +14,6 @@ import tarfile
 import shutil
 import shlex
 import io
-import os
 
 ARCHVSYNC_REPO = "https://salsa.debian.org/mirror-team/archvsync.git"
 
@@ -62,8 +61,6 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
         package(mirror.structure.Package): Package to sync.
         logger(logging.Logger): Per-sync session logger.
     """
-    import os
-
     logger.info(f"Starting ftpsync for {package.name}")
 
     handle = TemporaryDirectory(prefix="mirror_ftpsync_", dir=mirror.STATE_PATH)
@@ -90,8 +87,8 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
             sync_method="ftpsync",
             commandline=command,
             env=env,
-            uid=os.getuid(),
-            gid=os.getgid(),
+            uid=mirror.conf.uid,
+            gid=mirror.conf.gid,
             log_path=log_path,
         )
 

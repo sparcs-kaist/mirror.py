@@ -58,8 +58,8 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger) -> No
             job_id=package.pkgid,
             commandline=command,
             env=env,
-            uid=os.getuid(),
-            gid=os.getgid(),
+            uid=mirror.conf.uid,
+            gid=mirror.conf.gid,
             log_path=logpath,
         )
 

@@ -6,7 +6,6 @@ module-level instance management, and convenience functions.
 """
 
 import contextlib
-import os
 import socket
 import logging
 import threading
@@ -126,12 +125,10 @@ class WorkerServer(BaseServer):
         """Execute a shell command for a job"""
         import mirror.worker.process as process
 
-        process.prune_finished()
+        if uid is None or gid is None:
+            raise ValueError("execute_command requires explicit uid and gid")
 
-        if uid is None:
-            uid = os.getuid()
-        if gid is None:
-            gid = os.getgid()
+        process.prune_finished()
 
         job = process.create(
             job_id=job_id,
@@ -238,6 +235,8 @@ class WorkerClient(BaseClient):
         log_path: Optional[str] = None,
     ) -> dict:
         """Execute a shell command on the worker"""
+        if uid is None or gid is None:
+            raise ValueError("execute_command requires explicit uid and gid")
         return self.send_command(
             "execute_command",
             job_id=job_id,
@@ -471,6 +470,8 @@ def execute_command(
     socket_path: Optional[Path | str] = None,
 ) -> dict:
     """Execute a shell command via the persistent or a temporary client"""
+    if uid is None or gid is None:
+        raise ValueError("execute_command requires explicit uid and gid")
     with _worker_client(socket_path) as c:
         return c.execute_command(
             job_id,

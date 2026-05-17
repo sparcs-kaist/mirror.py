@@ -7,7 +7,7 @@ import datetime
 import gzip
 import shutil
 
-from .handler import PromptHandler, DynamicGzipRotatingFileHandler, _time_formatting, compress_file
+from .handler import PromptHandler, DynamicGzipRotatingFileHandler, _time_formatting, compress_file, apply_configured_owner
 
 # --- Module State ---
 psession = PromptSession()
@@ -76,10 +76,12 @@ def create_logger(name: str, start_time: float) -> logging.Logger:
     pkg_base_path = Path(mirror.conf.logger["packagefileformat"]["base"]).resolve()
     if not pkg_base_path.exists():
         pkg_base_path.mkdir(parents=True)
+    apply_configured_owner(pkg_base_path)
 
     folder = pkg_base_path / _time_formatting(mirror.conf.logger["packagefileformat"]["folder"], now, name)
     if not folder.exists():
         folder.mkdir(parents=True)
+    apply_configured_owner(folder)
 
     filename = _time_formatting(mirror.conf.logger["packagefileformat"]["filename"], now, name)
     if "/" in filename:
@@ -87,6 +89,7 @@ def create_logger(name: str, start_time: float) -> logging.Logger:
 
     filename = folder / filename
     filehandler = logging.FileHandler(filename=str(filename), encoding="utf-8")
+    apply_configured_owner(filename)
     filehandler.setLevel(logging.INFO)
     filehandler.setFormatter(formatter)
     pkg_logger.addHandler(filehandler)

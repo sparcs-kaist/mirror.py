@@ -11,6 +11,41 @@ import datetime
 from pathlib import Path
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_owner_skip_reported = False
+
+
+def apply_configured_owner(path: str | Path) -> None:
+    """Apply configured mirror uid/gid ownership to one path when permitted."""
+    global _owner_skip_reported
+
+    try:
+        import mirror
+        conf = getattr(mirror, "conf", None)
+        uid = getattr(conf, "uid", None)
+        gid = getattr(conf, "gid", None)
+    except Exception:
+        return
+
+    if uid is None or gid is None:
+        return
+    if not isinstance(uid, int) or not isinstance(gid, int):
+        return
+
+    try:
+        if os.geteuid() == 0:
+            os.chown(path, uid, gid, follow_symlinks=False)
+            return
+        if os.geteuid() == uid and (os.getegid() == gid or gid in os.getgroups()):
+            return
+    except OSError as exc:
+        logging.getLogger("mirror").warning(f"Failed to chown {path}: {exc}")
+        return
+
+    if not _owner_skip_reported:
+        logging.getLogger("mirror").debug(
+            "Skipping configured ownership for logs: process is not root"
+        )
+        _owner_skip_reported = True
 
 
 def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None = None) -> str:
@@ -55,6 +90,7 @@ def compress_file(filepath: str | Path) -> Path | None:
         with open(filepath, 'rb') as f_in:
             with gzip.open(gzip_path, 'wb') as f_out:
                 shutil.copyfileobj(f_in, f_out)
+        apply_configured_owner(gzip_path)
         filepath.unlink()
         return gzip_path
     except Exception as e:
@@ -103,8 +139,10 @@ class DynamicGzipRotatingFileHandler(logging.FileHandler):
         now = datetime.datetime.now()
         initial_path = self._resolve_path(now)
         initial_path.parent.mkdir(parents=True, exist_ok=True)
+        apply_configured_owner(initial_path.parent)
 
         super().__init__(str(initial_path), encoding=encoding, delay=delay)
+        apply_configured_owner(initial_path)
         self.current_formatted_path = str(initial_path)
 
     def _resolve_path(self, dt: datetime.datetime) -> Path:
@@ -120,10 +158,13 @@ class DynamicGzipRotatingFileHandler(logging.FileHandler):
         dt = datetime.datetime.fromtimestamp(record.created)
         new_path = str(self._resolve_path(dt))
 
-        if new_path != self.current_formatted_path:
+        rotated = new_path != self.current_formatted_path
+        if rotated:
             self.do_rotation(new_path)
 
         super().emit(record)
+        if rotated:
+            apply_configured_owner(new_path)
 
     def do_rotation(self, new_path: str):
         """Close current file, optionally compress it, and open the new one."""
@@ -136,5 +177,6 @@ class DynamicGzipRotatingFileHandler(logging.FileHandler):
             compress_file(old_path)
 
         Path(new_path).parent.mkdir(parents=True, exist_ok=True)
+        apply_configured_owner(Path(new_path).parent)
         self.baseFilename = new_path
         self.current_formatted_path = new_path

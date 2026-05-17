@@ -1,6 +1,7 @@
 """Concurrent _jobs access is thread-safe."""
 import threading
 import subprocess
+import os
 from unittest.mock import patch
 
 import pytest
@@ -45,7 +46,7 @@ def test_concurrent_create_and_get_no_race():
 
     def _create(i):
         try:
-            process.create(f"j{i}", ["true"], {}, None, None, 0)
+            process.create(f"j{i}", ["true"], {}, os.getuid(), os.getgid(), 0)
         except Exception as exc:
             errors.append((i, exc))
 
@@ -78,10 +79,10 @@ def test_concurrent_create_and_get_no_race():
 
 def test_duplicate_create_rejected():
     with patch("mirror.worker.process.subprocess.Popen", _FakePopen):
-        process.create("dup", ["true"], {}, None, None, 0)
+        process.create("dup", ["true"], {}, os.getuid(), os.getgid(), 0)
         try:
             try:
-                process.create("dup", ["true"], {}, None, None, 0)
+                process.create("dup", ["true"], {}, os.getuid(), os.getgid(), 0)
                 raise AssertionError("expected ValueError")
             except ValueError:
                 pass

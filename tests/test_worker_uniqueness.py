@@ -1,4 +1,5 @@
 import pytest
+import os
 
 from mirror.worker import process
 
@@ -28,18 +29,18 @@ def test_worker_id_uniqueness():
     worker_id = "unique_test_worker"
     command = ["sleep", "1"]
 
-    worker1 = process.create(worker_id, command, {}, None, None, 0)
+    worker1 = process.create(worker_id, command, {}, os.getuid(), os.getgid(), 0)
     assert worker1.id == worker_id
 
     with pytest.raises(ValueError) as excinfo:
-        process.create(worker_id, command, {}, None, None, 0)
+        process.create(worker_id, command, {}, os.getuid(), os.getgid(), 0)
 
     assert f"Worker with ID '{worker_id}' already exists." in str(excinfo.value)
 
     worker1.stop()
     process.prune_finished()
 
-    worker2 = process.create(worker_id, command, {}, None, None, 0)
+    worker2 = process.create(worker_id, command, {}, os.getuid(), os.getgid(), 0)
     assert worker2.id == worker_id
     worker2.stop()
     process.prune_finished()
