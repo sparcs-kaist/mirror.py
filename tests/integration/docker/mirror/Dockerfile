@@ -2,7 +2,7 @@ FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         systemd systemd-sysv \
-        rsync lftp git ca-certificates curl \
+        rsync lftp git ca-certificates curl procps \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir bandersnatch

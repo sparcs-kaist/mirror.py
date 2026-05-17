@@ -392,8 +392,10 @@ def test_path_setting_warn_and_ignore(mirror_stack):
     5. Restore config.json.
     """
     config = _read_config(mirror_stack)
-    original_socket_path = config.get("settings", {}).get("socket_path", "/var/run/mirror/master.sock")
-    original_logfolder = config.get("settings", {}).get("logfolder", "/var/log/mirror")
+    settings = config.get("settings", {})
+    had_socket_path = "socket_path" in settings
+    original_socket_path = settings.get("socket_path")
+    original_logfolder = settings.get("logfolder", "/var/log/mirror")
 
     config["settings"]["socket_path"] = "/tmp/fake-mirror-socket"
     config["settings"]["logfolder"] = "/tmp/fake-log"
@@ -421,7 +423,10 @@ def test_path_setting_warn_and_ignore(mirror_stack):
         )
 
     finally:
-        config["settings"]["socket_path"] = original_socket_path
+        if had_socket_path:
+            config["settings"]["socket_path"] = original_socket_path
+        else:
+            config["settings"].pop("socket_path", None)
         config["settings"]["logfolder"] = original_logfolder
         _write_config(config)
         _cli_reload(mirror_stack)
