@@ -3,6 +3,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 import os
 import sys
+import logging
+import tempfile
 from pathlib import Path
 
 # Set PYTHONPATH
@@ -26,6 +28,7 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         mirror.conf = MagicMock()
         mirror.conf.uid = 1234
         mirror.conf.gid = 5678
+        mirror.conf.logfolder = Path("/tmp/mirror-ftpsync")
         mirror.conf.logger = {"fileformat": {"gzip": True}}
 
         # Create a virtual package (for rsync)
@@ -91,6 +94,32 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         # Check that uid and gid are passed
         self.assertEqual(call_kwargs.get("uid"), mirror.conf.uid)
         self.assertEqual(call_kwargs.get("gid"), mirror.conf.gid)
+
+    @patch('mirror.socket.worker.execute_command')
+    @patch('mirror.sync.ftpsync.setup_ftpsync')
+    def test_ftpsync_uses_log_helper_when_file_handler_exists(self, mock_setup_ftpsync, mock_execute_command):
+        import mirror.sync.ftpsync as ftpsync_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            mirror.conf.logfolder = base / "ftpsync"
+            package_log = base / "package.log"
+            handler = logging.FileHandler(package_log)
+            mock_logger = MagicMock()
+            mock_logger.handlers = [handler]
+
+            try:
+                ftpsync_module.execute(self.ftp_pkg, mock_logger)
+            finally:
+                handler.close()
+
+            call_kwargs = mock_execute_command.call_args[1]
+            self.assertNotEqual(Path(call_kwargs["log_path"]), package_log)
+            self.assertEqual(Path(call_kwargs["log_path"]).name, "prelude.log")
+            helper = call_kwargs["log_helper_command"]
+            self.assertIsInstance(helper, list)
+            self.assertIn("mirror.worker.logmerge", helper)
+            self.assertIn(str(package_log), helper)
 
     @patch('mirror.socket.worker.execute_command')
     @patch('mirror.logger.create_logger')

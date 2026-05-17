@@ -14,6 +14,11 @@ import tarfile
 import shutil
 import shlex
 import io
+import os
+import re
+import sys
+import uuid
+import datetime
 
 ARCHVSYNC_REPO = "https://salsa.debian.org/mirror-team/archvsync.git"
 
@@ -23,7 +28,12 @@ def setup(path: Path, package: mirror.structure.Package) -> None:
     """Prepare the sync environment (no-op for ftpsync top-level setup)."""
     pass
 
-def setup_ftpsync(path: Path, package: mirror.structure.Package) -> None:
+def setup_ftpsync(
+    path: Path,
+    package: mirror.structure.Package,
+    log_dir: Path | None = None,
+    log_name: str | None = None,
+) -> None:
     """Set up archvsync binary and ftpsync.conf in a temporary directory.
 
     Args:
@@ -52,7 +62,7 @@ def setup_ftpsync(path: Path, package: mirror.structure.Package) -> None:
             shutil.copy2(script, dst)
             dst.chmod(0o755)
 
-    (path / "etc" / "ftpsync.conf").write_text(_config(package))
+    (path / "etc" / "ftpsync.conf").write_text(_config(package, log_dir, log_name))
 
 def execute(package: mirror.structure.Package, logger: logging.Logger):
     """Sync package via ftpsync subprocess.
@@ -68,16 +78,33 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
     _ftpsync_handles[package.pkgid] = handle
 
     try:
-        logger.info(f"Setting up ftpsync environment in {tmp_dir}")
-        setup_ftpsync(tmp_dir, package)
-
-        command = [str(tmp_dir / "bin" / "ftpsync")]
-
         log_path = None
         for h in logger.handlers:
             if isinstance(h, logging.FileHandler):
                 log_path = h.baseFilename
                 break
+
+        ftpsync_log_dir = None
+        ftpsync_log_name = None
+        prelude_log_path = None
+        log_helper_command = None
+        if log_path:
+            _prepare_log_path(Path(log_path))
+            ftpsync_log_dir, ftpsync_log_name = _run_log_dir(package)
+            _prepare_log_path(ftpsync_log_dir)
+            prelude_log_path = ftpsync_log_dir / "prelude.log"
+            _prepare_log_path(prelude_log_path)
+            log_helper_command = _log_helper_command(
+                Path(log_path),
+                prelude_log_path,
+                ftpsync_log_dir,
+                ftpsync_log_name,
+            )
+
+        logger.info(f"Setting up ftpsync environment in {tmp_dir}")
+        setup_ftpsync(tmp_dir, package, ftpsync_log_dir, ftpsync_log_name)
+
+        command = [str(tmp_dir / "bin" / "ftpsync")]
 
         logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
 
@@ -89,7 +116,8 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
             env=env,
             uid=mirror.conf.uid,
             gid=mirror.conf.gid,
-            log_path=log_path,
+            log_path=prelude_log_path if prelude_log_path else log_path,
+            log_helper_command=log_helper_command,
         )
 
     except Exception as e:
@@ -179,7 +207,11 @@ def _extract_archvsync(path: Path) -> bool:
         logger.warning("archvsync extraction failed: %s", exc)
         return False
 
-def _config(package: mirror.structure.Package) -> str:
+def _config(
+    package: mirror.structure.Package,
+    log_dir: Path | None = None,
+    log_name: str | None = None,
+) -> str:
     """Build ftpsync.conf content with shell-safe quoting.
 
     Args:
@@ -204,6 +236,8 @@ def _config(package: mirror.structure.Package) -> str:
         f"RSYNC_HOST={_q('src', package.settings.src)}",
         f"RSYNC_PATH={_q('path', opts['path'])}",
     ]
+    if log_name is not None:
+        lines.append(f"NAME={_q('name', log_name)}")
     if "user" in opts and "password" in opts:
         lines.append(f"RSYNC_USER={_q('user', opts['user'])}")
         lines.append(f"RSYNC_PASSWORD={_q('password', opts['password'])}")
@@ -221,8 +255,66 @@ def _config(package: mirror.structure.Package) -> str:
         lines.append(f"ARCH_INCLUDE={_q('arch_include', opts['arch_include'])}")
     if "arch_exclude" in opts:
         lines.append(f"ARCH_EXCLUDE={_q('arch_exclude', opts['arch_exclude'])}")
-    lines.append(f"LOGDIR={_q('logdir', opts.get('logdir', mirror.conf.logfolder))}")
+    lines.append(f"LOGDIR={_q('logdir', log_dir or opts.get('logdir', mirror.conf.logfolder))}")
     return "\n".join(lines) + "\n"
+
+
+def _safe_name(value: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9._-]", "_", value)
+    clean = clean.strip("._-") or "ftpsync"
+    if clean != value:
+        digest = uuid.uuid5(uuid.NAMESPACE_URL, value).hex[:8]
+        clean = f"{clean[:111]}-{digest}"
+    return clean[:120]
+
+
+def _run_log_dir(package: mirror.structure.Package) -> tuple[Path, str]:
+    opts = package.settings.options
+    base = Path(opts.get("logdir", mirror.conf.logfolder))
+    safe_pkgid = _safe_name(package.pkgid)
+    token = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
+    token = f"{token}-{uuid.uuid4().hex[:6]}"
+    log_name = f"{safe_pkgid}-{token}"
+    return base / "ftpsync-runs" / safe_pkgid / token, log_name
+
+
+def _prepare_log_path(path: Path) -> None:
+    from mirror.logger.handler import apply_configured_owner
+
+    if path.suffix:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        apply_configured_owner(path.parent)
+        flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        fd = os.open(path, flags, 0o644)
+        os.close(fd)
+    else:
+        path.mkdir(parents=True, exist_ok=True)
+    apply_configured_owner(path)
+
+
+def _log_helper_command(
+    package_log_path: Path,
+    prelude_log_path: Path,
+    ftpsync_log_dir: Path,
+    ftpsync_log_name: str,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "mirror.worker.logmerge",
+        "--dest",
+        str(package_log_path),
+        "--source",
+        f"ftpsync:prelude={prelude_log_path}",
+        "--source",
+        f"ftpsync={ftpsync_log_dir / (ftpsync_log_name + '.log')}",
+        "--source",
+        f"rsync={ftpsync_log_dir / ('rsync-' + ftpsync_log_name + '.log')}",
+        "--source",
+        f"rsync:error={ftpsync_log_dir / ('rsync-' + ftpsync_log_name + '.error')}",
+    ]
 
 
 def plugin():
