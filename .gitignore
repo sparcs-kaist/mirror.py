@@ -136,4 +136,4 @@ tests/integration/docker/mirror/dist/
 
 # Claude Code session files
 .claude/
-
+.tmp/
