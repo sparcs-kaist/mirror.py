@@ -85,9 +85,12 @@
       "link": [],
       "settings": {
         "hidden": false,
-        "src": "lftp-fixture/data",
+        "src": "ftp://lftp-fixture/data",
         "dst": "/srv/publish/lftp-test",
-        "options": {}
+        "options": {
+          "list_options": "-a",
+          "scan_all_first": true
+        }
       }
     },
     "error-test": {
