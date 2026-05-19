@@ -182,8 +182,9 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         pkg.pkgid = "test-lftp"
         pkg.name = "Test LFTP"
         pkg.settings = MagicMock()
-        pkg.settings.src = "ftp.example.org/path"
+        pkg.settings.src = "ftp://ftp.example.org/path"
         pkg.settings.dst = "/srv/mirror/lftp"
+        pkg.settings.options = {}
 
         mock_logger = MagicMock()
         mock_logger.handlers = []
