@@ -7,7 +7,6 @@ import mirror
 import mirror.sync as sync_mod
 from mirror.sync import (
     _extra_args,
-    _in_progress,
     _start_lock,
     _watchdog_fired,
     mark_watchdog_fired,
@@ -24,12 +23,10 @@ from mirror.sync import (
 @pytest.fixture(autouse=True)
 def _reset_registries():
     with _start_lock:
-        _in_progress.clear()
         _extra_args.clear()
         _watchdog_fired.clear()
     yield
     with _start_lock:
-        _in_progress.clear()
         _extra_args.clear()
         _watchdog_fired.clear()
 
@@ -97,6 +94,7 @@ def _make_pkg(pkgid: str = "testpkg") -> MagicMock:
     pkg.name = f"Pkg {pkgid}"
     pkg.synctype = "rsync"
     pkg.set_status = MagicMock()
+    pkg.is_syncing.return_value = False
     return pkg
 
 
@@ -110,7 +108,6 @@ def test_on_sync_done_clears_watchdog_fired():
 
     # Seed state: pretend a sync is finishing with the watchdog marker set.
     with _start_lock:
-        _in_progress.add(pkgid)
         _watchdog_fired.add(pkgid)
 
     with patch("mirror.plugin.get_record", return_value=None), \
@@ -123,4 +120,3 @@ def test_on_sync_done_clears_watchdog_fired():
 
     with _start_lock:
         assert pkgid not in _watchdog_fired
-        assert pkgid not in _in_progress

@@ -117,7 +117,7 @@ class MasterServer(BaseServer):
                     raise ValueError("extra_args entries must map str -> str")
 
         with mirror.sync._start_lock:
-            if package.is_syncing() or package_id in mirror.sync._in_progress:
+            if package.is_syncing():
                 return {"package_id": package_id, "status": "already_running"}
 
         try:

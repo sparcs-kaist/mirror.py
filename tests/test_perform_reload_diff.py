@@ -130,9 +130,8 @@ def reload_env(tmp_path, monkeypatch):
         }
     )
 
-    # Ensure _in_progress is clean.
+    # Ensure sync auxiliary registries are clean.
     with mirror.sync._start_lock:
-        mirror.sync._in_progress.clear()
         mirror.sync._extra_args.clear()
         mirror.sync._watchdog_fired.clear()
 
@@ -147,7 +146,6 @@ def reload_env(tmp_path, monkeypatch):
 
     # Clean up sync state.
     with mirror.sync._start_lock:
-        mirror.sync._in_progress.clear()
         mirror.sync._extra_args.clear()
         mirror.sync._watchdog_fired.clear()
 
@@ -317,17 +315,18 @@ def test_perform_reload_plugin_change_warns_and_ignores(reload_env):
 
 def test_perform_reload_kills_removed_inflight(reload_env, monkeypatch):
     """Removed pkg with in-flight sync → stop_command called, killed_inflight set."""
-    # Mark pkg-one as in-flight.
-    with mirror.sync._start_lock:
-        mirror.sync._in_progress.add("pkg-one")
+    # Mark pkg-one as in-flight via package status.
+    pkg_one = mirror.packages.get("pkg-one")
+    pkg_one.set_status("SYNC")
 
     stop_calls: list[str] = []
 
     def _fake_stop_command(job_id: str):
         stop_calls.append(job_id)
-        # Simulate job finishing: clear _in_progress so the poll loop exits.
-        with mirror.sync._start_lock:
-            mirror.sync._in_progress.discard(job_id)
+        # Simulate job finishing: transition package to ACTIVE so the poll loop exits.
+        p = mirror.packages.get(job_id)
+        if p is not None:
+            p.set_status("ACTIVE")
 
     def _fake_get_progress(job_id: str):
         pass
@@ -345,8 +344,6 @@ def test_perform_reload_kills_removed_inflight(reload_env, monkeypatch):
     assert "pkg-one" in result.get("killed_inflight", [])
     assert result.get("killed_timeout", []) == []
 
-    # Clean up: _in_progress was already cleared by _fake_stop_command.
-
 
 # ---------------------------------------------------------------------------
 # Test 8: in-flight kill timeout
@@ -354,17 +351,18 @@ def test_perform_reload_kills_removed_inflight(reload_env, monkeypatch):
 
 def test_perform_reload_kills_inflight_timeout(reload_env, monkeypatch):
     """stop_command called but sync never clears → pkg appears in killed_timeout."""
-    with mirror.sync._start_lock:
-        mirror.sync._in_progress.add("pkg-one")
+    # Mark pkg-one as in-flight via package status.
+    pkg_one = mirror.packages.get("pkg-one")
+    pkg_one.set_status("SYNC")
 
     stop_calls: list[str] = []
 
     def _fake_stop_command(job_id: str):
         stop_calls.append(job_id)
-        # Intentionally do NOT clear _in_progress to simulate stuck job.
+        # Intentionally do NOT clear status to simulate stuck job.
 
     def _fake_get_progress(job_id: str):
-        pass  # Never clears _in_progress.
+        pass  # Never changes package status.
 
     monkeypatch.setattr("mirror.socket.worker.stop_command", _fake_stop_command, raising=False)
     monkeypatch.setattr("mirror.socket.worker.get_progress", _fake_get_progress, raising=False)
@@ -399,7 +397,3 @@ def test_perform_reload_kills_inflight_timeout(reload_env, monkeypatch):
 
     assert "pkg-one" in stop_calls
     assert "pkg-one" in result.get("killed_timeout", [])
-
-    # Clean up stale _in_progress entry so other tests are not affected.
-    with mirror.sync._start_lock:
-        mirror.sync._in_progress.discard("pkg-one")

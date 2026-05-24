@@ -557,12 +557,12 @@ class TestMasterPushSync:
                 server.stop()
 
     def test_push_sync_already_running(self, monkeypatch):
-        """push_sync returns already_running when pkgid is in _in_progress"""
+        """push_sync returns already_running when package is_syncing() returns True"""
         import mirror
         import mirror.sync
 
         pkgid = "running-pkg"
-        pkg = self._make_fake_pkg(pkgid=pkgid)
+        pkg = self._make_fake_pkg(pkgid=pkgid, syncing=True)
         monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
 
         start_called = []
@@ -571,25 +571,21 @@ class TestMasterPushSync:
             start_called.append(True)
 
         monkeypatch.setattr(mirror.sync, "start", fake_start)
-        mirror.sync._in_progress.add(pkgid)
 
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                socket_path = Path(tmpdir) / "master.sock"
-                server = MasterServer(socket_path)
-                server.start()
-                time.sleep(0.1)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
 
-                try:
-                    with MasterClient(socket_path) as client:
-                        result = client.push_sync(pkgid)
-                        assert result["package_id"] == pkgid
-                        assert result["status"] == "already_running"
-                        assert start_called == [], "mirror.sync.start must not be called"
-                finally:
-                    server.stop()
-        finally:
-            mirror.sync._in_progress.discard(pkgid)
+            try:
+                with MasterClient(socket_path) as client:
+                    result = client.push_sync(pkgid)
+                    assert result["package_id"] == pkgid
+                    assert result["status"] == "already_running"
+                    assert start_called == [], "mirror.sync.start must not be called"
+            finally:
+                server.stop()
 
     def test_push_sync_extra_args_none(self, monkeypatch):
         """push_sync with no extra_args passes None to mirror.sync.start"""

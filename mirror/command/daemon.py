@@ -13,6 +13,8 @@ import sys
 import os
 from pathlib import Path
 
+SETUP_GRACE_SECONDS = 60
+
 
 def _cleanup_daemon(socket_server, pid_file: Path, sock_path_file: Path) -> None:
     try:
@@ -188,20 +190,23 @@ def daemon(config: str) -> None:
                         continue
 
                     if package.is_syncing():
-                        # Source of truth for an active sync is the in-progress
-                        # set in mirror.sync; the worker may not yet have been
-                        # called (e.g. ftpsync setup is still running) so
-                        # is_worker_running can return False even when the sync
-                        # is healthy.
-                        if package.pkgid in mirror.sync._in_progress:
-                            _watchdog_check(package)
-                            continue
                         if mirror.socket.worker.is_worker_running(package.pkgid):
                             _watchdog_check(package)
                             continue
-                        mirror.log.warning(f"Package {package.pkgid} marked as syncing but no worker found.")
+                        # Worker has no job for this package. Either we're still in setup
+                        # (sync.start ran but execute_command hasn't been called yet) or the
+                        # worker lost/finished the job without notifying master. Distinguish
+                        # by sync age — Package.timestamp is ms since epoch, set when the
+                        # status flipped to SYNC.
+                        sync_age = time.time() - (package.timestamp / 1000.0)  # timestamp is ms
+                        if sync_age < SETUP_GRACE_SECONDS:
+                            continue
+                        mirror.log.warning(
+                            f"Package {package.pkgid} marked as syncing but no worker found "
+                            f"after {sync_age:.0f}s; transitioning to ERROR"
+                        )
                         pkg_logger = mirror.logger.get(package.pkgid)
-                        if pkg_logger.handlers:
+                        if pkg_logger and pkg_logger.handlers:
                             mirror.logger.close_logger(pkg_logger)
                         package.set_status("ERROR")
                         continue

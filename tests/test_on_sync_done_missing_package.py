@@ -9,7 +9,7 @@ import mirror.config
 import mirror.logger
 import mirror.structure
 import mirror.sync
-from mirror.sync import on_sync_done, _in_progress, _extra_args, _watchdog_fired, _start_lock
+from mirror.sync import on_sync_done, _extra_args, _watchdog_fired, _start_lock
 
 
 # ---------------------------------------------------------------------------
@@ -23,14 +23,12 @@ def _mock_mirror_log(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _clear_sync_state():
-    """Clean _in_progress / _extra_args / _watchdog_fired before and after each test."""
+    """Clean _extra_args / _watchdog_fired before and after each test."""
     with _start_lock:
-        _in_progress.clear()
         _extra_args.clear()
         _watchdog_fired.clear()
     yield
     with _start_lock:
-        _in_progress.clear()
         _extra_args.clear()
         _watchdog_fired.clear()
 
@@ -57,22 +55,20 @@ def test_on_sync_done_with_unknown_pkgid_does_not_raise(empty_packages, monkeypa
 
 
 # ---------------------------------------------------------------------------
-# Test 2: unknown pkgid clears _in_progress / _extra_args / _watchdog_fired
+# Test 2: unknown pkgid clears _extra_args / _watchdog_fired
 # ---------------------------------------------------------------------------
 
-def test_on_sync_done_unknown_pkgid_clears_in_progress(empty_packages, monkeypatch):
-    """on_sync_done for an unknown pkg clears all three registries."""
+def test_on_sync_done_unknown_pkgid_clears_extra_args_and_watchdog(empty_packages, monkeypatch):
+    """on_sync_done for an unknown pkg clears _extra_args and _watchdog_fired."""
     monkeypatch.setattr(mirror.logger, "get", lambda name: None)
 
     with _start_lock:
-        _in_progress.add("ghost")
         _extra_args["ghost"] = {"FOO": "BAR"}
         _watchdog_fired.add("ghost")
 
     on_sync_done("ghost", success=True, returncode=0)
 
     with _start_lock:
-        assert "ghost" not in _in_progress
         assert "ghost" not in _extra_args
         assert "ghost" not in _watchdog_fired
 
