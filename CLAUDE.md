@@ -89,7 +89,7 @@ When adding a new persisted field:
 
 ## Development
 
-- Python >= 3.13, Linux only
+- Python >= 3.10, Linux only
 - Package manager: `uv`
 - Dependencies: click, prompt_toolkit, bandersnatch (optional)
 - Tests: `uv run pytest tests/`

@@ -3,7 +3,7 @@ name = "mirror.py"
 version = "1.0.0rc15"
 description = "Mirror manager daemon that maintains local mirrors of remote package repositories via rsync, ftpsync, and other sync protocols."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 authors = [
@@ -17,12 +17,12 @@ classifiers = [
     "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.10",
     "Topic :: System :: Archiving :: Mirroring",
     "Topic :: System :: Software Distribution",
 ]
 dependencies = [
-    "bandersnatch==6.8.0",
+    "bandersnatch==6.5.0",
     "click==8.3.1",
     "prompt-toolkit>=3.0.0",
 ]
