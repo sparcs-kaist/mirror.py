@@ -42,7 +42,7 @@ def parse_iso_duration(iso8601: str) -> int:
 def format_iso_duration(duration: int) -> str:
     """Format total seconds into an ISO 8601 duration string.
 
-    Only supports days, hours, minutes, and seconds (max 31 days).
+    Only supports days, hours, minutes, and seconds.
 
     Args:
         duration(int): Duration in seconds. Use -1 for "PUSH".
@@ -52,12 +52,10 @@ def format_iso_duration(duration: int) -> str:
     """
     if duration == -1:
         return "PUSH"
-        
+
     if duration < 0:
         raise ValueError("Duration must be a positive integer.")
-    if duration > 2678399:
-        raise ValueError("Duration must be less than 31 days.")
-    
+
     if duration == 0:
         return ""
 
