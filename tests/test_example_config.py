@@ -17,6 +17,9 @@ def mock_dependencies():
     """
     Mocks external dependencies of the mirror package.
     """
+    original_toolbox = getattr(mirror, 'toolbox', None)
+    had_toolbox = hasattr(mirror, 'toolbox')
+
     # 1. Mock Logger
     if hasattr(mirror, 'logger'):
         mirror.logger.info = lambda x: None
@@ -62,6 +65,11 @@ def mock_dependencies():
     mirror.sync.methods = ['local', 'ftpsync', 'rsync']
 
     yield
+
+    if had_toolbox:
+        mirror.toolbox = original_toolbox
+    else:
+        delattr(mirror, 'toolbox')
 
 @pytest.fixture
 def setup_example_env(tmp_path):
