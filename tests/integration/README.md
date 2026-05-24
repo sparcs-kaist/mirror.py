@@ -32,7 +32,7 @@ Three containers on the default bridge network defined in `docker-compose.yml`:
           └────────────┬─────────────┘
                        │
          ┌─────────────┴───────────────────────────┐
-         │ mirror (python:3.13-slim)               │
+         │ mirror (ubuntu:22.04, python3.10)       │
          │   supervisord (PID 1)                   │
          │     ├─ worker  (priority 1)             │
          │     └─ master  (priority 2, startsecs=2)│
