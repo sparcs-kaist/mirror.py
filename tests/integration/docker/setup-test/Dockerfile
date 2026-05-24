@@ -1,4 +1,4 @@
-FROM ubuntu:26.04
+FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         systemd systemd-sysv \
@@ -6,10 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rsync lftp git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --break-system-packages --no-cache-dir bandersnatch
+RUN python3 -m pip install --no-cache-dir bandersnatch==6.5.0
 
 COPY dist/mirror_py-*.whl /tmp/
-RUN python3 -m pip install --break-system-packages --no-cache-dir /tmp/mirror_py-*.whl
+RUN python3 -m pip install --no-cache-dir /tmp/mirror_py-*.whl
 
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

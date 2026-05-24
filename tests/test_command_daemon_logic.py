@@ -1,5 +1,6 @@
 import pytest
 import signal
+import sys
 from unittest.mock import MagicMock, patch
 from mirror.command.daemon import daemon
 import mirror
@@ -135,7 +136,10 @@ def test_loop_calls_watchdog_for_syncing_package(mock_master_server, mock_depend
     try:
         watchdog_calls = []
 
-        with patch("mirror.command.daemon._watchdog_check", side_effect=watchdog_calls.append), \
+        # Python 3.10 resolves string patch targets through mirror.command.daemon,
+        # where the package attribute shadows the submodule with the daemon function.
+        daemon_module = sys.modules["mirror.command.daemon"]
+        with patch.object(daemon_module, "_watchdog_check", side_effect=watchdog_calls.append), \
              patch("time.sleep", side_effect=KeyboardInterrupt), \
              patch("sys.exit"):
             try:

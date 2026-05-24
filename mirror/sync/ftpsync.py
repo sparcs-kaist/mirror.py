@@ -270,7 +270,7 @@ def _run_log_dir(package: mirror.structure.Package) -> tuple[Path, str]:
     opts = package.settings.options
     base = Path(opts.get("logdir", mirror.conf.logfolder))
     safe_pkgid = _safe_name(package.pkgid)
-    token = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%S")
+    token = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
     token = f"{token}-{uuid.uuid4().hex[:6]}"
     log_name = f"{safe_pkgid}-{token}"
     return base / "ftpsync-runs" / safe_pkgid / token, log_name

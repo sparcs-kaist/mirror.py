@@ -1,4 +1,4 @@
-FROM ubuntu:26.04
+FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y --no-install-recommends rsync \
     && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /srv/debian
