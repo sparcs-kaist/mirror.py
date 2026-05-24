@@ -377,7 +377,7 @@ def _perform_reload() -> dict:
     killed_inflight: list[str] = []
     removed_with_inflight: set[str] = set()
     for pkgid in removed:
-        if pkgid in mirror.sync._in_progress:
+        if (pkg := mirror.packages.get(pkgid)) is not None and pkg.is_syncing():
             removed_with_inflight.add(pkgid)
             try:
                 mirror.socket.worker.stop_command(job_id=pkgid)
@@ -392,7 +392,7 @@ def _perform_reload() -> dict:
         remaining = set(removed_with_inflight)
         while remaining and time.monotonic() < deadline:
             for pkgid in list(remaining):
-                if pkgid not in mirror.sync._in_progress:
+                if not (pkg := mirror.packages.get(pkgid)) or not pkg.is_syncing():
                     remaining.discard(pkgid)
                     continue
                 try:
@@ -405,7 +405,7 @@ def _perform_reload() -> dict:
 
     # Step i: Warn about synctype change on in-progress retained packages.
     for pkgid in retained:
-        if pkgid not in mirror.sync._in_progress:
+        if not (pkg := mirror.packages.get(pkgid)) or not pkg.is_syncing():
             continue
         new_synctype = new_config_dict["packages"].get(pkgid, {}).get("synctype")
         with _reload_state_lock:

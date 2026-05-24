@@ -7,7 +7,6 @@ import mirror
 import mirror.sync as sync_mod
 from mirror.sync import (
     _extra_args,
-    _in_progress,
     _start_lock,
     _validate_extra_args,
     get_extra_args,
@@ -23,11 +22,9 @@ from mirror.sync import (
 @pytest.fixture(autouse=True)
 def _reset_registries():
     with _start_lock:
-        _in_progress.clear()
         _extra_args.clear()
     yield
     with _start_lock:
-        _in_progress.clear()
         _extra_args.clear()
 
 
@@ -41,7 +38,13 @@ def _make_pkg(pkgid: str = "testpkg") -> MagicMock:
     pkg.pkgid = pkgid
     pkg.name = f"Pkg {pkgid}"
     pkg.synctype = "rsync"
-    pkg.set_status = MagicMock()
+    pkg.status = "UNKNOWN"
+
+    def _set_status(status, logfile=None):
+        pkg.status = status
+
+    pkg.set_status = MagicMock(side_effect=_set_status)
+    pkg.is_syncing.side_effect = lambda: pkg.status == "SYNC"
     return pkg
 
 
@@ -130,8 +133,7 @@ def test_start_registers_extra_args_and_on_sync_done_clears():
         on_sync_done(pkgid, success=True, returncode=0)
 
     assert get_extra_args(pkgid) == {}
-    with _start_lock:
-        assert pkgid not in _in_progress
+    assert not pkg.is_syncing()
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +145,7 @@ def test_start_clears_stale_extra_args():
     pkgid = pkg.pkgid
     fake_record = _make_fake_record()
 
-    # Seed stale entry (pkgid is NOT in _in_progress)
+    # Seed stale entry (pkgid is NOT syncing)
     with _start_lock:
         _extra_args[pkgid] = {"OLD": "X"}
 
@@ -178,8 +180,8 @@ def test_start_failure_clears_extra_args(monkeypatch):
             start(pkg, extra_args={"K": "V"})
 
     assert get_extra_args(pkgid) == {}
-    with _start_lock:
-        assert pkgid not in _in_progress
+    # start() failure path transitions status to ERROR.
+    assert pkg.status == "ERROR"
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +193,9 @@ def test_already_running_preserves_extra_args():
     pkgid = pkg.pkgid
 
     # Seed: pretend a sync is already running with its own extra_args.
+    # Set status to SYNC so start() treats the package as in-flight.
+    pkg.status = "SYNC"
     with _start_lock:
-        _in_progress.add(pkgid)
         _extra_args[pkgid] = {"RUNNING": "yes"}
 
     try:
@@ -202,8 +205,8 @@ def test_already_running_preserves_extra_args():
         # Live sync's data must be preserved.
         assert get_extra_args(pkgid) == {"RUNNING": "yes"}
     finally:
+        pkg.status = "UNKNOWN"
         with _start_lock:
-            _in_progress.discard(pkgid)
             _extra_args.pop(pkgid, None)
 
 
@@ -215,19 +218,16 @@ def test_bad_input_does_not_mutate_state():
     pkg = _make_pkg("pkg_f")
 
     with _start_lock:
-        assert not _in_progress
         assert not _extra_args
 
     with pytest.raises(ValueError):
         start(pkg, extra_args={"K=BAD": "v"})
 
     with _start_lock:
-        assert not _in_progress
         assert not _extra_args
 
     with pytest.raises(ValueError):
         start(pkg, extra_args={"K": "v\x00"})
 
     with _start_lock:
-        assert not _in_progress
         assert not _extra_args

@@ -6,17 +6,19 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 import mirror
-from mirror.sync import _in_progress, _start_lock, start
+from mirror.sync import _start_lock, start
 import mirror.sync as sync_mod
 
 
 @pytest.fixture(autouse=True)
-def _clear_in_progress():
+def _clear_sync_extras():
     with _start_lock:
-        _in_progress.clear()
+        sync_mod._extra_args.clear()
+        sync_mod._watchdog_fired.clear()
     yield
     with _start_lock:
-        _in_progress.clear()
+        sync_mod._extra_args.clear()
+        sync_mod._watchdog_fired.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -29,7 +31,13 @@ def _make_pkg(pkgid: str = "race"):
     pkg.pkgid = pkgid
     pkg.name = f"Pkg {pkgid}"
     pkg.synctype = "rsync"
-    pkg.set_status = MagicMock()
+    pkg.status = "UNKNOWN"
+
+    def _set_status(status, logfile=None):
+        pkg.status = status
+
+    pkg.set_status = MagicMock(side_effect=_set_status)
+    pkg.is_syncing.side_effect = lambda: pkg.status == "SYNC"
     return pkg
 
 
@@ -54,7 +62,7 @@ def test_concurrent_start_rejects_second_call():
          patch.object(mirror, "sync", sync_mod):
         mk.return_value = MagicMock(handlers=[])
 
-        # Start thread 1 and wait until it is executing (i.e., pkgid in _in_progress).
+        # Start thread 1 and wait until it is executing (i.e., status is SYNC).
         start(pkg)
         with results_lock:
             results.append("started")
@@ -77,21 +85,30 @@ def test_concurrent_start_rejects_second_call():
     assert any(r.startswith("rejected:") for r in results), results
 
 
-def test_in_progress_cleared_when_execute_raises_immediately():
+def test_status_error_when_execute_raises_immediately():
     pkg = _make_pkg("race2")
+    pkgid = pkg.pkgid
     import mirror.plugin
     fake_record = MagicMock()
     fake_record.execute = MagicMock(side_effect=RuntimeError("boom"))
     fake_record.on_sync_done = None
 
+    fake_packages = MagicMock()
+    fake_packages.get = MagicMock(return_value=pkg)
+
     import mirror
     with patch.dict("mirror.plugin._registry", {"rsync": fake_record}, clear=False), \
          patch("mirror.logger.create_logger") as mk, \
+         patch("mirror.logger.get", return_value=MagicMock(handlers=[])), \
+         patch("mirror.logger.close_logger", return_value="/tmp/fake.log"), \
+         patch.object(mirror, "packages", fake_packages, create=True), \
          patch.object(mirror, "sync", sync_mod):
         mk.return_value = MagicMock(handlers=[])
         start(pkg)
         # Give the daemon thread a moment to fail.
         time.sleep(0.2)
 
-    with _start_lock:
-        assert pkg.pkgid not in _in_progress, _in_progress
+    # After execute raises, on_sync_done is called which transitions status to ERROR.
+    assert pkg.status == "ERROR", (
+        f"expected status ERROR after execute failure, got {pkg.status!r}"
+    )

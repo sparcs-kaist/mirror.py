@@ -11,8 +11,13 @@ from threading import Thread
 
 methods = []
 
+# PRE/POST listeners for MASTER.PACKAGE_STATUS_UPDATE MUST NOT acquire
+# _start_lock. set_status() fires PRE synchronously (wait=True) while holding
+# _start_lock; a listener that re-enters _start_lock from the same or another
+# thread would deadlock. In-tree audit: no such listener exists; only the POST
+# web-status persistence listener at mirror/config/__init__.py:584, which does
+# not touch _start_lock.
 _start_lock = threading.Lock()
-_in_progress: set[str] = set()
 _extra_args: dict[str, dict[str, str]] = {}
 _watchdog_fired: set[str] = set()
 
@@ -138,11 +143,9 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
     pkgid = package.pkgid
     registered_extra_args = False
     with _start_lock:
-        if pkgid in _in_progress:
+        if package.is_syncing():
             raise RuntimeError(f"Package {pkgid} sync already in progress")
-        _in_progress.add(pkgid)
-        # We now own the slot; write or evict the extra_args entry, and
-        # discard any stale watchdog marker left by a prior failed cycle.
+        package.set_status("SYNC")
         if clean:
             _extra_args[pkgid] = clean
             registered_extra_args = True
@@ -154,8 +157,6 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
     try:
         start_time = time.time()
         pkg_logger = mirror.logger.create_logger(pkgid, start_time)
-
-        package.set_status("SYNC")
         mirror.log.info(f"Starting sync for {package.name} ({method})")
         pkg_logger.info(f"Starting sync for {package.name} ({method})")
         pkg_logger.info(f"Time: {time.ctime(start_time)}")
@@ -176,13 +177,11 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
                 try:
                     on_sync_done(pkgid, success=False, returncode=None)
                 except Exception:
-                    with _start_lock:
-                        _in_progress.discard(pkgid)
+                    pass
             finally:
-                # Belt-and-suspenders: guarantee removal even if on_sync_done
-                # itself raised (set.discard is idempotent).
+                # Belt-and-suspenders: guarantee cleanup even if on_sync_done
+                # itself raised (discard/pop are idempotent).
                 with _start_lock:
-                    _in_progress.discard(pkgid)
                     _extra_args.pop(pkgid, None)
                     _watchdog_fired.discard(pkgid)
 
@@ -192,7 +191,7 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
     finally:
         if not started:
             with _start_lock:
-                _in_progress.discard(pkgid)
+                package.set_status("ERROR")
                 if registered_extra_args:
                     _extra_args.pop(pkgid, None)
                 _watchdog_fired.discard(pkgid)
@@ -236,7 +235,6 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
                 except Exception as exc:
                     mirror.log.error(f"on_sync_done({pkgid}): close_logger failed: {exc}")
             with _start_lock:
-                _in_progress.discard(pkgid)
                 _extra_args.pop(pkgid, None)
                 _watchdog_fired.discard(pkgid)
             return
@@ -266,7 +264,6 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
         package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
 
         with _start_lock:
-            _in_progress.discard(pkgid)
             _extra_args.pop(pkgid, None)
             _watchdog_fired.discard(pkgid)
 

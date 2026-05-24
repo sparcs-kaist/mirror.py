@@ -117,7 +117,7 @@ def test_daemon_signal_cleanup_runs_from_main_loop(mock_master_server, mock_depe
 
 
 def test_loop_calls_watchdog_for_syncing_package(mock_master_server, mock_dependencies):
-    """The daemon loop must call _watchdog_check for a syncing package in _in_progress."""
+    """The daemon loop must call _watchdog_check for a syncing package."""
     import mirror.sync
 
     pkgid = "syncing_pkg"
@@ -129,27 +129,19 @@ def test_loop_calls_watchdog_for_syncing_package(mock_master_server, mock_depend
 
     mirror.packages = {pkgid: pkg}
 
-    # Place the package in _in_progress so the first syncing branch fires.
-    with mirror.sync._start_lock:
-        mirror.sync._in_progress.add(pkgid)
+    watchdog_calls = []
 
-    try:
-        watchdog_calls = []
+    # Python 3.10 resolves string patch targets through mirror.command.daemon,
+    # where the package attribute shadows the submodule with the daemon function.
+    daemon_module = sys.modules["mirror.command.daemon"]
+    with patch.object(daemon_module, "_watchdog_check", side_effect=watchdog_calls.append), \
+         patch("time.sleep", side_effect=KeyboardInterrupt), \
+         patch("sys.exit"):
+        try:
+            daemon("config.json")
+        except KeyboardInterrupt:
+            pass
 
-        # Python 3.10 resolves string patch targets through mirror.command.daemon,
-        # where the package attribute shadows the submodule with the daemon function.
-        daemon_module = sys.modules["mirror.command.daemon"]
-        with patch.object(daemon_module, "_watchdog_check", side_effect=watchdog_calls.append), \
-             patch("time.sleep", side_effect=KeyboardInterrupt), \
-             patch("sys.exit"):
-            try:
-                daemon("config.json")
-            except KeyboardInterrupt:
-                pass
-
-        assert any(c is pkg for c in watchdog_calls), (
-            f"_watchdog_check was not called with the syncing package; calls={watchdog_calls}"
-        )
-    finally:
-        with mirror.sync._start_lock:
-            mirror.sync._in_progress.discard(pkgid)
+    assert any(c is pkg for c in watchdog_calls), (
+        f"_watchdog_check was not called with the syncing package; calls={watchdog_calls}"
+    )

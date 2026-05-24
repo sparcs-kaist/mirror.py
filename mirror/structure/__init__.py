@@ -140,8 +140,8 @@ class Package:
             status,
             wait=True,
         )
-        self.status = status
         self.timestamp = time.time() * 1000
+        self.status = status
 
         now = time.time()
         if status == "ACTIVE":

@@ -114,7 +114,8 @@ def lock_env(tmp_path, monkeypatch):
     )
 
     with mirror.sync._start_lock:
-        mirror.sync._in_progress.clear()
+        mirror.sync._extra_args.clear()
+        mirror.sync._watchdog_fired.clear()
 
     yield {
         "tmp_path": tmp_path,
@@ -123,7 +124,8 @@ def lock_env(tmp_path, monkeypatch):
     }
 
     with mirror.sync._start_lock:
-        mirror.sync._in_progress.clear()
+        mirror.sync._extra_args.clear()
+        mirror.sync._watchdog_fired.clear()
 
 
 # ---------------------------------------------------------------------------
