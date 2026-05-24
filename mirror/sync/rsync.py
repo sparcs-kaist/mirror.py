@@ -56,6 +56,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger) -> No
 
         mirror.socket.worker.execute_command(
             job_id=package.pkgid,
+            sync_method="rsync",
             commandline=command,
             env=env,
             uid=mirror.conf.uid,
