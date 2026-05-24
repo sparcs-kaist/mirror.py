@@ -106,7 +106,12 @@ def load(conf_path: Path):
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Configuration file not found: {CONFIG_PATH}")
 
-    config_dict = json.loads(CONFIG_PATH.read_text())
+    try:
+        config_dict = json.loads(CONFIG_PATH.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"Configuration file {CONFIG_PATH} is not valid JSON: {exc}"
+        ) from exc
     _load_from_dict(config_dict, source_path=conf_path, load_plugins=True)
 
 
@@ -150,7 +155,17 @@ def _load_from_dict(config_dict: dict, *, source_path: Path | None = None, load_
             mirror.STATE_PATH.mkdir(parents=True, mode=0o700, exist_ok=True)
 
         # 2. Load stat file and synchronize with config
-        stat_dict = json.loads(STAT_DATA_PATH.read_text()) if STAT_DATA_PATH.exists() else {"packages": {}}
+        if STAT_DATA_PATH.exists():
+            raw = STAT_DATA_PATH.read_text()
+            try:
+                stat_dict = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(
+                    f"Stat file {STAT_DATA_PATH} is corrupt and cannot be parsed: {exc}. "
+                    "Move it aside and restart to bootstrap a clean stat file."
+                ) from exc
+        else:
+            stat_dict = {"packages": {}}
         config_packages = config_dict.get("packages", {})
         stat_packages = stat_dict.get("packages", {})
         final_stat_packages = {}
@@ -190,7 +205,14 @@ def _load_from_dict(config_dict: dict, *, source_path: Path | None = None, load_
 def _load_web_status_data():
     """Loads the data for the web status page."""
     if STATUS_PATH and STATUS_PATH.exists():
-        mirror.status = json.loads(STATUS_PATH.read_text())
+        try:
+            mirror.status = json.loads(STATUS_PATH.read_text())
+        except json.JSONDecodeError as exc:
+            mirror.log.warning(
+                f"Web status file {STATUS_PATH} is corrupt ({exc}); "
+                "starting with empty status, will be overwritten on next save."
+            )
+            mirror.status = {}
     else:
         mirror.log.warning(f"Web status file not found at {STATUS_PATH}. Web status will be unavailable.")
         mirror.status = {}
@@ -221,7 +243,13 @@ def _validate_candidate_packages(sanitized_dict: dict) -> None:
     """
     config_packages = sanitized_dict.get("packages", {})
     if STAT_DATA_PATH and STAT_DATA_PATH.exists():
-        current_stat = json.loads(STAT_DATA_PATH.read_text())
+        raw = STAT_DATA_PATH.read_text()
+        try:
+            current_stat = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Stat file {STAT_DATA_PATH} is corrupt: {exc}"
+            ) from exc
         current_stat_packages = current_stat.get("packages", {})
     else:
         current_stat_packages = {}
