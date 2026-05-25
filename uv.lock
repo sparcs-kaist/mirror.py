@@ -525,7 +525,7 @@ wheels = [
 
 [[package]]
 name = "mirror-py"
-version = "1.0.0rc18"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "bandersnatch" },
