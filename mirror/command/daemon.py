@@ -14,6 +14,27 @@ import os
 from pathlib import Path
 
 SETUP_GRACE_SECONDS = 60
+MISMATCH_GRACE_SECONDS = 5
+
+_mismatch_first_seen: dict[str, float] = {}
+
+
+def _note_mismatch(pkgid: str, now: float) -> float:
+    """Record first-seen timestamp for a daemon-observed worker/status mismatch.
+
+    Args:
+        pkgid(str): Package ID.
+        now(float): Current time.time() value.
+
+    Return:
+        first_seen(float): The original first-seen timestamp (may be earlier than now).
+    """
+    return _mismatch_first_seen.setdefault(pkgid, now)
+
+
+def _clear_mismatch(pkgid: str) -> None:
+    """Reset the mismatch tracking for a pkgid after a consistent observation."""
+    _mismatch_first_seen.pop(pkgid, None)
 
 
 def _cleanup_daemon(socket_server, pid_file: Path, sock_path_file: Path) -> None:
@@ -186,11 +207,13 @@ def daemon(config: str) -> None:
             for package in mirror.packages.values():
                 try:
                     if package.is_disabled():
+                        _clear_mismatch(package.pkgid)
                         mirror.log.debug(f"Package {package.pkgid} is disabled. Skipping.")
                         continue
 
                     if package.is_syncing():
                         if mirror.socket.worker.is_worker_running(package.pkgid):
+                            _clear_mismatch(package.pkgid)
                             _watchdog_check(package)
                             continue
                         # Worker has no job for this package. Either we're still in setup
@@ -198,22 +221,43 @@ def daemon(config: str) -> None:
                         # worker lost/finished the job without notifying master. Distinguish
                         # by sync age — Package.timestamp is ms since epoch, set when the
                         # status flipped to SYNC.
-                        sync_age = time.time() - (package.timestamp / 1000.0)  # timestamp is ms
+                        now = time.time()
+                        first_seen = _note_mismatch(package.pkgid, now)
+                        if now - first_seen < MISMATCH_GRACE_SECONDS:
+                            continue
+                        sync_age = now - (package.timestamp / 1000.0)  # timestamp is ms
                         if sync_age < SETUP_GRACE_SECONDS:
                             continue
-                        mirror.log.warning(
-                            f"Package {package.pkgid} marked as syncing but no worker found "
-                            f"after {sync_age:.0f}s; transitioning to ERROR"
-                        )
-                        pkg_logger = mirror.logger.get(package.pkgid)
-                        if pkg_logger and pkg_logger.handlers:
-                            mirror.logger.close_logger(pkg_logger)
-                        package.set_status("ERROR")
+                        with mirror.config._reload_state_lock:
+                            if not package.is_syncing():
+                                _clear_mismatch(package.pkgid)
+                                continue
+                            mirror.log.warning(
+                                f"Package {package.pkgid} marked as syncing but no worker found "
+                                f"after {sync_age:.0f}s; transitioning to ERROR"
+                            )
+                            pkg_logger = mirror.logger.get(package.pkgid)
+                            if pkg_logger and pkg_logger.handlers:
+                                mirror.logger.close_logger(pkg_logger)
+                            package.set_status("ERROR")
+                        _clear_mismatch(package.pkgid)
                         continue
                     elif mirror.socket.worker.is_worker_running(package.pkgid):
-                        mirror.log.error(f"Package is syncing while status is {package.status}. Changed the status to syncing.")
-                        package.set_status("SYNC")
+                        now = time.time()
+                        first_seen = _note_mismatch(package.pkgid, now)
+                        if now - first_seen < MISMATCH_GRACE_SECONDS:
+                            continue
+                        with mirror.config._reload_state_lock:
+                            if not package.is_syncing():
+                                mirror.log.error(
+                                    f"Package is syncing while status is {package.status}. "
+                                    "Changed the status to syncing."
+                                )
+                                package.set_status("SYNC")
+                        _clear_mismatch(package.pkgid)
                         continue
+                    else:
+                        _clear_mismatch(package.pkgid)
 
                     if should_auto_sync(package, time.time(), mirror.conf.errorcontinuetime):
                         mirror.log.info(f"Package {package.pkgid} requires sync (last_sync={package.lastsync}, syncrate={package.syncrate}, status={package.status})")

@@ -12,7 +12,7 @@ import pytest
 
 import mirror
 import mirror.sync
-from mirror.command.daemon import SETUP_GRACE_SECONDS, daemon
+from mirror.command.daemon import MISMATCH_GRACE_SECONDS, SETUP_GRACE_SECONDS, daemon, _mismatch_first_seen
 
 
 # ---------------------------------------------------------------------------
@@ -104,20 +104,51 @@ def test_grace_period_triggers_error_transition_when_sync_is_stale(
 
     When the worker reports no active job and the sync was started more than
     SETUP_GRACE_SECONDS ago, the daemon loop must transition the package to ERROR.
+
+    Two iterations are needed: the first records the mismatch, the second (after
+    MISMATCH_GRACE_SECONDS have elapsed) escalates to ERROR.
     """
     pkgid = "grace-pkg-stale"
+    _mismatch_first_seen.clear()
     # Timestamp set to 70 seconds ago (past the grace window).
     stale_timestamp_ms = (time.time() - (SETUP_GRACE_SECONDS + 10)) * 1000
     pkg = _make_syncing_pkg(pkgid, timestamp_ms=stale_timestamp_ms)
     mirror.packages = {pkgid: pkg}
 
+    # Iteration counter: first call to time.sleep lets the loop run a second
+    # iteration; second call raises KeyboardInterrupt to stop the daemon.
+    # We also need time.time() to advance by > MISMATCH_GRACE_SECONDS between
+    # the two iterations so the mismatch is considered persistent.
+    iteration = [0]
+    base_time = time.time()
+    time_values = [
+        base_time,                              # first iteration: note_mismatch records now
+        base_time + MISMATCH_GRACE_SECONDS + 1, # second iteration: now - first_seen > grace
+        base_time + MISMATCH_GRACE_SECONDS + 1, # second call inside the lock block (sync_age)
+    ]
+    time_index = [0]
+
+    def fake_time():
+        val = time_values[min(time_index[0], len(time_values) - 1)]
+        time_index[0] += 1
+        return val
+
+    sleep_calls = [0]
+
+    def fake_sleep(_):
+        sleep_calls[0] += 1
+        if sleep_calls[0] >= 2:
+            raise KeyboardInterrupt
+
     with patch("mirror.socket.worker.is_worker_running", return_value=False), \
          patch("mirror.logger.get", return_value=None), \
-         patch("time.sleep", side_effect=KeyboardInterrupt), \
+         patch("time.sleep", side_effect=fake_sleep), \
+         patch("time.time", side_effect=fake_time), \
          patch("sys.exit"):
         try:
             daemon("config.json")
         except KeyboardInterrupt:
             pass
 
+    _mismatch_first_seen.clear()
     pkg.set_status.assert_called_once_with("ERROR")
