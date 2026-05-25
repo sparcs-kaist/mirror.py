@@ -14,6 +14,8 @@ from .core import (
     setup_logger,
     get_log_path,
     get,
+    exists,
+    reattach_logger,
 )
 
 __all__ = [
@@ -33,4 +35,6 @@ __all__ = [
     "setup_logger",
     "get_log_path",
     "get",
+    "exists",
+    "reattach_logger",
 ]

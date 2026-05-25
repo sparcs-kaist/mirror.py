@@ -237,8 +237,18 @@ def daemon(config: str) -> None:
                                 f"after {sync_age:.0f}s; transitioning to ERROR"
                             )
                             pkg_logger = mirror.logger.get(package.pkgid)
+                            if not mirror.logger.exists(package.pkgid) and package.statusinfo.runninglog:
+                                try:
+                                    mirror.logger.reattach_logger(
+                                        pkg_logger, Path(package.statusinfo.runninglog), package.pkgid
+                                    )
+                                except Exception as exc:
+                                    mirror.log.warning(
+                                        f"daemon orphan-cleanup: reattach failed for {package.pkgid}: {exc}"
+                                    )
                             if pkg_logger and pkg_logger.handlers:
                                 mirror.logger.close_logger(pkg_logger)
+                            package.statusinfo.runninglog = None
                             package.set_status("ERROR")
                         _clear_mismatch(package.pkgid)
                         continue

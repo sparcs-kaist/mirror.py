@@ -6,6 +6,7 @@ import time
 import logging
 import threading
 
+from pathlib import Path
 from typing import Callable, Optional
 from threading import Thread
 
@@ -159,6 +160,11 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
     try:
         start_time = time.time()
         pkg_logger = mirror.logger.create_logger(pkgid, start_time)
+        with mirror.config._reload_state_lock:
+            log_path = mirror.logger.get_log_path(pkg_logger)
+            if log_path is not None:
+                package.statusinfo.runninglog = str(log_path)
+                mirror.config.save_stat_data()
         mirror.log.info(f"Starting sync for {package.name} ({method})")
         pkg_logger.info(f"Starting sync for {package.name} ({method})")
         pkg_logger.info(f"Time: {time.ctime(start_time)}")
@@ -194,6 +200,13 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
         if not started:
             with mirror.config._reload_state_lock:
                 with _start_lock:
+                    pkg_logger = mirror.logger.get(pkgid)
+                    if pkg_logger and pkg_logger.handlers:
+                        try:
+                            mirror.logger.close_logger(pkg_logger)
+                        except Exception as exc:
+                            mirror.log.error(f"start({pkgid}): close_logger failed: {exc}")
+                    package.statusinfo.runninglog = None
                     package.set_status("ERROR")
                     if registered_extra_args:
                         _extra_args.pop(pkgid, None)
@@ -226,6 +239,14 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
     with mirror.config._reload_state_lock:
         package = mirror.packages.get(pkgid)
         pkglogger = mirror.logger.get(pkgid)
+
+        if package is not None and not mirror.logger.exists(pkgid) and package.statusinfo.runninglog:
+            try:
+                mirror.logger.reattach_logger(
+                    pkglogger, Path(package.statusinfo.runninglog), pkgid
+                )
+            except Exception as exc:
+                mirror.log.warning(f"on_sync_done({pkgid}): reattach failed: {exc}")
 
         if package is None:
             mirror.log.warning(
@@ -264,6 +285,7 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
         # pre-compression path from get_log_path which no longer exists after gzip.
         logpath = mirror.logger.close_logger(pkglogger)
         package.lastsync = time.time()
+        package.statusinfo.runninglog = None
         package.set_status("ACTIVE" if success else "ERROR", logfile=logpath)
 
         with _start_lock:
