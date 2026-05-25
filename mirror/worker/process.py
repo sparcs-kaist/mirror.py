@@ -385,35 +385,35 @@ def prune_finished():
 
     with _jobs_lock:
         jobs = list(_jobs.items())
-
     for _, job in jobs:
         job.reap()
 
     with _jobs_lock:
-        finished_ids = [wid for wid, w in _jobs.items() if not w.is_running]
+        claimed: list[tuple[str, "Job"]] = []
+        for wid in list(_jobs.keys()):
+            job = _jobs[wid]
+            if not job.is_running:
+                _jobs.pop(wid)
+                claimed.append((wid, job))
 
-    for wid in finished_ids:
-        with _jobs_lock:
-            job = _jobs.get(wid)
-        if job is None:
-            continue
-
+    for wid, job in claimed:
         returncode = job.returncode
         success = returncode == 0
-
         try:
             mirror.socket.worker.send_finished_notification(wid, success, returncode)
-            with _jobs_lock:
-                _jobs.pop(wid, None)
         except Exception as exc:
-            with _jobs_lock:
-                job = _jobs.get(wid)
-                if job is None:
-                    continue
-                job._notify_attempts += 1
-                if job._notify_attempts >= NOTIFY_ATTEMPT_BUDGET:
-                    _jobs.pop(wid, None)
-                    logger.warning(
-                        f"Force-pruning {wid} after {NOTIFY_ATTEMPT_BUDGET} "
-                        f"failed notifications: {exc}"
-                    )
+            job._notify_attempts += 1
+            if job._notify_attempts >= NOTIFY_ATTEMPT_BUDGET:
+                logger.warning(
+                    f"Force-pruning {wid} after {NOTIFY_ATTEMPT_BUDGET} "
+                    f"failed notifications: {exc}"
+                )
+            else:
+                with _jobs_lock:
+                    if wid in _jobs:
+                        logger.warning(
+                            f"Cannot re-queue {wid} for retry: a new job "
+                            f"has taken this id; dropping stale finished job ({exc})"
+                        )
+                    else:
+                        _jobs[wid] = job

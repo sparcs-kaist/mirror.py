@@ -132,6 +132,7 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
     """
     import mirror.sync
     import mirror.logger
+    import mirror.config
 
     method = package.synctype
     if method not in methods:
@@ -142,16 +143,17 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
 
     pkgid = package.pkgid
     registered_extra_args = False
-    with _start_lock:
-        if package.is_syncing():
-            raise RuntimeError(f"Package {pkgid} sync already in progress")
-        package.set_status("SYNC")
-        if clean:
-            _extra_args[pkgid] = clean
-            registered_extra_args = True
-        else:
-            _extra_args.pop(pkgid, None)
-        _watchdog_fired.discard(pkgid)
+    with mirror.config._reload_state_lock:
+        with _start_lock:
+            if package.is_syncing():
+                raise RuntimeError(f"Package {pkgid} sync already in progress")
+            package.set_status("SYNC")
+            if clean:
+                _extra_args[pkgid] = clean
+                registered_extra_args = True
+            else:
+                _extra_args.pop(pkgid, None)
+            _watchdog_fired.discard(pkgid)
 
     started = False
     try:
@@ -190,11 +192,12 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
         started = True
     finally:
         if not started:
-            with _start_lock:
-                package.set_status("ERROR")
-                if registered_extra_args:
-                    _extra_args.pop(pkgid, None)
-                _watchdog_fired.discard(pkgid)
+            with mirror.config._reload_state_lock:
+                with _start_lock:
+                    package.set_status("ERROR")
+                    if registered_extra_args:
+                        _extra_args.pop(pkgid, None)
+                    _watchdog_fired.discard(pkgid)
 
 def get_extra_args(pkgid: str) -> dict[str, str]:
     """Return a shallow copy of the extra_args registered for an in-flight sync, or empty.
