@@ -3,3 +3,4 @@ from .setup import setup as setup
 from .crontab import crontab as crontab
 from .worker import worker as worker
 from .push import push as push
+from .tui import tui as tui
