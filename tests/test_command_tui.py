@@ -23,10 +23,12 @@ from mirror.command.tui import (
     _trim_log_text,
     build_table_header,
     build_table_rows,
+    format_ago,
+    format_datetime,
     format_duration,
-    format_eta,
-    format_last_change,
-    latest_change_epoch,
+    format_elapsed,
+    format_last_success,
+    format_started,
     packages_from_rpc,
     safe_open_log_for_read,
     status_style,
@@ -103,89 +105,99 @@ class TestFormatDuration:
 
 
 # ---------------------------------------------------------------------------
-# 2. format_eta
+# 2. format_datetime
 # ---------------------------------------------------------------------------
 
 
-class TestFormatEta:
-    def test_disabled_package(self):
-        pkg = _make_package(disabled=True, syncrate=3600)
-        assert format_eta(pkg, time.time()) == "-"
+class TestFormatDatetime:
+    def test_zero_returns_dash(self):
+        assert format_datetime(0) == "-"
 
-    def test_zero_syncrate(self):
-        pkg = _make_package(syncrate=0)
-        assert format_eta(pkg, time.time()) == "-"
+    def test_negative_returns_dash(self):
+        assert format_datetime(-1) == "-"
 
-    def test_next_in_future(self):
-        now = 1000000.0
-        pkg = _make_package(syncrate=3600, lastsync=now - 1800)
-        result = format_eta(pkg, now)
-        assert result.startswith("next in")
+    def test_positive_returns_iso_like_string(self):
+        # Pick a fixed epoch and check the format shape only (locale-dependent).
+        result = format_datetime(1_700_000_000)
+        assert len(result) == 19
+        assert result[4] == "-" and result[7] == "-" and result[10] == " "
+        assert result[13] == ":" and result[16] == ":"
 
-    def test_overdue(self):
-        now = 1000000.0
-        pkg = _make_package(syncrate=3600, lastsync=now - 7200)
-        assert format_eta(pkg, now) == "overdue"
 
-    def test_sync_shows_running_duration(self):
-        now = 1000000.0
-        # timestamp is ms since epoch; 120s ago
-        pkg = _make_package(status="SYNC", syncrate=3600, timestamp=(now - 120) * 1000)
-        result = format_eta(pkg, now)
-        assert result.startswith("running")
-        assert "00:02:00" in result
+# ---------------------------------------------------------------------------
+# 3. format_started
+# ---------------------------------------------------------------------------
+
+
+class TestFormatStarted:
+    def test_non_sync_returns_dash(self):
+        pkg = _make_package(status="ACTIVE", timestamp=1_700_000_000 * 1000)
+        assert format_started(pkg, time.time()) == "-"
 
     def test_sync_without_timestamp(self):
-        pkg = _make_package(status="SYNC", syncrate=3600, timestamp=0.0)
-        assert format_eta(pkg, time.time()) == "running"
+        pkg = _make_package(status="SYNC", timestamp=0.0)
+        assert format_started(pkg, time.time()) == "(unknown)"
+
+    def test_sync_normalizes_ms_timestamp(self):
+        # Package.timestamp is ms; format_started must divide by 1000.
+        pkg = _make_package(status="SYNC", timestamp=1_700_000_000_000)
+        result = format_started(pkg, time.time())
+        # Same format as format_datetime(1_700_000_000)
+        assert result == format_datetime(1_700_000_000)
 
 
 # ---------------------------------------------------------------------------
-# 3. latest_change_epoch
+# 4. format_elapsed
 # ---------------------------------------------------------------------------
 
 
-class TestLatestChangeEpoch:
-    def test_normalizes_ms_timestamp(self):
-        # timestamp is ms (year ~2033), lastsuccesstime is plain seconds
-        pkg = _make_package(
-            timestamp=2000000000000,  # ms
-            lastsuccesstime=1700000000,  # seconds
-        )
-        result = latest_change_epoch(pkg)
-        # timestamp/1000 = 2000000000.0 > 1700000000 => should return 2000000000.0
-        assert result == pytest.approx(2000000000.0)
+class TestFormatElapsed:
+    def test_non_sync_returns_dash(self):
+        pkg = _make_package(status="ACTIVE", timestamp=(time.time() - 120) * 1000)
+        assert format_elapsed(pkg, time.time()) == "-"
 
-    def test_all_zero_fields(self):
-        pkg = _make_package(timestamp=0.0, lastsuccesstime=0.0, lasterrortime=0.0)
-        assert latest_change_epoch(pkg) == 0.0
+    def test_sync_without_timestamp_returns_dash(self):
+        pkg = _make_package(status="SYNC", timestamp=0.0)
+        assert format_elapsed(pkg, time.time()) == "-"
 
-    def test_lasterrortime_wins(self):
-        pkg = _make_package(
-            timestamp=1000,  # ms => 1.0s
-            lastsuccesstime=500.0,
-            lasterrortime=1000.0,
-        )
-        assert latest_change_epoch(pkg) == pytest.approx(1000.0)
+    def test_sync_returns_running_duration(self):
+        now = 1_000_000.0
+        pkg = _make_package(status="SYNC", timestamp=(now - 125) * 1000)
+        result = format_elapsed(pkg, now)
+        assert result == "00:02:05"
 
 
 # ---------------------------------------------------------------------------
-# 4. format_last_change
+# 5. format_last_success
 # ---------------------------------------------------------------------------
 
 
-class TestFormatLastChange:
-    def test_returns_ago_string(self):
-        now = 1000000.0
-        # timestamp in ms: 999900000 ms = 999900.0 s => 100s before now
-        pkg = _make_package(timestamp=999900000)
-        result = format_last_change(pkg, now)
-        assert result.endswith("ago")
-        assert "01:40" in result or "100" in result or "00:01:40" in result
+class TestFormatLastSuccess:
+    def test_never(self):
+        pkg = _make_package(lastsuccesstime=0.0)
+        assert format_last_success(pkg) == "(never)"
 
-    def test_never_when_all_zero(self):
-        pkg = _make_package(timestamp=0.0, lastsuccesstime=0.0, lasterrortime=0.0)
-        assert format_last_change(pkg, time.time()) == "never"
+    def test_returns_datetime(self):
+        pkg = _make_package(lastsuccesstime=1_700_000_000)
+        assert format_last_success(pkg) == format_datetime(1_700_000_000)
+
+
+# ---------------------------------------------------------------------------
+# 6. format_ago
+# ---------------------------------------------------------------------------
+
+
+class TestFormatAgo:
+    def test_zero_returns_dash(self):
+        assert format_ago(0, time.time()) == "-"
+
+    def test_future_epoch_returns_dash(self):
+        now = 1_000_000.0
+        assert format_ago(now + 60, now) == "-"
+
+    def test_past_epoch_returns_duration(self):
+        now = 1_000_000.0
+        assert format_ago(now - 125, now) == "00:02:05"
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +273,7 @@ class TestBuildTableHeader:
     def test_label_row_contains_column_names(self):
         rows = build_table_header()
         label = rows[0][1]
-        for col in ("PACKAGE", "STATUS", "ETA / RUNNING", "LAST CHANGE"):
+        for col in ("PACKAGE", "STATUS", "STARTED", "ELAPSED", "LAST SUCCESS", "AGO"):
             assert col in label
 
     def test_divider_row_is_dashes(self):

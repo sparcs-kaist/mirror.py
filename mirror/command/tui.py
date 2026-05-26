@@ -11,6 +11,7 @@ import os
 import stat
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -62,70 +63,87 @@ def format_duration(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def format_eta(package: Package, now: float) -> str:
-    """Return human-readable ETA to next scheduled sync, or '-' if disabled.
+def format_datetime(epoch: float) -> str:
+    """Format an epoch-seconds value as 'YYYY-MM-DD HH:MM:SS' in local time.
 
     Args:
-        package(Package): Package to compute ETA for.
-        now(float): Current epoch seconds.
+        epoch(float): Epoch seconds. Non-positive values yield "-".
 
     Return:
-        eta(str): Human-readable ETA string.
+        text(str): Localtime datetime string, or "-" for missing values.
     """
-    if package.disabled or package.syncrate <= 0:
-        return "-"
-    if package.status == "SYNC":
-        running_for = (now - package.timestamp / 1000.0) if package.timestamp else 0.0
-        if running_for <= 0:
-            return "running"
-        return f"running {format_duration(running_for)}"
-    next_sync = package.lastsync + package.syncrate
-    remaining = next_sync - now
-    if remaining <= 0:
-        return "overdue"
-    return f"next in {format_duration(remaining)}"
-
-
-def latest_change_epoch(package: Package) -> float:
-    """Return the latest change epoch in SECONDS, normalizing units.
-
-    `Package.timestamp` is set as `time.time() * 1000` in
-    `Package.set_status` (mirror/structure/__init__.py:143), i.e. ms;
-    `statusinfo.lastsuccesstime` and `statusinfo.lasterrortime` are
-    plain epoch seconds. This helper divides `timestamp` by 1000 before
-    taking the max, so callers can compare against `time.time()` directly.
-
-    Args:
-        package(Package): Package to inspect.
-
-    Return:
-        epoch(float): Latest change time in seconds since epoch.
-    """
-    ts_seconds = package.timestamp / 1000.0 if package.timestamp else 0.0
-    return max(
-        ts_seconds,
-        package.statusinfo.lastsuccesstime or 0.0,
-        package.statusinfo.lasterrortime or 0.0,
-    )
-
-
-def format_last_change(package: Package, now: float) -> str:
-    """Return '<HH:MM:SS> ago' from latest_change_epoch(package).
-
-    Args:
-        package(Package): Package to inspect.
-        now(float): Current epoch seconds.
-
-    Return:
-        text(str): Human-readable time-since-change string.
-    """
-    epoch = latest_change_epoch(package)
     if epoch <= 0:
-        return "never"
+        return "-"
+    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_started(package: Package, now: float) -> str:
+    """Return the localtime datetime when the current sync started, else '-'.
+
+    Only meaningful for SYNC packages; `Package.timestamp` is set to
+    `time.time() * 1000` (ms) when status flips to SYNC.
+
+    Args:
+        package(Package): Package to inspect.
+        now(float): Current epoch seconds (unused; accepted for symmetry).
+
+    Return:
+        text(str): Datetime string, "-" for non-SYNC, "(unknown)" for SYNC
+            without a timestamp.
+    """
+    if package.status != "SYNC":
+        return "-"
+    if not package.timestamp:
+        return "(unknown)"
+    return format_datetime(package.timestamp / 1000.0)
+
+
+def format_elapsed(package: Package, now: float) -> str:
+    """Return the running duration since the current sync started, else '-'.
+
+    Args:
+        package(Package): Package to inspect.
+        now(float): Current epoch seconds.
+
+    Return:
+        text(str): Duration string for SYNC packages, "-" otherwise.
+    """
+    if package.status != "SYNC" or not package.timestamp:
+        return "-"
+    return format_duration(now - package.timestamp / 1000.0)
+
+
+def format_last_success(package: Package) -> str:
+    """Return the localtime datetime of the most recent successful sync.
+
+    Args:
+        package(Package): Package to inspect.
+
+    Return:
+        text(str): Datetime string, "(never)" if no successful sync.
+    """
+    epoch = package.statusinfo.lastsuccesstime or 0.0
+    if epoch <= 0:
+        return "(never)"
+    return format_datetime(epoch)
+
+
+def format_ago(epoch: float, now: float) -> str:
+    """Return a duration string for 'how long ago' an epoch event happened.
+
+    Args:
+        epoch(float): Past epoch seconds. 0 or future values yield "-".
+        now(float): Current epoch seconds.
+
+    Return:
+        text(str): Human-readable duration string, "-" if not applicable.
+    """
+    if epoch <= 0:
+        return "-"
     delta = now - epoch
     if delta < 0:
-        delta = 0.0
-    return f"{format_duration(delta)} ago"
+        return "-"
+    return format_duration(delta)
 
 
 def status_style(status: str) -> str:
@@ -145,10 +163,12 @@ def status_style(status: str) -> str:
     return mapping.get(status, "class:status.unknown")
 
 
-_COL_PKGID = 22
+_COL_PKGID = 18
 _COL_STATUS = 8
-_COL_ETA = 22
-_COL_LAST = 18
+_COL_STARTED = 19
+_COL_ELAPSED = 12
+_COL_LAST_SUCCESS = 19
+_COL_AGO = 12
 
 
 def _fit_field(text: str, width: int) -> str:
@@ -165,14 +185,24 @@ def _fit_field(text: str, width: int) -> str:
     return text.ljust(width)
 
 
-def _format_table_row(prefix: str, pkgid: str, status: str, eta: str, last: str) -> str:
+def _format_table_row(
+    prefix: str,
+    pkgid: str,
+    status: str,
+    started: str,
+    elapsed: str,
+    last_success: str,
+    ago: str,
+) -> str:
     """Build a single table line with consistent column widths."""
     return (
         f"{prefix}"
         f"{_fit_field(pkgid, _COL_PKGID)} "
         f"{_fit_field(status, _COL_STATUS)} "
-        f"{_fit_field(eta, _COL_ETA)} "
-        f"{_fit_field(last, _COL_LAST)}\n"
+        f"{_fit_field(started, _COL_STARTED)} "
+        f"{_fit_field(elapsed, _COL_ELAPSED)} "
+        f"{_fit_field(last_success, _COL_LAST_SUCCESS)} "
+        f"{_fit_field(ago, _COL_AGO)}\n"
     )
 
 
@@ -181,15 +211,19 @@ def build_table_header() -> list[tuple[str, str]]:
 
     Return:
         rows(list[tuple[str, str]]): Two (style, text) rows: the label row
-            and a separator made of box-drawing dashes.
+            and a separator made of dashes.
     """
-    label_row = _format_table_row("  ", "PACKAGE", "STATUS", "ETA / RUNNING", "LAST CHANGE")
+    label_row = _format_table_row(
+        "  ", "PACKAGE", "STATUS", "STARTED", "ELAPSED", "LAST SUCCESS", "AGO"
+    )
     divider_row = _format_table_row(
         "  ",
         "-" * _COL_PKGID,
         "-" * _COL_STATUS,
-        "-" * _COL_ETA,
-        "-" * _COL_LAST,
+        "-" * _COL_STARTED,
+        "-" * _COL_ELAPSED,
+        "-" * _COL_LAST_SUCCESS,
+        "-" * _COL_AGO,
     )
     return [
         ("class:tableheader", label_row),
@@ -217,8 +251,10 @@ def build_table_rows(
             prefix,
             pkg.pkgid,
             pkg.status,
-            format_eta(pkg, now),
-            format_last_change(pkg, now),
+            format_started(pkg, now),
+            format_elapsed(pkg, now),
+            format_last_success(pkg),
+            format_ago(pkg.statusinfo.lastsuccesstime or 0.0, now),
         )
 
         if idx == selected:
