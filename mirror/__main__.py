@@ -61,4 +61,14 @@ def push(packageid: str, config: str) -> None:
     """
     mirror.command.push(packageid, config)
 
+@main.command("tui")
+@click.option("--config", default="/etc/mirror/config.json",
+              help="Path to the config file (used only to read mirrorname).")
+@click.option("--socket", "socket_path", default=None,
+              help="Master socket path (default: runtime metadata).")
+def tui(config: str, socket_path: str | None) -> None:
+    """Run the real-time mirror status TUI."""
+    mirror.command.tui(config, socket_path)
+
+
 main.add_command(config_group)
