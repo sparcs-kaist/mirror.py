@@ -6,6 +6,7 @@ module-level instance management, and convenience functions.
 """
 
 import mirror
+import time
 
 from pathlib import Path
 from typing import Optional
@@ -48,6 +49,7 @@ class MasterServer(BaseServer):
         if socket_path is None:
             socket_path = _default_master_socket_path()
         super().__init__(socket_path, role="master")
+        self.started_at = time.time()
 
     @expose("ping")
     def _handle_ping(self) -> dict:
@@ -168,6 +170,28 @@ class MasterServer(BaseServer):
         from mirror.config.reload_controller import reload_controller
         return reload_controller.request_sync(timeout=float(timeout))
 
+    @expose("get_runtime_info")
+    def _handle_get_runtime_info(self) -> dict:
+        """Return curated runtime info for read-only clients (e.g. the TUI).
+
+        Only fields useful to external clients are exposed; uid/gid,
+        maintainer, and plugin internals are intentionally omitted.
+        """
+        conf = mirror.conf
+        pff = (conf.logger or {}).get("packagefileformat") or {}
+        return {
+            "mirrorname": conf.name,
+            "hostname": conf.hostname,
+            "localtimezone": conf.localtimezone,
+            "logfolder": str(conf.logfolder),
+            "webroot": str(conf.webroot),
+            "log_base": pff.get("base"),
+            "max_runtime_seconds": conf.max_runtime_seconds,
+            "errorcontinuetime": conf.errorcontinuetime,
+            "sync_methods": list(mirror.sync.methods),
+            "daemon_started_at": self.started_at,
+        }
+
 
 class MasterClient(BaseClient):
     """Client for connecting to Master daemon
@@ -218,6 +242,10 @@ class MasterClient(BaseClient):
         does not give up before the server can respond.
         """
         return self.send_command("reload", recv_timeout=timeout + 5.0, timeout=timeout)
+
+    def get_runtime_info(self) -> dict:
+        """Fetch daemon runtime info"""
+        return self.send_command("get_runtime_info")
 
 
 # --- Instance management ---
@@ -328,6 +356,19 @@ def reload(socket_path: Optional[Path | str] = None, timeout: float = 30.0) -> d
         return client.reload(timeout=timeout)
 
 
+def get_runtime_info(socket_path: Optional[Path | str] = None) -> dict:
+    """Fetch daemon runtime info via a temporary client
+
+    Args:
+        socket_path(Path | str, optional): Socket file path override.
+
+    Return:
+        info(dict): Runtime info dict from the daemon.
+    """
+    with MasterClient(socket_path) as client:
+        return client.get_runtime_info()
+
+
 def get_master_client(socket_path: Optional[Path | str] = None) -> MasterClient:
     """Create and connect a MasterClient instance
 
@@ -367,6 +408,7 @@ __all__ = [
     "init_instance",
     "stop_instance",
     "get_master_client",
+    "get_runtime_info",
     "is_master_running",
     "push_sync",
     "reload",

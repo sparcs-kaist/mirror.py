@@ -1119,3 +1119,46 @@ def test_client_rejects_server_protocol_version_mismatch(tmp_path):
     finally:
         server.close()
         thread.join(timeout=1.0)
+
+
+def test_master_get_runtime_info(monkeypatch):
+    """get_runtime_info RPC returns curated daemon config fields."""
+    import mirror
+    import mirror.sync
+    import tempfile
+
+    class FakeConf:
+        name = "mymirror"
+        hostname = "m.example"
+        localtimezone = "UTC"
+        logfolder = Path("/var/log/mirror")
+        webroot = Path("/var/www/mirror")
+        max_runtime_seconds = 43200
+        errorcontinuetime = 60
+        logger = {"packagefileformat": {"base": "/var/log/mirror/packages"}}
+
+    monkeypatch.setattr(mirror, "conf", FakeConf(), raising=False)
+    monkeypatch.setattr(mirror.sync, "methods", ["rsync", "ftpsync"], raising=False)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        socket_path = Path(tmpdir) / "master.sock"
+        server = MasterServer(socket_path)
+        server.start()
+        time.sleep(0.1)
+
+        try:
+            with MasterClient(socket_path) as client:
+                result = client.get_runtime_info()
+                assert result["mirrorname"] == "mymirror"
+                assert result["hostname"] == "m.example"
+                assert result["localtimezone"] == "UTC"
+                assert result["logfolder"] == "/var/log/mirror"
+                assert result["webroot"] == "/var/www/mirror"
+                assert result["log_base"] == "/var/log/mirror/packages"
+                assert result["max_runtime_seconds"] == 43200
+                assert result["errorcontinuetime"] == 60
+                assert result["sync_methods"] == ["rsync", "ftpsync"]
+                assert isinstance(result["daemon_started_at"], float)
+                assert abs(result["daemon_started_at"] - time.time()) < 60
+        finally:
+            server.stop()

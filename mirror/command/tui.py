@@ -7,7 +7,6 @@ Operators can start or stop syncs via a keyboard-driven confirm dialog.
 """
 
 import asyncio
-import json
 import os
 import stat
 import time
@@ -516,6 +515,18 @@ class MirrorTUI:
         self._log_fd: Optional[int] = None
         self._app: Optional[Application] = None
 
+    def _apply_runtime_info(self, info: Optional[dict]) -> None:
+        """Update mirrorname and log_base from a get_runtime_info response.
+
+        Args:
+            info(dict, optional): Dict returned by get_runtime_info RPC. None is a no-op.
+        """
+        if info is None:
+            return
+        self._mirrorname = info.get("mirrorname", "") or ""
+        lb = info.get("log_base")
+        self._log_base = Path(lb) if lb else None
+
     def _build_layout(self) -> tuple[Layout, TextArea]:
         """Build the prompt_toolkit layout and return (layout, log_area).
 
@@ -808,36 +819,62 @@ class MirrorTUI:
             self._state.last_poll_error = str(exc)
             return False
 
+    async def _poll_once(self, app: Application, was_connected: bool) -> bool:
+        """Run one polling iteration. Returns the new was_connected value.
+
+        Args:
+            app(Application): Running application (for invalidate calls).
+            was_connected(bool): Connection state at entry to this tick.
+
+        Return:
+            was_connected(bool): True if list_packages succeeded this tick,
+                False otherwise.
+        """
+        state = self._state
+        try:
+            if self._client is None:
+                if not self._connect_client():
+                    state.connected = False
+                    await asyncio.sleep(2.0)
+                    return False
+
+            payload = await asyncio.to_thread(self._client.list_packages)
+            state.packages = packages_from_rpc(payload)
+            state.selected = max(0, min(state.selected, len(state.packages) - 1))
+            state.connected = True
+            state.last_poll_error = None
+
+            # Fetch runtime info when not yet populated, or on reconnect
+            needs_runtime = (
+                self._mirrorname == "" and self._log_base is None
+            ) or (not was_connected)
+            if needs_runtime:
+                try:
+                    info = await asyncio.to_thread(self._client.get_runtime_info)
+                    self._apply_runtime_info(info)
+                except Exception:
+                    pass
+
+            return True
+        except Exception as exc:
+            state.connected = False
+            state.last_poll_error = str(exc)
+            try:
+                self._client.disconnect()
+            except Exception:
+                pass
+            self._client = None
+            return False
+
     async def _status_poller(self, app: Application) -> None:
         """Background task: poll daemon every 1.0s and update state.
 
         Args:
             app(Application): Running application (for invalidate calls).
         """
-        state = self._state
+        was_connected = False
         while True:
-            try:
-                if self._client is None:
-                    if not self._connect_client():
-                        state.connected = False
-                        app.invalidate()
-                        await asyncio.sleep(2.0)
-                        continue
-
-                payload = await asyncio.to_thread(self._client.list_packages)
-                state.packages = packages_from_rpc(payload)
-                state.selected = max(0, min(state.selected, len(state.packages) - 1))
-                state.connected = True
-                state.last_poll_error = None
-            except Exception as exc:
-                state.connected = False
-                state.last_poll_error = str(exc)
-                try:
-                    self._client.disconnect()
-                except Exception:
-                    pass
-                self._client = None
-
+            was_connected = await self._poll_once(app, was_connected)
             app.invalidate()
             await asyncio.sleep(1.0)
 
@@ -992,14 +1029,13 @@ class MirrorTUI:
 # ---------------------------------------------------------------------------
 
 
-def tui(config: str, socket_path: Optional[str]) -> None:
+def tui(socket_path: Optional[str]) -> None:
     """Run the real-time mirror status TUI.
 
-    Resolves the master socket path, reads mirrorname and log base from
-    the config file best-effort, then opens the full-screen application.
+    Resolves the master socket path, fetches runtime info from the daemon
+    best-effort, then opens the full-screen application.
 
     Args:
-        config(str): Path to the main JSON configuration file.
         socket_path(str, optional): Explicit master socket path override.
     """
     sock = _resolve_master_socket(socket_path)
@@ -1007,17 +1043,15 @@ def tui(config: str, socket_path: Optional[str]) -> None:
     mirrorname = ""
     log_base: Optional[Path] = None
     try:
-        raw = json.loads(Path(config).read_text())
-        mirrorname = raw.get("mirrorname", "")
-        base_str = (
-            raw.get("settings", {})
-            .get("logger", {})
-            .get("packagefileformat", {})
-            .get("base")
-        )
-        if base_str:
-            log_base = Path(base_str)
+        info = mirror.socket.master.get_runtime_info(socket_path=sock)
+        mirrorname = info.get("mirrorname", "") or ""
+        lb = info.get("log_base")
+        if lb:
+            log_base = Path(lb)
     except Exception:
+        # Daemon offline at startup; the TUI still opens and the poller will
+        # reconnect. The header simply omits the name and the log helper
+        # falls back to symlink/regular-file checks without containment.
         pass
 
     tui_app = MirrorTUI(

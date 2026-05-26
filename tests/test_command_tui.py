@@ -5,16 +5,18 @@ All tests operate on pure functions or isolated state; no prompt_toolkit
 Application is started. The plan specifies 12 test groups.
 """
 
+import asyncio
 import os
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch, call
 
 import pytest
 
 import mirror.structure
 from mirror.command.tui import (
     LOG_BUFFER_MAX_LINES,
+    MirrorTUI,
     TUIState,
     _fallback_package_from_dict,
     _is_rotated,
@@ -293,6 +295,8 @@ class TestClickRegistration:
         result = runner.invoke(main, ["tui", "--help"])
         assert result.exit_code == 0
         assert "real-time mirror status TUI" in result.output
+        assert "--socket" in result.output
+        assert "--config" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -525,3 +529,170 @@ def test_log_tailer_detects_rotation_by_inode(tmp_path):
     assert _is_rotated(fd_a, log_file) is True
 
     os.close(fd_a)
+
+
+# ---------------------------------------------------------------------------
+# Addendum: get_runtime_info RPC tests
+# ---------------------------------------------------------------------------
+
+
+_RUNTIME_INFO = {
+    "mirrorname": "testmirror",
+    "hostname": "h.example",
+    "localtimezone": "UTC",
+    "logfolder": "/var/log/mirror",
+    "webroot": "/var/www/mirror",
+    "log_base": "/var/log/mirror/packages",
+    "max_runtime_seconds": 43200,
+    "errorcontinuetime": 60,
+    "sync_methods": ["rsync", "ftpsync"],
+    "daemon_started_at": time.time(),
+}
+
+
+class TestTuiForwardsGetRuntimeInfo:
+    """(i) tui() calls get_runtime_info and passes mirrorname/log_base to MirrorTUI."""
+
+    def test_forwards_runtime_info(self, monkeypatch):
+        import mirror.socket.master
+        import sys
+        tui_module = sys.modules["mirror.command.tui"]
+
+        monkeypatch.setattr(
+            mirror.socket.master, "get_runtime_info", lambda socket_path=None: _RUNTIME_INFO
+        )
+
+        captured = {}
+
+        class CaptureMirrorTUI:
+            def __init__(self, socket_path, mirrorname="", log_base=None):
+                captured["mirrorname"] = mirrorname
+                captured["log_base"] = log_base
+
+            def run(self):
+                pass
+
+        monkeypatch.setattr(tui_module, "MirrorTUI", CaptureMirrorTUI)
+
+        from mirror.command.tui import tui
+        tui(socket_path=None)
+
+        assert captured["mirrorname"] == "testmirror"
+        assert captured["log_base"] == Path("/var/log/mirror/packages")
+
+
+class TestTuiStartupRpcRaises:
+    """(ii) When get_runtime_info raises at startup, TUI opens with empty values;
+    _apply_runtime_info setter then populates them."""
+
+    def test_startup_rpc_raises_then_setter_populates(self, monkeypatch):
+        import mirror.socket.master
+        import sys
+        tui_module = sys.modules["mirror.command.tui"]
+
+        def _raise(socket_path=None):
+            raise RuntimeError("daemon offline")
+
+        monkeypatch.setattr(mirror.socket.master, "get_runtime_info", _raise)
+
+        captured_tui = {}
+
+        class CaptureMirrorTUI:
+            def __init__(self, socket_path, mirrorname="", log_base=None):
+                self._mirrorname = mirrorname
+                self._log_base = log_base
+                captured_tui["instance"] = self
+
+            def run(self):
+                pass
+
+            # Delegate to real implementation via composition
+            _apply_runtime_info = MirrorTUI._apply_runtime_info
+
+        monkeypatch.setattr(tui_module, "MirrorTUI", CaptureMirrorTUI)
+
+        from mirror.command.tui import tui
+        tui(socket_path=None)
+
+        instance = captured_tui["instance"]
+        assert instance._mirrorname == ""
+        assert instance._log_base is None
+
+        # Now apply runtime info via the setter (call unbound to avoid double-self)
+        MirrorTUI._apply_runtime_info(instance, {"mirrorname": "m", "log_base": "/x"})
+        assert instance._mirrorname == "m"
+        assert instance._log_base == Path("/x")
+
+
+class TestStatusPollerFetchesRuntimeInfoAfterStartupFailure:
+    """(iii) Poller fetches runtime info on first successful tick when not yet populated."""
+
+    def test_fetches_on_first_success(self):
+        tui_instance = MirrorTUI(socket_path="/tmp/fake.sock")
+        # Precondition: unpopulated
+        assert tui_instance._mirrorname == ""
+        assert tui_instance._log_base is None
+
+        client = MagicMock()
+        client.list_packages.return_value = {"packages": []}
+        client.get_runtime_info.return_value = {"mirrorname": "new", "log_base": "/logs"}
+        tui_instance._client = client
+
+        mock_app = MagicMock()
+        result = asyncio.run(tui_instance._poll_once(mock_app, was_connected=False))
+
+        assert result is True
+        assert tui_instance._mirrorname == "new"
+        assert tui_instance._log_base == Path("/logs")
+        client.list_packages.assert_called_once()
+        client.get_runtime_info.assert_called_once()
+
+
+class TestStatusPollerDoesNotRefetchInSteadyState:
+    """(iv) Steady-state: populated + was_connected=True → get_runtime_info not called."""
+
+    def test_no_refetch_in_steady_state(self):
+        tui_instance = MirrorTUI(
+            socket_path="/tmp/fake.sock",
+            mirrorname="populated",
+            log_base=Path("/logs"),
+        )
+
+        client = MagicMock()
+        client.list_packages.return_value = {"packages": []}
+        client.get_runtime_info.side_effect = AssertionError("get_runtime_info must not be called")
+        tui_instance._client = client
+
+        mock_app = MagicMock()
+        result = asyncio.run(tui_instance._poll_once(mock_app, was_connected=True))
+
+        assert result is True
+        client.list_packages.assert_called_once()
+        client.get_runtime_info.assert_not_called()
+
+
+class TestStatusPollerRefetchesOnReconnect:
+    """(v) Reconnect transition: populated + was_connected=False → refetch and update."""
+
+    def test_refetches_on_reconnect_with_updated_values(self):
+        tui_instance = MirrorTUI(
+            socket_path="/tmp/fake.sock",
+            mirrorname="old",
+            log_base=Path("/old"),
+        )
+
+        client = MagicMock()
+        client.list_packages.return_value = {"packages": []}
+        client.get_runtime_info.return_value = {"mirrorname": "new", "log_base": "/new"}
+        tui_instance._client = client
+
+        mock_app = MagicMock()
+        result = asyncio.run(tui_instance._poll_once(mock_app, was_connected=False))
+
+        assert result is True
+        assert tui_instance._mirrorname == "new"
+        assert tui_instance._log_base == Path("/new")
+        client.list_packages.assert_called_once()
+        client.get_runtime_info.assert_called_once()
+
+
