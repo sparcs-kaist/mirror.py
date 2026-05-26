@@ -74,6 +74,11 @@ def format_eta(package: Package, now: float) -> str:
     """
     if package.disabled or package.syncrate <= 0:
         return "-"
+    if package.status == "SYNC":
+        running_for = (now - package.timestamp / 1000.0) if package.timestamp else 0.0
+        if running_for <= 0:
+            return "running"
+        return f"running {format_duration(running_for)}"
     next_sync = package.lastsync + package.syncrate
     remaining = next_sync - now
     if remaining <= 0:
@@ -140,6 +145,58 @@ def status_style(status: str) -> str:
     return mapping.get(status, "class:status.unknown")
 
 
+_COL_PKGID = 22
+_COL_STATUS = 8
+_COL_ETA = 22
+_COL_LAST = 18
+
+
+def _fit_field(text: str, width: int) -> str:
+    """Truncate text to exactly width, padding on the right with spaces.
+
+    Truncation uses a trailing ".." marker when width allows so that
+    over-long values do not shift later columns and the header / body
+    stay byte-for-byte aligned.
+    """
+    if len(text) > width:
+        if width >= 3:
+            return text[: width - 2] + ".."
+        return text[:width]
+    return text.ljust(width)
+
+
+def _format_table_row(prefix: str, pkgid: str, status: str, eta: str, last: str) -> str:
+    """Build a single table line with consistent column widths."""
+    return (
+        f"{prefix}"
+        f"{_fit_field(pkgid, _COL_PKGID)} "
+        f"{_fit_field(status, _COL_STATUS)} "
+        f"{_fit_field(eta, _COL_ETA)} "
+        f"{_fit_field(last, _COL_LAST)}\n"
+    )
+
+
+def build_table_header() -> list[tuple[str, str]]:
+    """Build the column header rows shown above the package table.
+
+    Return:
+        rows(list[tuple[str, str]]): Two (style, text) rows: the label row
+            and a separator made of box-drawing dashes.
+    """
+    label_row = _format_table_row("  ", "PACKAGE", "STATUS", "ETA / RUNNING", "LAST CHANGE")
+    divider_row = _format_table_row(
+        "  ",
+        "-" * _COL_PKGID,
+        "-" * _COL_STATUS,
+        "-" * _COL_ETA,
+        "-" * _COL_LAST,
+    )
+    return [
+        ("class:tableheader", label_row),
+        ("class:tableheader.divider", divider_row),
+    ]
+
+
 def build_table_rows(
     packages: list[Package], selected: int, now: float
 ) -> list[tuple[str, str]]:
@@ -156,11 +213,13 @@ def build_table_rows(
     rows: list[tuple[str, str]] = []
     for idx, pkg in enumerate(packages):
         prefix = "> " if idx == selected else "  "
-        pkgid = pkg.pkgid.ljust(20)
-        status = pkg.status.ljust(8)
-        eta = format_eta(pkg, now).ljust(20)
-        last = format_last_change(pkg, now)
-        line = f"{prefix}{pkgid} {status} {eta} {last}\n"
+        line = _format_table_row(
+            prefix,
+            pkg.pkgid,
+            pkg.status,
+            format_eta(pkg, now),
+            format_last_change(pkg, now),
+        )
 
         if idx == selected:
             row_style = "class:selected"
@@ -484,6 +543,8 @@ _STYLE = Style.from_dict(
         "status.active": "fg:ansigreen",
         "status.error": "fg:ansired bold",
         "status.unknown": "fg:ansigray",
+        "tableheader": "fg:ansibrightcyan bold",
+        "tableheader.divider": "fg:ansibrightblack",
         "dialog": "bg:ansidarkgray fg:ansiwhite",
         "error": "fg:ansired bold",
         "success": "fg:ansigreen",
@@ -569,17 +630,21 @@ class MirrorTUI:
                 else:
                     state.toast = None
 
+            header_rows = build_table_header()
             if not state.packages:
-                body = [("class:status.unknown", "(no packages)\n")]
+                body: list[tuple[str, str]] = [
+                    ("class:status.unknown", "  (no packages)\n")
+                ]
             else:
                 body = build_table_rows(state.packages, state.selected, now)
 
-            return FormattedText(toast_rows + body)
+            return FormattedText(toast_rows + header_rows + body)
 
         table_win = Window(
             content=FormattedTextControl(get_table),
             wrap_lines=False,
         )
+        table_container = Frame(body=table_win, title="Packages")
 
         # --- Log pane ---
         log_area = TextArea(
@@ -590,20 +655,21 @@ class MirrorTUI:
             wrap_lines=False,
         )
 
-        def get_log_header() -> FormattedText:
+        def get_log_title() -> str:
             pkg = state.current_package()
-            follow = "on" if state.log_tail_path else "off"
-            if pkg:
-                label = f" Log: {pkg.pkgid}  Follow: {follow} "
-            else:
-                label = " Log (no package selected) "
-            return FormattedText([("class:header", label)])
+            if pkg is None:
+                return "Log (no package selected)"
+            if state.log_tail_path is None:
+                return f"Log: {pkg.pkgid}  (idle)"
+            buf = log_area.buffer
+            following = buf.cursor_position >= len(buf.text)
+            follow = "on" if following else "off"
+            return f"Log: {pkg.pkgid}  Follow: {follow}"
 
-        log_header = Window(content=FormattedTextControl(get_log_header), height=1)
         log_container = ConditionalContainer(
             content=Frame(
-                body=HSplit([log_header, log_area]),
-                title="",
+                body=log_area,
+                title=get_log_title,
             ),
             filter=Condition(lambda: state.show_log),
         )
@@ -648,7 +714,7 @@ class MirrorTUI:
 
         body = VSplit(
             [
-                table_win,
+                table_container,
                 log_container,
             ]
         )

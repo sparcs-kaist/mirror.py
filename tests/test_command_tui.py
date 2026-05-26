@@ -21,6 +21,7 @@ from mirror.command.tui import (
     _fallback_package_from_dict,
     _is_rotated,
     _trim_log_text,
+    build_table_header,
     build_table_rows,
     format_duration,
     format_eta,
@@ -126,6 +127,18 @@ class TestFormatEta:
         pkg = _make_package(syncrate=3600, lastsync=now - 7200)
         assert format_eta(pkg, now) == "overdue"
 
+    def test_sync_shows_running_duration(self):
+        now = 1000000.0
+        # timestamp is ms since epoch; 120s ago
+        pkg = _make_package(status="SYNC", syncrate=3600, timestamp=(now - 120) * 1000)
+        result = format_eta(pkg, now)
+        assert result.startswith("running")
+        assert "00:02:00" in result
+
+    def test_sync_without_timestamp(self):
+        pkg = _make_package(status="SYNC", syncrate=3600, timestamp=0.0)
+        assert format_eta(pkg, time.time()) == "running"
+
 
 # ---------------------------------------------------------------------------
 # 3. latest_change_epoch
@@ -223,6 +236,44 @@ class TestBuildTableRows:
         pkgs = [_make_package("debian", status="SYNC")]
         rows = build_table_rows(pkgs, selected=0, now=time.time())
         assert "SYNC" in rows[0][1]
+
+    def test_row_alignment_matches_header(self):
+        pkgs = [_make_package("debian", status="SYNC")]
+        header_rows = build_table_header()
+        body_rows = build_table_rows(pkgs, selected=0, now=time.time())
+        assert len(header_rows[0][1]) == len(body_rows[0][1])
+
+    def test_long_pkgid_truncated_keeps_alignment(self):
+        pkgs = [_make_package("a" * 80, status="SYNC")]
+        header_rows = build_table_header()
+        body_rows = build_table_rows(pkgs, selected=0, now=time.time())
+        # Header and body must remain the same total width
+        assert len(header_rows[0][1]) == len(body_rows[0][1])
+        # Truncation marker is the trailing ".."
+        assert ".." in body_rows[0][1]
+
+
+class TestBuildTableHeader:
+    def test_returns_two_rows(self):
+        rows = build_table_header()
+        assert len(rows) == 2
+
+    def test_label_row_contains_column_names(self):
+        rows = build_table_header()
+        label = rows[0][1]
+        for col in ("PACKAGE", "STATUS", "ETA / RUNNING", "LAST CHANGE"):
+            assert col in label
+
+    def test_divider_row_is_dashes(self):
+        rows = build_table_header()
+        divider = rows[1][1]
+        assert "-" in divider
+        assert "PACKAGE" not in divider
+
+    def test_styles(self):
+        rows = build_table_header()
+        assert rows[0][0] == "class:tableheader"
+        assert rows[1][0] == "class:tableheader.divider"
 
 
 # ---------------------------------------------------------------------------
