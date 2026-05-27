@@ -20,15 +20,25 @@ from mirror.command.tui import (
     TUIState,
     _fallback_package_from_dict,
     _is_rotated,
+    _modal_active,
     _trim_log_text,
+    _visible_columns,
+    apply_filter,
+    apply_sort,
+    build_help_text,
+    build_table_header,
     build_table_rows,
+    compute_status_counts,
+    format_ago,
+    format_datetime,
     format_duration,
-    format_eta,
-    format_last_change,
-    latest_change_epoch,
+    format_elapsed,
+    format_last_success,
+    format_started,
     packages_from_rpc,
     safe_open_log_for_read,
     status_style,
+    visible_packages,
 )
 
 
@@ -47,6 +57,7 @@ def _make_package(
     lastsuccesstime: float = 0.0,
     lasterrortime: float = 0.0,
     runninglog: str = None,
+    errorcount: int = 0,
 ) -> mirror.structure.Package:
     settings = mirror.structure.PackageSettings(
         hidden=False, src="rsync://example.com/debian", dst="/srv/mirror/debian", options={}
@@ -66,6 +77,7 @@ def _make_package(
     )
     pkg.statusinfo.lastsuccesstime = lastsuccesstime
     pkg.statusinfo.lasterrortime = lasterrortime
+    pkg.statusinfo.errorcount = errorcount
     if runninglog is not None:
         pkg.statusinfo.runninglog = runninglog
     return pkg
@@ -102,77 +114,99 @@ class TestFormatDuration:
 
 
 # ---------------------------------------------------------------------------
-# 2. format_eta
+# 2. format_datetime
 # ---------------------------------------------------------------------------
 
 
-class TestFormatEta:
-    def test_disabled_package(self):
-        pkg = _make_package(disabled=True, syncrate=3600)
-        assert format_eta(pkg, time.time()) == "-"
+class TestFormatDatetime:
+    def test_zero_returns_dash(self):
+        assert format_datetime(0) == "-"
 
-    def test_zero_syncrate(self):
-        pkg = _make_package(syncrate=0)
-        assert format_eta(pkg, time.time()) == "-"
+    def test_negative_returns_dash(self):
+        assert format_datetime(-1) == "-"
 
-    def test_next_in_future(self):
-        now = 1000000.0
-        pkg = _make_package(syncrate=3600, lastsync=now - 1800)
-        result = format_eta(pkg, now)
-        assert result.startswith("next in")
-
-    def test_overdue(self):
-        now = 1000000.0
-        pkg = _make_package(syncrate=3600, lastsync=now - 7200)
-        assert format_eta(pkg, now) == "overdue"
+    def test_positive_returns_iso_like_string(self):
+        # Pick a fixed epoch and check the format shape only (locale-dependent).
+        result = format_datetime(1_700_000_000)
+        assert len(result) == 19
+        assert result[4] == "-" and result[7] == "-" and result[10] == " "
+        assert result[13] == ":" and result[16] == ":"
 
 
 # ---------------------------------------------------------------------------
-# 3. latest_change_epoch
+# 3. format_started
 # ---------------------------------------------------------------------------
 
 
-class TestLatestChangeEpoch:
-    def test_normalizes_ms_timestamp(self):
-        # timestamp is ms (year ~2033), lastsuccesstime is plain seconds
-        pkg = _make_package(
-            timestamp=2000000000000,  # ms
-            lastsuccesstime=1700000000,  # seconds
-        )
-        result = latest_change_epoch(pkg)
-        # timestamp/1000 = 2000000000.0 > 1700000000 => should return 2000000000.0
-        assert result == pytest.approx(2000000000.0)
+class TestFormatStarted:
+    def test_non_sync_returns_dash(self):
+        pkg = _make_package(status="ACTIVE", timestamp=1_700_000_000 * 1000)
+        assert format_started(pkg, time.time()) == "-"
 
-    def test_all_zero_fields(self):
-        pkg = _make_package(timestamp=0.0, lastsuccesstime=0.0, lasterrortime=0.0)
-        assert latest_change_epoch(pkg) == 0.0
+    def test_sync_without_timestamp(self):
+        pkg = _make_package(status="SYNC", timestamp=0.0)
+        assert format_started(pkg, time.time()) == "(unknown)"
 
-    def test_lasterrortime_wins(self):
-        pkg = _make_package(
-            timestamp=1000,  # ms => 1.0s
-            lastsuccesstime=500.0,
-            lasterrortime=1000.0,
-        )
-        assert latest_change_epoch(pkg) == pytest.approx(1000.0)
+    def test_sync_normalizes_ms_timestamp(self):
+        # Package.timestamp is ms; format_started must divide by 1000.
+        pkg = _make_package(status="SYNC", timestamp=1_700_000_000_000)
+        result = format_started(pkg, time.time())
+        # Same format as format_datetime(1_700_000_000)
+        assert result == format_datetime(1_700_000_000)
 
 
 # ---------------------------------------------------------------------------
-# 4. format_last_change
+# 4. format_elapsed
 # ---------------------------------------------------------------------------
 
 
-class TestFormatLastChange:
-    def test_returns_ago_string(self):
-        now = 1000000.0
-        # timestamp in ms: 999900000 ms = 999900.0 s => 100s before now
-        pkg = _make_package(timestamp=999900000)
-        result = format_last_change(pkg, now)
-        assert result.endswith("ago")
-        assert "01:40" in result or "100" in result or "00:01:40" in result
+class TestFormatElapsed:
+    def test_non_sync_returns_dash(self):
+        pkg = _make_package(status="ACTIVE", timestamp=(time.time() - 120) * 1000)
+        assert format_elapsed(pkg, time.time()) == "-"
 
-    def test_never_when_all_zero(self):
-        pkg = _make_package(timestamp=0.0, lastsuccesstime=0.0, lasterrortime=0.0)
-        assert format_last_change(pkg, time.time()) == "never"
+    def test_sync_without_timestamp_returns_dash(self):
+        pkg = _make_package(status="SYNC", timestamp=0.0)
+        assert format_elapsed(pkg, time.time()) == "-"
+
+    def test_sync_returns_running_duration(self):
+        now = 1_000_000.0
+        pkg = _make_package(status="SYNC", timestamp=(now - 125) * 1000)
+        result = format_elapsed(pkg, now)
+        assert result == "00:02:05"
+
+
+# ---------------------------------------------------------------------------
+# 5. format_last_success
+# ---------------------------------------------------------------------------
+
+
+class TestFormatLastSuccess:
+    def test_never(self):
+        pkg = _make_package(lastsuccesstime=0.0)
+        assert format_last_success(pkg) == "(never)"
+
+    def test_returns_datetime(self):
+        pkg = _make_package(lastsuccesstime=1_700_000_000)
+        assert format_last_success(pkg) == format_datetime(1_700_000_000)
+
+
+# ---------------------------------------------------------------------------
+# 6. format_ago
+# ---------------------------------------------------------------------------
+
+
+class TestFormatAgo:
+    def test_zero_returns_dash(self):
+        assert format_ago(0, time.time()) == "-"
+
+    def test_future_epoch_returns_dash(self):
+        now = 1_000_000.0
+        assert format_ago(now + 60, now) == "-"
+
+    def test_past_epoch_returns_duration(self):
+        now = 1_000_000.0
+        assert format_ago(now - 125, now) == "00:02:05"
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +243,11 @@ class TestBuildTableRows:
         rows = build_table_rows(pkgs, selected=0, now=time.time())
         assert len(rows) == 3
 
+    def test_selected_row_has_selected_style_via_pkgid(self):
+        pkgs = [_make_package("a"), _make_package("b")]
+        rows = build_table_rows(pkgs, selected=0, now=time.time(), selected_pkgid="b")
+        assert rows[1][0] == "class:selected"
+
     def test_selected_row_has_selected_style(self):
         pkgs = [_make_package("a"), _make_package("b")]
         rows = build_table_rows(pkgs, selected=1, now=time.time())
@@ -223,6 +262,94 @@ class TestBuildTableRows:
         pkgs = [_make_package("debian", status="SYNC")]
         rows = build_table_rows(pkgs, selected=0, now=time.time())
         assert "SYNC" in rows[0][1]
+
+    def test_row_alignment_matches_header(self):
+        pkgs = [_make_package("debian", status="SYNC")]
+        header_rows = build_table_header()
+        body_rows = build_table_rows(pkgs, selected=0, now=time.time())
+        assert len(header_rows[0][1]) == len(body_rows[0][1])
+
+    def test_long_pkgid_truncated_keeps_alignment(self):
+        pkgs = [_make_package("a" * 80, status="SYNC")]
+        header_rows = build_table_header()
+        body_rows = build_table_rows(pkgs, selected=0, now=time.time())
+        # Header and body must remain the same total width
+        assert len(header_rows[0][1]) == len(body_rows[0][1])
+        # Truncation marker is the trailing ".."
+        assert ".." in body_rows[0][1]
+
+    def test_disabled_package_has_disabled_style(self):
+        pkg = _make_package("mypkg", disabled=True)
+        # Use a non-matching pkgid so this package is not selected
+        rows = build_table_rows([pkg], selected=99, now=time.time(), selected_pkgid="other")
+        assert rows[0][0] == "class:status.disabled"
+
+    def test_disabled_package_pkgid_has_off_suffix(self):
+        pkg = _make_package("mypkg", disabled=True)
+        rows = build_table_rows([pkg], selected=99, now=time.time(), selected_pkgid="other")
+        assert "(off)" in rows[0][1]
+
+    def test_error_with_count_shows_error_xn(self):
+        pkg = _make_package("mypkg", status="ERROR", errorcount=3)
+        rows = build_table_rows([pkg], selected=0, now=time.time())
+        assert "ERROR x3" in rows[0][1]
+
+    def test_error_with_zero_count_shows_plain_error(self):
+        pkg = _make_package("mypkg", status="ERROR", errorcount=0)
+        rows = build_table_rows([pkg], selected=0, now=time.time())
+        assert "ERROR" in rows[0][1]
+        assert "ERROR x" not in rows[0][1]
+
+
+class TestBuildTableHeader:
+    def test_returns_two_rows(self):
+        rows = build_table_header()
+        assert len(rows) == 2
+
+    def test_label_row_contains_column_names(self):
+        rows = build_table_header()
+        label = rows[0][1]
+        for col in ("PACKAGE", "STATUS", "STARTED", "ELAPSED", "LAST SUCCESS", "AGO"):
+            assert col in label
+
+    def test_divider_row_is_dashes(self):
+        rows = build_table_header()
+        divider = rows[1][1]
+        assert "-" in divider
+        assert "PACKAGE" not in divider
+
+    def test_styles(self):
+        rows = build_table_header()
+        assert rows[0][0] == "class:tableheader"
+        assert rows[1][0] == "class:tableheader.divider"
+
+    def test_responsive_wide_all_columns(self):
+        vis = _visible_columns(160)
+        rows = build_table_header(vis)
+        label = rows[0][1]
+        assert "ELAPSED" in label
+        assert "STARTED" in label
+
+    def test_responsive_medium_no_elapsed(self):
+        vis = _visible_columns(120)
+        rows = build_table_header(vis)
+        label = rows[0][1]
+        assert "ELAPSED" not in label
+        assert "STARTED" in label
+
+    def test_responsive_narrow_no_elapsed_no_started(self):
+        vis = _visible_columns(100)
+        rows = build_table_header(vis)
+        label = rows[0][1]
+        assert "ELAPSED" not in label
+        assert "STARTED" not in label
+
+    def test_responsive_narrow_header_body_aligned(self):
+        vis = _visible_columns(100)
+        pkgs = [_make_package("debian")]
+        header_rows = build_table_header(vis)
+        body_rows = build_table_rows(pkgs, selected=0, now=time.time(), visible=vis)
+        assert len(header_rows[0][1]) == len(body_rows[0][1])
 
 
 # ---------------------------------------------------------------------------
@@ -696,3 +823,270 @@ class TestStatusPollerRefetchesOnReconnect:
         client.get_runtime_info.assert_called_once()
 
 
+# ---------------------------------------------------------------------------
+# New tests: compute_status_counts
+# ---------------------------------------------------------------------------
+
+
+class TestComputeStatusCounts:
+    def test_empty_list(self):
+        counts = compute_status_counts([])
+        assert counts == {"total": 0, "SYNC": 0, "ACTIVE": 0, "ERROR": 0, "UNKNOWN": 0, "disabled": 0}
+
+    def test_mixed_statuses(self):
+        pkgs = [
+            _make_package("a", status="SYNC"),
+            _make_package("b", status="ACTIVE"),
+            _make_package("c", status="ERROR"),
+            _make_package("d", status="UNKNOWN"),
+            _make_package("e", status="ACTIVE"),
+        ]
+        counts = compute_status_counts(pkgs)
+        assert counts["total"] == 5
+        assert counts["SYNC"] == 1
+        assert counts["ACTIVE"] == 2
+        assert counts["ERROR"] == 1
+        assert counts["UNKNOWN"] == 1
+        assert counts["disabled"] == 0
+
+    def test_all_disabled(self):
+        pkgs = [
+            _make_package("a", disabled=True, status="UNKNOWN"),
+            _make_package("b", disabled=True, status="UNKNOWN"),
+        ]
+        counts = compute_status_counts(pkgs)
+        assert counts["disabled"] == 2
+        assert counts["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# New tests: apply_sort
+# ---------------------------------------------------------------------------
+
+
+class TestApplySort:
+    def test_default_preserves_order(self):
+        pkgs = [_make_package("c"), _make_package("a"), _make_package("b")]
+        result = apply_sort(pkgs, "default")
+        assert [p.pkgid for p in result] == ["c", "a", "b"]
+
+    def test_status_priority_order(self):
+        pkgs = [
+            _make_package("u", status="UNKNOWN"),
+            _make_package("a", status="ACTIVE"),
+            _make_package("e", status="ERROR"),
+            _make_package("s", status="SYNC"),
+        ]
+        result = apply_sort(pkgs, "status")
+        statuses = [p.status for p in result]
+        assert statuses == ["ERROR", "SYNC", "ACTIVE", "UNKNOWN"]
+
+    def test_ago_oldest_first(self):
+        pkgs = [
+            _make_package("recent", lastsuccesstime=1_000_000.0),
+            _make_package("never"),  # lastsuccesstime=0
+            _make_package("old", lastsuccesstime=500_000.0),
+        ]
+        result = apply_sort(pkgs, "ago")
+        assert result[0].pkgid == "never"
+        assert result[1].pkgid == "old"
+        assert result[2].pkgid == "recent"
+
+    def test_pkgid_alpha(self):
+        pkgs = [_make_package("Zebra"), _make_package("apple"), _make_package("Mango")]
+        result = apply_sort(pkgs, "pkgid")
+        assert [p.pkgid for p in result] == ["apple", "Mango", "Zebra"]
+
+
+# ---------------------------------------------------------------------------
+# New tests: apply_filter
+# ---------------------------------------------------------------------------
+
+
+class TestApplyFilter:
+    def test_case_insensitive_match(self):
+        pkgs = [_make_package("Debian"), _make_package("ubuntu"), _make_package("PyPI")]
+        result = apply_filter(pkgs, "deb")
+        assert len(result) == 1
+        assert result[0].pkgid == "Debian"
+
+    def test_no_match_returns_empty(self):
+        pkgs = [_make_package("debian"), _make_package("ubuntu")]
+        result = apply_filter(pkgs, "arch")
+        assert result == []
+
+    def test_empty_needle_returns_all(self):
+        pkgs = [_make_package("a"), _make_package("b")]
+        result = apply_filter(pkgs, "")
+        assert len(result) == 2
+
+
+# ---------------------------------------------------------------------------
+# New tests: visible_packages (sort + filter pipeline)
+# ---------------------------------------------------------------------------
+
+
+class TestVisiblePackages:
+    def test_sort_then_filter_pipeline(self):
+        state = TUIState()
+        state.packages = [
+            _make_package("debian", status="ERROR"),
+            _make_package("ubuntu", status="ACTIVE"),
+            _make_package("archlinux", status="ERROR"),
+        ]
+        state.sort_mode = "status"
+        state.filter_text = "arch"
+        result = visible_packages(state)
+        # After sort by status (ERROR first), filter keeps only "archlinux"
+        assert len(result) == 1
+        assert result[0].pkgid == "archlinux"
+
+
+# ---------------------------------------------------------------------------
+# New tests: selection by pkgid preservation
+# ---------------------------------------------------------------------------
+
+
+class TestSelectionByPkgid:
+    def test_sort_change_preserves_pkgid(self):
+        state = TUIState()
+        state.packages = [_make_package("a"), _make_package("z"), _make_package("m")]
+        state.selected_pkgid = "m"
+        state.sort_mode = "pkgid"
+        # After sort alphabetically: a, m, z — selected_pkgid "m" still present
+        vis = visible_packages(state)
+        ids = [p.pkgid for p in vis]
+        assert "m" in ids
+        assert state.selected_pkgid == "m"
+
+    def test_filter_change_falls_back_to_first_when_filtered_out(self):
+        state = TUIState()
+        state.packages = [_make_package("debian"), _make_package("ubuntu")]
+        state.selected_pkgid = "ubuntu"
+        state.filter_text = "deb"
+        state.fix_selection()
+        assert state.selected_pkgid == "debian"
+
+    def test_empty_visible_list_clears_selection(self):
+        state = TUIState()
+        state.packages = [_make_package("debian")]
+        state.selected_pkgid = "debian"
+        state.filter_text = "xyz"
+        state.fix_selection()
+        assert state.selected_pkgid == ""
+
+    def test_insertion_preserves_pkgid(self):
+        state = TUIState()
+        state.packages = [_make_package("a"), _make_package("b")]
+        state.selected_pkgid = "b"
+        # Add a new package at the front
+        state.packages = [_make_package("new"), _make_package("a"), _make_package("b")]
+        vis = visible_packages(state)
+        ids = [p.pkgid for p in vis]
+        assert "b" in ids
+        assert state.selected_pkgid == "b"
+
+
+# ---------------------------------------------------------------------------
+# New tests: pause short-circuits _poll_once
+# ---------------------------------------------------------------------------
+
+
+class TestPauseShortCircuit:
+    def test_paused_does_not_call_list_packages(self):
+        tui_instance = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui_instance._state.paused = True
+
+        client = MagicMock()
+        tui_instance._client = client
+
+        mock_app = MagicMock()
+        result = asyncio.run(tui_instance._poll_once(mock_app, was_connected=True))
+
+        assert result is True
+        client.list_packages.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# New tests: modal-key precedence
+# ---------------------------------------------------------------------------
+
+
+class TestModalKeyPrecedence:
+    """
+    For each modal state (dialog, show_help, filter_input_active) and each
+    guarded key (j, x, r, Tab, s, /, p), assert that _modal_active returns True.
+    The keybinding handlers call _modal_active and early-return when True.
+    """
+
+    @pytest.mark.parametrize("modal_flag,modal_value", [
+        ("dialog", "set"),
+        ("show_help", True),
+        ("filter_input_active", True),
+    ])
+    @pytest.mark.parametrize("key_name", ["j", "x", "r", "tab", "s", "slash", "p"])
+    def test_modal_active_blocks_key(self, modal_flag, modal_value, key_name):
+        state = TUIState()
+        if modal_flag == "dialog":
+            state.open_dialog("start", "debian")
+        else:
+            setattr(state, modal_flag, modal_value)
+
+        assert _modal_active(state) is True
+
+    def test_tab_blocked_by_show_help(self):
+        # Regression: Tab was only guarded against dialog, not show_help/filter.
+        state = TUIState()
+        state.show_help = True
+        assert _modal_active(state) is True
+
+    def test_tab_blocked_by_filter_input_active(self):
+        state = TUIState()
+        state.filter_input_active = True
+        assert _modal_active(state) is True
+
+    def test_no_modal_returns_false(self):
+        state = TUIState()
+        assert _modal_active(state) is False
+
+
+# ---------------------------------------------------------------------------
+# New tests: _apply_runtime_info stores daemon_started_at and localtimezone
+# ---------------------------------------------------------------------------
+
+
+class TestApplyRuntimeInfo:
+    def test_stores_daemon_started_at(self):
+        tui_instance = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui_instance._apply_runtime_info({"daemon_started_at": 1234567890.0})
+        assert tui_instance._daemon_started_at == 1234567890.0
+
+    def test_stores_localtimezone(self):
+        tui_instance = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui_instance._apply_runtime_info({"localtimezone": "Asia/Seoul"})
+        assert tui_instance._localtimezone == "Asia/Seoul"
+
+    def test_none_is_noop(self):
+        tui_instance = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui_instance._apply_runtime_info(None)
+        assert tui_instance._daemon_started_at == 0.0
+        assert tui_instance._localtimezone == ""
+
+
+# ---------------------------------------------------------------------------
+# New tests: build_help_text import check
+# ---------------------------------------------------------------------------
+
+
+class TestBuildHelpText:
+    def test_returns_formatted_text(self):
+        from prompt_toolkit.formatted_text import FormattedText
+        result = build_help_text()
+        assert isinstance(result, FormattedText)
+
+    def test_contains_key_names(self):
+        result = build_help_text()
+        text = "".join(t for _, t in result)
+        assert "j / k" in text
+        assert "?" in text
+        assert "quit" in text.lower()

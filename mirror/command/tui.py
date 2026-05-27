@@ -4,6 +4,8 @@ Real-time mirror status TUI for mirror.py.
 Full-screen prompt_toolkit application showing package sync status,
 ETA to next sync, and a live tail of the selected package's running log.
 Operators can start or stop syncs via a keyboard-driven confirm dialog.
+Supports sort cycling (s), name filtering (/), help overlay (?),
+and polling pause (p).
 """
 
 import asyncio
@@ -11,6 +13,7 @@ import os
 import stat
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -28,7 +31,8 @@ from prompt_toolkit.layout import (
     Layout,
     Window,
 )
-from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 
@@ -62,65 +66,87 @@ def format_duration(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
-def format_eta(package: Package, now: float) -> str:
-    """Return human-readable ETA to next scheduled sync, or '-' if disabled.
+def format_datetime(epoch: float) -> str:
+    """Format an epoch-seconds value as 'YYYY-MM-DD HH:MM:SS' in local time.
 
     Args:
-        package(Package): Package to compute ETA for.
-        now(float): Current epoch seconds.
+        epoch(float): Epoch seconds. Non-positive values yield "-".
 
     Return:
-        eta(str): Human-readable ETA string.
+        text(str): Localtime datetime string, or "-" for missing values.
     """
-    if package.disabled or package.syncrate <= 0:
-        return "-"
-    next_sync = package.lastsync + package.syncrate
-    remaining = next_sync - now
-    if remaining <= 0:
-        return "overdue"
-    return f"next in {format_duration(remaining)}"
-
-
-def latest_change_epoch(package: Package) -> float:
-    """Return the latest change epoch in SECONDS, normalizing units.
-
-    `Package.timestamp` is set as `time.time() * 1000` in
-    `Package.set_status` (mirror/structure/__init__.py:143), i.e. ms;
-    `statusinfo.lastsuccesstime` and `statusinfo.lasterrortime` are
-    plain epoch seconds. This helper divides `timestamp` by 1000 before
-    taking the max, so callers can compare against `time.time()` directly.
-
-    Args:
-        package(Package): Package to inspect.
-
-    Return:
-        epoch(float): Latest change time in seconds since epoch.
-    """
-    ts_seconds = package.timestamp / 1000.0 if package.timestamp else 0.0
-    return max(
-        ts_seconds,
-        package.statusinfo.lastsuccesstime or 0.0,
-        package.statusinfo.lasterrortime or 0.0,
-    )
-
-
-def format_last_change(package: Package, now: float) -> str:
-    """Return '<HH:MM:SS> ago' from latest_change_epoch(package).
-
-    Args:
-        package(Package): Package to inspect.
-        now(float): Current epoch seconds.
-
-    Return:
-        text(str): Human-readable time-since-change string.
-    """
-    epoch = latest_change_epoch(package)
     if epoch <= 0:
-        return "never"
+        return "-"
+    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_started(package: Package, now: float) -> str:
+    """Return the localtime datetime when the current sync started, else '-'.
+
+    Only meaningful for SYNC packages; `Package.timestamp` is set to
+    `time.time() * 1000` (ms) when status flips to SYNC.
+
+    Args:
+        package(Package): Package to inspect.
+        now(float): Current epoch seconds (unused; accepted for symmetry).
+
+    Return:
+        text(str): Datetime string, "-" for non-SYNC, "(unknown)" for SYNC
+            without a timestamp.
+    """
+    if package.status != "SYNC":
+        return "-"
+    if not package.timestamp:
+        return "(unknown)"
+    return format_datetime(package.timestamp / 1000.0)
+
+
+def format_elapsed(package: Package, now: float) -> str:
+    """Return the running duration since the current sync started, else '-'.
+
+    Args:
+        package(Package): Package to inspect.
+        now(float): Current epoch seconds.
+
+    Return:
+        text(str): Duration string for SYNC packages, "-" otherwise.
+    """
+    if package.status != "SYNC" or not package.timestamp:
+        return "-"
+    return format_duration(now - package.timestamp / 1000.0)
+
+
+def format_last_success(package: Package) -> str:
+    """Return the localtime datetime of the most recent successful sync.
+
+    Args:
+        package(Package): Package to inspect.
+
+    Return:
+        text(str): Datetime string, "(never)" if no successful sync.
+    """
+    epoch = package.statusinfo.lastsuccesstime or 0.0
+    if epoch <= 0:
+        return "(never)"
+    return format_datetime(epoch)
+
+
+def format_ago(epoch: float, now: float) -> str:
+    """Return a duration string for 'how long ago' an epoch event happened.
+
+    Args:
+        epoch(float): Past epoch seconds. 0 or future values yield "-".
+        now(float): Current epoch seconds.
+
+    Return:
+        text(str): Human-readable duration string, "-" if not applicable.
+    """
+    if epoch <= 0:
+        return "-"
     delta = now - epoch
     if delta < 0:
-        delta = 0.0
-    return f"{format_duration(delta)} ago"
+        return "-"
+    return format_duration(delta)
 
 
 def status_style(status: str) -> str:
@@ -140,35 +166,290 @@ def status_style(status: str) -> str:
     return mapping.get(status, "class:status.unknown")
 
 
+_COL_PKGID = 22
+_COL_STATUS = 10
+_COL_STARTED = 19
+_COL_ELAPSED = 12
+_COL_LAST_SUCCESS = 19
+_COL_AGO = 12
+
+# All available columns in display order.
+_ALL_COLUMNS = ("PACKAGE", "STATUS", "STARTED", "ELAPSED", "LAST SUCCESS", "AGO")
+
+
+def _fit_field(text: str, width: int) -> str:
+    """Truncate text to exactly width, padding on the right with spaces.
+
+    Truncation uses a trailing ".." marker when width allows so that
+    over-long values do not shift later columns and the header / body
+    stay byte-for-byte aligned.
+    """
+    if len(text) > width:
+        if width >= 3:
+            return text[: width - 2] + ".."
+        return text[:width]
+    return text.ljust(width)
+
+
+def _col_width(col: str) -> int:
+    """Return the fixed column width for the given column name.
+
+    Args:
+        col(str): Column identifier (e.g. "PACKAGE", "STATUS").
+
+    Return:
+        width(int): Column width in characters.
+    """
+    widths = {
+        "PACKAGE": _COL_PKGID,
+        "STATUS": _COL_STATUS,
+        "STARTED": _COL_STARTED,
+        "ELAPSED": _COL_ELAPSED,
+        "LAST SUCCESS": _COL_LAST_SUCCESS,
+        "AGO": _COL_AGO,
+    }
+    return widths[col]
+
+
+def _format_table_row(prefix: str, cells: list[tuple[str, int]]) -> str:
+    """Build a single table line with consistent column widths.
+
+    Args:
+        prefix(str): Two-character row prefix (e.g. "> " for selected, "  " otherwise).
+        cells(list[tuple[str, int]]): List of (text, width) pairs for each visible column.
+
+    Return:
+        line(str): Formatted row string terminated with a newline.
+    """
+    if not cells:
+        return prefix + "\n"
+    # All columns except the last get a trailing space separator.
+    # The last column keeps its full padded width then terminates with newline.
+    parts = [prefix]
+    for i, (text, width) in enumerate(cells):
+        fitted = _fit_field(text, width)
+        if i < len(cells) - 1:
+            parts.append(fitted + " ")
+        else:
+            parts.append(fitted + "\n")
+    return "".join(parts)
+
+
+def _visible_columns(terminal_cols: int) -> tuple[str, ...]:
+    """Determine which columns to show based on terminal width.
+
+    Args:
+        terminal_cols(int): Terminal width in characters.
+
+    Return:
+        visible(tuple[str, ...]): Tuple of column names to render.
+    """
+    if terminal_cols >= 140:
+        return _ALL_COLUMNS
+    if terminal_cols >= 110:
+        return ("PACKAGE", "STATUS", "STARTED", "LAST SUCCESS", "AGO")
+    return ("PACKAGE", "STATUS", "LAST SUCCESS", "AGO")
+
+
+def build_table_header(visible: tuple[str, ...] = _ALL_COLUMNS) -> list[tuple[str, str]]:
+    """Build the column header rows shown above the package table.
+
+    Args:
+        visible(tuple[str, ...]): Ordered column names to include.
+
+    Return:
+        rows(list[tuple[str, str]]): Two (style, text) rows: the label row
+            and a separator made of dashes.
+    """
+    cells = [(col, _col_width(col)) for col in visible]
+    label_row = _format_table_row("  ", cells)
+    divider_cells = [("-" * _col_width(col), _col_width(col)) for col in visible]
+    divider_row = _format_table_row("  ", divider_cells)
+    return [
+        ("class:tableheader", label_row),
+        ("class:tableheader.divider", divider_row),
+    ]
+
+
+def _build_status_cell(pkg: Package) -> str:
+    """Build the STATUS cell text, appending error count when applicable.
+
+    Args:
+        pkg(Package): Package to format.
+
+    Return:
+        text(str): Status cell text (e.g. "ERROR x3" or "SYNC").
+    """
+    if pkg.status == "ERROR" and pkg.statusinfo.errorcount > 0:
+        return f"ERROR x{pkg.statusinfo.errorcount}"
+    return pkg.status
+
+
 def build_table_rows(
-    packages: list[Package], selected: int, now: float
+    packages: list[Package],
+    selected: int,
+    now: float,
+    visible: tuple[str, ...] = _ALL_COLUMNS,
+    selected_pkgid: str = "",
 ) -> list[tuple[str, str]]:
     """Build FormattedText rows for the table control.
 
     Args:
-        packages(list[Package]): List of packages to render.
-        selected(int): Index of the currently selected package.
+        packages(list[Package]): List of packages to render (already sorted/filtered).
+        selected(int): Legacy index-based selection (ignored when selected_pkgid is set).
         now(float): Current epoch seconds.
+        visible(tuple[str, ...]): Ordered column names to include.
+        selected_pkgid(str): pkgid of the currently selected package.
 
     Return:
         rows(list[tuple[str, str]]): List of (style, text) tuples.
     """
     rows: list[tuple[str, str]] = []
     for idx, pkg in enumerate(packages):
-        prefix = "> " if idx == selected else "  "
-        pkgid = pkg.pkgid.ljust(20)
-        status = pkg.status.ljust(8)
-        eta = format_eta(pkg, now).ljust(20)
-        last = format_last_change(pkg, now)
-        line = f"{prefix}{pkgid} {status} {eta} {last}\n"
+        # Identity-based selection is preferred; fall back to index only when
+        # selected_pkgid is not set (empty string means no identity provided).
+        if selected_pkgid:
+            is_selected = pkg.pkgid == selected_pkgid
+        else:
+            is_selected = idx == selected
 
-        if idx == selected:
+        pkgid_text = pkg.pkgid
+        if pkg.disabled:
+            pkgid_text = pkgid_text + " (off)"
+
+        cell_map = {
+            "PACKAGE": pkgid_text,
+            "STATUS": _build_status_cell(pkg),
+            "STARTED": format_started(pkg, now),
+            "ELAPSED": format_elapsed(pkg, now),
+            "LAST SUCCESS": format_last_success(pkg),
+            "AGO": format_ago(pkg.statusinfo.lastsuccesstime or 0.0, now),
+        }
+        cells = [(cell_map[col], _col_width(col)) for col in visible]
+        prefix = "> " if is_selected else "  "
+        line = _format_table_row(prefix, cells)
+
+        if is_selected:
             row_style = "class:selected"
+        elif pkg.disabled:
+            row_style = "class:status.disabled"
         else:
             row_style = status_style(pkg.status)
 
         rows.append((row_style, line))
     return rows
+
+
+def compute_status_counts(packages: list[Package]) -> dict:
+    """Count packages by status category.
+
+    Args:
+        packages(list[Package]): List of packages to count.
+
+    Return:
+        counts(dict): Keys: "total", "SYNC", "ACTIVE", "ERROR", "UNKNOWN", "disabled".
+    """
+    counts = {"total": len(packages), "SYNC": 0, "ACTIVE": 0, "ERROR": 0, "UNKNOWN": 0, "disabled": 0}
+    for pkg in packages:
+        if pkg.disabled:
+            counts["disabled"] += 1
+        status = pkg.status
+        if status in counts:
+            counts[status] += 1
+        else:
+            counts["UNKNOWN"] += 1
+    return counts
+
+
+def apply_sort(packages: list[Package], mode: str) -> list[Package]:
+    """Return a sorted copy of packages according to the given mode.
+
+    Args:
+        packages(list[Package]): Input package list.
+        mode(str): One of "default", "status", "ago", "pkgid".
+
+    Return:
+        sorted_list(list[Package]): Sorted copy (input unchanged).
+    """
+    if mode == "default":
+        return list(packages)
+    if mode == "status":
+        priority = {"ERROR": 0, "SYNC": 1, "ACTIVE": 2, "UNKNOWN": 3}
+        return sorted(packages, key=lambda p: (priority.get(p.status, 3), p.pkgid.lower()))
+    if mode == "ago":
+        # Smallest lastsuccesstime first (never synced → 0.0 → sorts first)
+        return sorted(packages, key=lambda p: (p.statusinfo.lastsuccesstime or 0.0))
+    if mode == "pkgid":
+        return sorted(packages, key=lambda p: p.pkgid.lower())
+    return list(packages)
+
+
+def apply_filter(packages: list[Package], needle: str) -> list[Package]:
+    """Return packages whose pkgid contains needle (case-insensitive).
+
+    Args:
+        packages(list[Package]): Input package list.
+        needle(str): Substring to match. Empty string returns all packages.
+
+    Return:
+        filtered(list[Package]): Matching packages in original order.
+    """
+    if not needle:
+        return list(packages)
+    lower = needle.lower()
+    return [p for p in packages if lower in p.pkgid.lower()]
+
+
+def visible_packages(state: "TUIState") -> list[Package]:
+    """Return the sorted and filtered package list for the current state.
+
+    Args:
+        state(TUIState): Current TUI state.
+
+    Return:
+        packages(list[Package]): Sorted and filtered package list.
+    """
+    return apply_filter(apply_sort(state.packages, state.sort_mode), state.filter_text)
+
+
+def build_help_text() -> FormattedText:
+    """Build the key bindings help overlay content.
+
+    Return:
+        text(FormattedText): Formatted help table.
+    """
+    lines = [
+        ("class:tableheader", "  Key        Action\n"),
+        ("class:tableheader.divider", "  ---------- ----------------------------------\n"),
+        ("", "  j / k      Move selection down / up\n"),
+        ("", "  g / G      Jump to first / last package\n"),
+        ("", "  x          Start or stop sync for selection\n"),
+        ("", "  r          Refresh display\n"),
+        ("", "  l          Toggle log pane\n"),
+        ("", "  Tab        Toggle focus between table and log\n"),
+        ("", "  s          Cycle sort mode\n"),
+        ("", "  /          Enter filter mode\n"),
+        ("", "  p          Toggle polling pause\n"),
+        ("", "  ?          Toggle this help overlay\n"),
+        ("", "  q / Ctrl-C Quit\n"),
+    ]
+    return FormattedText(lines)
+
+
+def _modal_active(state: "TUIState") -> bool:
+    """Return True if any modal overlay is currently active.
+
+    Args:
+        state(TUIState): Current TUI state.
+
+    Return:
+        active(bool): True when dialog, help, or filter input is open.
+    """
+    return (
+        state.dialog is not None
+        or state.show_help
+        or state.filter_input_active
+    )
 
 
 def _fallback_package_from_dict(raw: dict) -> Package:
@@ -319,6 +600,9 @@ class ConfirmDialog:
     selected: int = 0     # 0 = Yes, 1 = No
 
 
+_SORT_CYCLE = ("default", "status", "ago", "pkgid")
+
+
 @dataclass
 class TUIState:
     """Mutable application state shared between UI and background tasks."""
@@ -331,6 +615,13 @@ class TUIState:
     show_log: bool = True
     log_tail_path: Optional[Path] = None
     log_tail_offset: int = 0
+    # Identity-based selection (replaces index-based selected as source of truth)
+    selected_pkgid: str = ""
+    sort_mode: str = "default"
+    filter_text: str = ""
+    filter_input_active: bool = False
+    show_help: bool = False
+    paused: bool = False
 
     def _set_toast(self, style_class: str, text: str) -> None:
         self.toast = (time.time() + 3.0, style_class, text)
@@ -421,13 +712,29 @@ class TUIState:
     def current_package(self) -> Optional[Package]:
         """Return the currently selected package, or None if list is empty.
 
+        Uses identity-based selection (selected_pkgid) over the visible list.
+
         Return:
             package(Package, optional): Selected package or None.
         """
-        if not self.packages:
+        visible = visible_packages(self)
+        if not visible:
             return None
-        idx = max(0, min(self.selected, len(self.packages) - 1))
-        return self.packages[idx]
+        return next((p for p in visible if p.pkgid == self.selected_pkgid), None)
+
+    def fix_selection(self) -> None:
+        """Ensure selected_pkgid refers to a package in the visible list.
+
+        If the current pkgid is absent from the visible list, fall back to
+        the first visible package, or empty string when the list is empty.
+        """
+        visible = visible_packages(self)
+        if not visible:
+            self.selected_pkgid = ""
+            return
+        ids = [p.pkgid for p in visible]
+        if self.selected_pkgid not in ids:
+            self.selected_pkgid = ids[0]
 
 
 def _get_file_end(path: Optional[Path]) -> int:
@@ -478,12 +785,17 @@ def _trim_log_text(text: str) -> str:
 _STYLE = Style.from_dict(
     {
         "header": "bold",
+        "statusbar": "fg:ansibrightblack",
+        "statusbar.paused": "fg:ansired bold",
         "footer": "fg:ansigray",
         "selected": "bg:ansiblue fg:ansiwhite bold",
         "status.sync": "fg:ansiyellow bold",
         "status.active": "fg:ansigreen",
         "status.error": "fg:ansired bold",
         "status.unknown": "fg:ansigray",
+        "status.disabled": "fg:ansibrightblack italic",
+        "tableheader": "fg:ansibrightcyan bold",
+        "tableheader.divider": "fg:ansibrightblack",
         "dialog": "bg:ansidarkgray fg:ansiwhite",
         "error": "fg:ansired bold",
         "success": "fg:ansigreen",
@@ -510,13 +822,16 @@ class MirrorTUI:
         self._socket_path = socket_path
         self._mirrorname = mirrorname
         self._log_base = log_base
+        self._daemon_started_at: float = 0.0
+        self._localtimezone: str = ""
         self._state = TUIState()
         self._client: Optional[mirror.socket.master.MasterClient] = None
         self._log_fd: Optional[int] = None
         self._app: Optional[Application] = None
+        self._filter_buffer = Buffer(name="filter_input")
 
     def _apply_runtime_info(self, info: Optional[dict]) -> None:
-        """Update mirrorname and log_base from a get_runtime_info response.
+        """Update mirrorname, log_base, daemon_started_at, and localtimezone.
 
         Args:
             info(dict, optional): Dict returned by get_runtime_info RPC. None is a no-op.
@@ -526,6 +841,12 @@ class MirrorTUI:
         self._mirrorname = info.get("mirrorname", "") or ""
         lb = info.get("log_base")
         self._log_base = Path(lb) if lb else None
+        started = info.get("daemon_started_at")
+        if started is not None:
+            self._daemon_started_at = float(started)
+        tz = info.get("localtimezone")
+        if tz:
+            self._localtimezone = str(tz)
 
     def _build_layout(self) -> tuple[Layout, TextArea]:
         """Build the prompt_toolkit layout and return (layout, log_area).
@@ -536,7 +857,7 @@ class MirrorTUI:
         """
         state = self._state
 
-        # --- Header ---
+        # --- Header (identity line) ---
         def get_header() -> FormattedText:
             name_part = f" {self._mirrorname}" if self._mirrorname else ""
             conn_style = "class:success" if state.connected else "class:error"
@@ -544,22 +865,64 @@ class MirrorTUI:
             if state.last_poll_error and not state.connected:
                 conn_text += f" ({state.last_poll_error})"
             ts = time.strftime("%H:%M:%S")
-            return FormattedText(
-                [
-                    ("class:header", f"mirror tui{name_part}  "),
-                    (conn_style, f"[{conn_text}]"),
-                    ("class:header", f"  {ts}"),
-                ]
-            )
+            parts: list[tuple[str, str]] = [
+                ("class:header", f"mirror tui{name_part}  "),
+                (conn_style, f"[{conn_text}]"),
+                ("class:header", f"  {ts}"),
+            ]
+            if self._localtimezone:
+                parts.append(("class:header", f"  TZ {self._localtimezone}"))
+            return FormattedText(parts)
 
         header = Window(
             content=FormattedTextControl(get_header),
             height=1,
         )
 
+        # --- Status bar (counts + sort/pause/filter indicators) ---
+        def get_statusbar() -> FormattedText:
+            pkgs = state.packages
+            counts = compute_status_counts(pkgs)
+            now = time.time()
+            uptime = ""
+            if self._daemon_started_at > 0:
+                uptime = f"  up {format_duration(now - self._daemon_started_at)}"
+
+            count_text = (
+                f" total:{counts['total']}"
+                f"  SYNC:{counts['SYNC']}"
+                f"  ACTIVE:{counts['ACTIVE']}"
+                f"  ERROR:{counts['ERROR']}"
+                f"  UNKNOWN:{counts['UNKNOWN']}"
+                f"  off:{counts['disabled']}"
+                f"{uptime}"
+                f"  sort:{state.sort_mode}"
+            )
+            parts: list[tuple[str, str]] = []
+            if state.paused:
+                parts.append(("class:statusbar.paused", " [PAUSED]"))
+            if state.filter_text:
+                parts.append(("class:statusbar", f"  filter:{state.filter_text}"))
+            parts.append(("class:statusbar", count_text))
+            return FormattedText(parts)
+
+        statusbar = Window(
+            content=FormattedTextControl(get_statusbar),
+            height=1,
+        )
+
         # --- Table ---
         def get_table() -> FormattedText:
             now = time.time()
+            # Determine responsive columns
+            try:
+                from prompt_toolkit.application.current import get_app as _get_app
+                terminal_cols = _get_app().output.get_size().columns
+            except Exception:
+                terminal_cols = 160
+
+            vis_cols = _visible_columns(terminal_cols)
+
             # Toast row
             toast_rows: list[tuple[str, str]] = []
             if state.toast:
@@ -569,16 +932,36 @@ class MirrorTUI:
                 else:
                     state.toast = None
 
-            if not state.packages:
-                body = [("class:status.unknown", "(no packages)\n")]
+            header_rows = build_table_header(vis_cols)
+            vis_pkgs = visible_packages(state)
+            if not vis_pkgs:
+                body: list[tuple[str, str]] = [
+                    ("class:status.unknown", "  (no packages)\n")
+                ]
             else:
-                body = build_table_rows(state.packages, state.selected, now)
+                body = build_table_rows(
+                    vis_pkgs, state.selected, now, vis_cols, state.selected_pkgid
+                )
 
-            return FormattedText(toast_rows + body)
+            return FormattedText(toast_rows + header_rows + body)
 
         table_win = Window(
             content=FormattedTextControl(get_table),
             wrap_lines=False,
+            width=Dimension(weight=1, preferred=1),
+        )
+        table_container = Frame(body=table_win, title="Packages")
+
+        # --- Filter input bar (shown when filter_input_active) ---
+        def get_filter_prompt() -> FormattedText:
+            return FormattedText([("class:statusbar", f" Filter: {self._filter_buffer.text}_")])
+
+        filter_win = ConditionalContainer(
+            content=Window(
+                content=FormattedTextControl(get_filter_prompt),
+                height=1,
+            ),
+            filter=Condition(lambda: state.filter_input_active),
         )
 
         # --- Log pane ---
@@ -588,22 +971,31 @@ class MirrorTUI:
             scrollbar=True,
             focusable=True,
             wrap_lines=False,
+            width=Dimension(weight=1, preferred=1),
         )
 
-        def get_log_header() -> FormattedText:
+        def get_log_subtitle() -> FormattedText:
             pkg = state.current_package()
-            follow = "on" if state.log_tail_path else "off"
-            if pkg:
-                label = f" Log: {pkg.pkgid}  Follow: {follow} "
-            else:
-                label = " Log (no package selected) "
-            return FormattedText([("class:header", label)])
+            if pkg is None:
+                return FormattedText([("class:header", " (no package selected) ")])
+            if state.log_tail_path is None:
+                return FormattedText([("class:header", f" {pkg.pkgid}  (idle) ")])
+            buf = log_area.buffer
+            following = buf.cursor_position >= len(buf.text)
+            follow = "on" if following else "off"
+            return FormattedText(
+                [("class:header", f" {pkg.pkgid}  Follow: {follow} ")]
+            )
 
-        log_header = Window(content=FormattedTextControl(get_log_header), height=1)
+        log_subtitle_win = Window(
+            content=FormattedTextControl(get_log_subtitle),
+            height=1,
+            width=Dimension(weight=1, preferred=1),
+        )
         log_container = ConditionalContainer(
             content=Frame(
-                body=HSplit([log_header, log_area]),
-                title="",
+                body=HSplit([log_subtitle_win, log_area]),
+                title="Log",
             ),
             filter=Condition(lambda: state.show_log),
         )
@@ -614,7 +1006,7 @@ class MirrorTUI:
                 [
                     (
                         "class:footer",
-                        "j/k: move  x: start/stop  l: log  r: refresh  q: quit  Tab: focus",
+                        "j/k: move  x: start/stop  l: log  r: refresh  s: sort  /: filter  p: pause  ?: help  q: quit",
                     )
                 ]
             )
@@ -646,17 +1038,30 @@ class MirrorTUI:
             filter=Condition(lambda: state.dialog is not None),
         )
 
+        # --- Help overlay float ---
+        help_win = ConditionalContainer(
+            content=Frame(
+                body=Window(
+                    content=FormattedTextControl(build_help_text),
+                    width=50,
+                ),
+                title="Key bindings",
+            ),
+            filter=Condition(lambda: state.show_help),
+        )
+
         body = VSplit(
             [
-                table_win,
+                HSplit([table_container, filter_win]),
                 log_container,
             ]
         )
 
         root = FloatContainer(
-            content=HSplit([header, body, footer]),
+            content=HSplit([header, statusbar, body, footer]),
             floats=[
                 Float(content=dialog_win, xcursor=True, ycursor=True),
+                Float(content=help_win, xcursor=True, ycursor=True),
             ],
         )
 
@@ -677,82 +1082,130 @@ class MirrorTUI:
         @kb.add("q")
         @kb.add("c-c")
         def _quit(event) -> None:
+            if _modal_active(state):
+                return
             event.app.exit()
 
         @kb.add("j")
         @kb.add("down")
         def _down(event) -> None:
-            if state.dialog is not None:
+            if _modal_active(state):
                 return
-            if state.packages:
-                state.selected = min(state.selected + 1, len(state.packages) - 1)
-                self._on_selection_change()
+            visible = visible_packages(state)
+            if not visible:
+                return
+            ids = [p.pkgid for p in visible]
+            try:
+                idx = ids.index(state.selected_pkgid)
+            except ValueError:
+                idx = 0
+            state.selected_pkgid = ids[min(idx + 1, len(ids) - 1)]
+            self._on_selection_change()
 
         @kb.add("k")
         @kb.add("up")
         def _up(event) -> None:
-            if state.dialog is not None:
+            if _modal_active(state):
                 return
-            if state.packages:
-                state.selected = max(state.selected - 1, 0)
-                self._on_selection_change()
+            visible = visible_packages(state)
+            if not visible:
+                return
+            ids = [p.pkgid for p in visible]
+            try:
+                idx = ids.index(state.selected_pkgid)
+            except ValueError:
+                idx = 0
+            state.selected_pkgid = ids[max(idx - 1, 0)]
+            self._on_selection_change()
 
         @kb.add("g")
         @kb.add("home")
         def _first(event) -> None:
-            if state.dialog is not None:
+            if _modal_active(state):
                 return
-            if state.packages:
-                state.selected = 0
+            visible = visible_packages(state)
+            if visible:
+                state.selected_pkgid = visible[0].pkgid
                 self._on_selection_change()
 
         @kb.add("G")
         @kb.add("end")
         def _last(event) -> None:
-            if state.dialog is not None:
+            if _modal_active(state):
                 return
-            if state.packages:
-                state.selected = len(state.packages) - 1
+            visible = visible_packages(state)
+            if visible:
+                state.selected_pkgid = visible[-1].pkgid
                 self._on_selection_change()
             # Re-enable follow in log pane
             self._reset_log_follow(log_area)
 
         @kb.add("r")
         def _refresh(event) -> None:
-            if state.dialog is not None:
+            if _modal_active(state):
                 return
             # The poller will pick this up on next tick; just invalidate
             event.app.invalidate()
 
         @kb.add("l")
         def _toggle_log(event) -> None:
-            if state.dialog is not None:
+            if _modal_active(state):
                 return
             state.toggle_log()
 
         @kb.add("tab")
         def _tab_focus(event) -> None:
-            if state.dialog is not None:
+            if _modal_active(state):
                 return
             if state.show_log:
                 event.app.layout.focus_next()
 
+        @kb.add("s")
+        def _sort(event) -> None:
+            if _modal_active(state):
+                return
+            idx = _SORT_CYCLE.index(state.sort_mode)
+            state.sort_mode = _SORT_CYCLE[(idx + 1) % len(_SORT_CYCLE)]
+            state.fix_selection()
+
+        @kb.add("/")
+        def _filter_enter(event) -> None:
+            if _modal_active(state):
+                return
+            state.filter_input_active = True
+            self._filter_buffer.set_document(
+                self._filter_buffer.document.__class__(""), bypass_readonly=False
+            )
+
+        @kb.add("p")
+        def _pause(event) -> None:
+            if _modal_active(state):
+                return
+            state.paused = not state.paused
+
+        @kb.add("?")
+        def _help(event) -> None:
+            if state.dialog is not None or state.filter_input_active:
+                return
+            state.show_help = not state.show_help
+
         @kb.add("escape")
         def _escape(event) -> None:
+            if state.filter_input_active:
+                state.filter_input_active = False
+                return
+            if state.show_help:
+                state.show_help = False
+                return
             state.cancel_dialog()
-
-        @kb.add("left")
-        def _dialog_left(event) -> None:
-            if state.dialog is not None:
-                state.dialog.selected = 0
-
-        @kb.add("right")
-        def _dialog_right(event) -> None:
-            if state.dialog is not None:
-                state.dialog.selected = 1
 
         @kb.add("enter")
         def _enter(event) -> None:
+            if state.filter_input_active:
+                state.filter_text = self._filter_buffer.text
+                state.filter_input_active = False
+                state.fix_selection()
+                return
             if state.dialog is not None:
                 if state.dialog.selected == 0:
                     # Yes — schedule the RPC as a task to avoid blocking the loop
@@ -766,9 +1219,19 @@ class MirrorTUI:
                     state.cancel_dialog()
                 return
 
+        @kb.add("left")
+        def _dialog_left(event) -> None:
+            if state.dialog is not None:
+                state.dialog.selected = 0
+
+        @kb.add("right")
+        def _dialog_right(event) -> None:
+            if state.dialog is not None:
+                state.dialog.selected = 1
+
         @kb.add("x")
         def _trigger(event) -> None:
-            if state.dialog is not None:
+            if _modal_active(state):
                 return
             pkg = state.current_package()
             if pkg is None:
@@ -778,6 +1241,28 @@ class MirrorTUI:
                 return
             action = "stop" if pkg.status == "SYNC" else "start"
             state.open_dialog(action, pkg.pkgid)
+
+        # --- Filter input: route printable keys to the buffer ---
+        @kb.add("<any>")
+        def _filter_keypress(event) -> None:
+            if not state.filter_input_active:
+                return
+            key = event.key_sequence[0].key
+            # Ignore special keys
+            if len(key) != 1:
+                return
+            self._filter_buffer.insert_text(key)
+            # Update filter in real time
+            state.filter_text = self._filter_buffer.text
+            state.fix_selection()
+
+        @kb.add("backspace")
+        def _filter_backspace(event) -> None:
+            if not state.filter_input_active:
+                return
+            self._filter_buffer.delete_before_cursor(1)
+            state.filter_text = self._filter_buffer.text
+            state.fix_selection()
 
         return kb
 
@@ -831,6 +1316,11 @@ class MirrorTUI:
                 False otherwise.
         """
         state = self._state
+
+        # Short-circuit when paused; clock still ticks via app.invalidate in caller
+        if state.paused:
+            return was_connected
+
         try:
             if self._client is None:
                 if not self._connect_client():
@@ -839,7 +1329,19 @@ class MirrorTUI:
                     return False
 
             payload = await asyncio.to_thread(self._client.list_packages)
-            state.packages = packages_from_rpc(payload)
+            new_packages = packages_from_rpc(payload)
+            state.packages = new_packages
+
+            # Fix up selected_pkgid if the package disappeared
+            new_ids = {p.pkgid for p in new_packages}
+            if state.selected_pkgid and state.selected_pkgid not in new_ids:
+                state.fix_selection()
+            elif not state.selected_pkgid and new_packages:
+                visible = visible_packages(state)
+                if visible:
+                    state.selected_pkgid = visible[0].pkgid
+
+            # Keep legacy selected index in sync (back-compat)
             state.selected = max(0, min(state.selected, len(state.packages) - 1))
             state.connected = True
             state.last_poll_error = None
