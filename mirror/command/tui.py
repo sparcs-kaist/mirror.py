@@ -1183,7 +1183,7 @@ class MirrorTUI:
                 return
             state.paused = not state.paused
 
-        @kb.add("question-mark")
+        @kb.add("?")
         def _help(event) -> None:
             if state.dialog is not None or state.filter_input_active:
                 return
