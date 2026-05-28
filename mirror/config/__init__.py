@@ -387,7 +387,7 @@ def _perform_reload() -> dict:
     retained = new_pkg_ids & old_pkg_ids
 
     # Detect modified packages by comparing config sub-dicts.
-    _config_fields = {"name", "synctype", "syncrate", "settings", "link", "href"}
+    _config_fields = {"name", "synctype", "syncrate", "settings", "link", "href", "disabled"}
     modified: list[str] = []
     for pkgid in retained:
         new_pkg_cfg = new_config_dict["packages"].get(pkgid, {})
@@ -397,7 +397,13 @@ def _perform_reload() -> dict:
             continue
         old_pkg_dict = old_pkg.to_dict()
         for field in _config_fields:
-            if new_pkg_cfg.get(field) != old_pkg_dict.get(field):
+            new_val = new_pkg_cfg.get(field)
+            old_val = old_pkg_dict.get(field)
+            if field == "disabled":
+                # Missing key means enabled (False); normalize both sides.
+                new_val = bool(new_val)
+                old_val = bool(old_val)
+            if new_val != old_val:
                 modified.append(pkgid)
                 break
 
@@ -549,7 +555,8 @@ def save_stat_data():
                         mirror.log.warning(f"Status plug-in {plugin_name} extend_stat_fields failed: {e}")
                 if plugin_extras:
                     pkg_dict["status"]["statusinfo"]["plugins"] = plugin_extras
-            packages_dict[pkg_id] = pkg_dict
+            # Strip config-only fields (e.g. disabled) before writing stat.json.
+            packages_dict[pkg_id] = _to_stat_package_dict(pkg_dict)
 
         full_stat = {
             "mirrorname": mirror.conf.name,
