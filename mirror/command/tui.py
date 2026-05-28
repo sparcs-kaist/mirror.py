@@ -9,9 +9,11 @@ and polling pause (p).
 """
 
 import asyncio
+import gzip
 import os
 import stat
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -587,6 +589,149 @@ def _is_rotated(fd: int, path: Path) -> bool:
     return on_disk.st_ino != on_fd.st_ino or on_disk.st_dev != on_fd.st_dev
 
 
+def latest_completed_log(pkg: Package) -> Optional[Path]:
+    """Return the package's most recent completed (success/error) log path.
+
+    Picks whichever of lastsuccesslog / lasterrorlog carries the newer
+    timestamp. Returns None when the package has no completed log recorded.
+
+    Args:
+        pkg(Package): Package whose status logs to inspect.
+
+    Return:
+        path(Path, optional): Newest completed log path, or None if none.
+    """
+    info = pkg.statusinfo
+    candidates: list[tuple[float, str]] = []
+    if info.lastsuccesslog:
+        candidates.append((info.lastsuccesstime, info.lastsuccesslog))
+    if info.lasterrorlog:
+        candidates.append((info.lasterrortime, info.lasterrorlog))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[0], reverse=True)
+    return Path(candidates[0][1])
+
+
+# Windowed log loading: lines loaded initially, per page-up, and the caps that
+# bound the in-memory window while following / when scrolled up.
+LOG_INITIAL_LINES = 1000
+LOG_PAGE_LINES = 1000
+LOG_FOLLOW_MAX_LINES = 5000
+LOG_MAX_LOADED_LINES = 50000
+LOG_GZIP_MAX_LINES = 200000
+
+
+def _start_of_last_n_lines(fd: int, end: int, n: int) -> int:
+    """Return the byte offset where the last n complete lines before end begin.
+
+    Scans backward from byte position end (exclusive) over fd, counting newline
+    separators while ignoring a trailing newline at end-1. Returns 0 when the
+    region holds fewer than n lines. Used for both the initial tail (end=file
+    size) and page-up (end=current window start).
+
+    Args:
+        fd(int): Open, seekable file descriptor.
+        end(int): Exclusive end byte offset (a line boundary or EOF).
+        n(int): Number of trailing lines to retain.
+
+    Return:
+        start(int): Byte offset (line boundary) of the first retained line.
+    """
+    if n <= 0:
+        return end
+    if end <= 0:
+        return 0
+    block = 65536
+    pos = end
+    newlines = 0
+    while pos > 0:
+        size = min(block, pos)
+        pos -= size
+        os.lseek(fd, pos, os.SEEK_SET)
+        chunk = os.read(fd, size)
+        i = len(chunk) - 1
+        while i >= 0:
+            if chunk[i] == 0x0A:
+                abs_i = pos + i
+                if abs_i != end - 1:
+                    newlines += 1
+                    if newlines == n:
+                        return abs_i + 1
+            i -= 1
+    return 0
+
+
+def _read_bytes_range(fd: int, start: int, end: int) -> bytes:
+    """Read bytes [start, end) from fd.
+
+    Args:
+        fd(int): Open, seekable file descriptor.
+        start(int): Inclusive start byte offset.
+        end(int): Exclusive end byte offset.
+
+    Return:
+        data(bytes): The requested byte range (possibly short at EOF).
+    """
+    if end <= start:
+        return b""
+    os.lseek(fd, start, os.SEEK_SET)
+    out = bytearray()
+    remaining = end - start
+    while remaining > 0:
+        chunk = os.read(fd, min(65536, remaining))
+        if not chunk:
+            break
+        out += chunk
+        remaining -= len(chunk)
+    return bytes(out)
+
+
+def _front_cut_offset(data: bytes, drop_lines: int) -> int:
+    """Return the byte offset just past the first drop_lines newlines in data.
+
+    Args:
+        data(bytes): Buffer to scan from the front.
+        drop_lines(int): Number of leading lines to drop.
+
+    Return:
+        offset(int): Byte offset where the retained content begins.
+    """
+    idx = 0
+    for _ in range(drop_lines):
+        nl = data.find(b"\n", idx)
+        if nl == -1:
+            return len(data)
+        idx = nl + 1
+    return idx
+
+
+def read_gzip_lines(path: Path, base: Optional[Path], max_lines: int) -> Optional[list[str]]:
+    """Decompress a gzip log into a list of lines, keeping at most the last max_lines.
+
+    Uses safe_open_log_for_read for identical symlink/regular-file/base-path
+    checks, then streams the decompressed text line by line so peak memory is
+    bounded by max_lines.
+
+    Args:
+        path(Path): Path to the gzip log file.
+        base(Path, optional): Package log base directory for traversal check.
+        max_lines(int): Maximum number of trailing lines to retain.
+
+    Return:
+        lines(list[str], optional): Trailing lines (keepends), or None on error.
+    """
+    fd = safe_open_log_for_read(path, base)
+    if fd is None:
+        return None
+    try:
+        with os.fdopen(fd, "rb", closefd=True) as raw:
+            with gzip.open(raw, "rt", encoding="utf-8", errors="replace") as gz:
+                return list(deque(gz, maxlen=max_lines))
+    except (OSError, EOFError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
@@ -615,6 +760,13 @@ class TUIState:
     show_log: bool = True
     log_tail_path: Optional[Path] = None
     log_tail_offset: int = 0
+    # True while live-tailing a running log; False when showing a static last log
+    log_tail_live: bool = False
+    # Windowed-loading state (see MirrorTUI log paging methods)
+    log_win_start: int = 0       # byte offset of the loaded window start (plain logs)
+    log_gzip_start: int = 0      # line index of the loaded window start (gzip logs)
+    log_more_above: bool = False  # True when older lines exist above the window
+    log_was_at_top: bool = False  # previous-tick viewport-at-top flag (rising-edge guard)
     # Identity-based selection (replaces index-based selected as source of truth)
     selected_pkgid: str = ""
     sort_mode: str = "default"
@@ -706,8 +858,11 @@ class TUIState:
         state_label = "on" if self.show_log else "off"
         self._set_toast("class:success", f"Toggle show log: {state_label}")
         if self.show_log:
-            # Reset to current end-of-file to avoid backlog flood
-            self.log_tail_offset = _get_file_end(self.log_tail_path)
+            # Force a fresh tail reload (drops any stale window) on re-open.
+            self.log_tail_path = None
+            self.log_tail_live = False
+            self.log_more_above = False
+            self.log_was_at_top = False
 
     def current_package(self) -> Optional[Package]:
         """Return the currently selected package, or None if list is empty.
@@ -735,46 +890,6 @@ class TUIState:
         ids = [p.pkgid for p in visible]
         if self.selected_pkgid not in ids:
             self.selected_pkgid = ids[0]
-
-
-def _get_file_end(path: Optional[Path]) -> int:
-    """Return the current file size, or 0 on any error.
-
-    Args:
-        path(Path, optional): File path to stat.
-
-    Return:
-        size(int): File size in bytes or 0.
-    """
-    if path is None:
-        return 0
-    try:
-        return path.stat().st_size
-    except OSError:
-        return 0
-
-
-# ---------------------------------------------------------------------------
-# Log buffer helpers
-# ---------------------------------------------------------------------------
-
-LOG_BUFFER_MAX_LINES = 5000
-
-
-def _trim_log_text(text: str) -> str:
-    """Trim text to at most LOG_BUFFER_MAX_LINES lines, keeping the tail.
-
-    Args:
-        text(str): Raw log text, possibly very long.
-
-    Return:
-        trimmed(str): Text with at most LOG_BUFFER_MAX_LINES lines.
-    """
-    lines = text.splitlines(keepends=True)
-    if len(lines) > LOG_BUFFER_MAX_LINES:
-        lines = lines[-LOG_BUFFER_MAX_LINES:]
-        return "".join(lines)
-    return text
 
 
 # ---------------------------------------------------------------------------
@@ -827,6 +942,8 @@ class MirrorTUI:
         self._state = TUIState()
         self._client: Optional[mirror.socket.master.MasterClient] = None
         self._log_fd: Optional[int] = None
+        self._log_win_bytes: bytes = b""           # loaded window bytes (plain logs)
+        self._log_gzip_lines: Optional[list[str]] = None  # cached lines (gzip logs)
         self._app: Optional[Application] = None
         self._filter_buffer = Buffer(name="filter_input")
 
@@ -978,13 +1095,16 @@ class MirrorTUI:
             pkg = state.current_package()
             if pkg is None:
                 return FormattedText([("class:header", " (no package selected) ")])
+            more = " +more" if state.log_more_above else ""
             if state.log_tail_path is None:
                 return FormattedText([("class:header", f" {pkg.pkgid}  (idle) ")])
+            if not state.log_tail_live:
+                return FormattedText([("class:header", f" {pkg.pkgid}  (last log){more} ")])
             buf = log_area.buffer
             following = buf.cursor_position >= len(buf.text)
             follow = "on" if following else "off"
             return FormattedText(
-                [("class:header", f" {pkg.pkgid}  Follow: {follow} ")]
+                [("class:header", f" {pkg.pkgid}  Follow: {follow}{more} ")]
             )
 
         log_subtitle_win = Window(
@@ -1267,9 +1387,21 @@ class MirrorTUI:
         return kb
 
     def _on_selection_change(self) -> None:
-        """Handle package selection change: reset log tail state."""
-        self._state.log_tail_offset = 0
+        """Handle package selection change: reset log window and tail state."""
+        self._reset_log_window()
         self._state.log_tail_path = None
+        self._state.log_tail_live = False
+
+    def _reset_log_window(self) -> None:
+        """Clear the loaded log window and release the tail file descriptor."""
+        st = self._state
+        st.log_tail_offset = 0
+        st.log_win_start = 0
+        st.log_gzip_start = 0
+        st.log_more_above = False
+        st.log_was_at_top = False
+        self._log_win_bytes = b""
+        self._log_gzip_lines = None
         if self._log_fd is not None:
             os.close(self._log_fd)
             self._log_fd = None
@@ -1381,11 +1513,14 @@ class MirrorTUI:
             await asyncio.sleep(1.0)
 
     async def _log_tailer(self, app: Application, log_area: TextArea) -> None:
-        """Background task: tail the selected package's running log at 0.5s.
+        """Background task: maintain the selected package's log pane at 0.5s.
+
+        Dispatches to the live tail (running log) or the static latest-log
+        view, then evaluates the scroll-to-top backward-paging trigger.
 
         Args:
             app(Application): Running application (for invalidate calls).
-            log_area(TextArea): Log pane text area to append content to.
+            log_area(TextArea): Log pane text area to write content to.
         """
         state = self._state
         while True:
@@ -1399,90 +1534,266 @@ class MirrorTUI:
                 continue
 
             runninglog = pkg.statusinfo.runninglog
-            if not runninglog:
-                # No active log; clear pane if we had one
-                if state.log_tail_path is not None:
-                    state.log_tail_path = None
-                    state.log_tail_offset = 0
-                    if self._log_fd is not None:
-                        os.close(self._log_fd)
-                        self._log_fd = None
-                    log_area.buffer.set_document(
-                        log_area.buffer.document.__class__("(idle, no running log)\n"),
-                        bypass_readonly=True,
-                    )
-                    app.invalidate()
-                continue
+            if runninglog:
+                self._tail_live(app, log_area, Path(runninglog))
+            else:
+                self._show_latest_log(app, log_area, pkg)
 
-            new_path = Path(runninglog)
-            path_changed = new_path != state.log_tail_path
+            self._maybe_load_more_above(app, log_area)
 
-            if path_changed:
-                # Close old fd
-                if self._log_fd is not None:
-                    os.close(self._log_fd)
-                    self._log_fd = None
-                state.log_tail_path = new_path
-                state.log_tail_offset = 0
-                log_area.buffer.set_document(
-                    log_area.buffer.document.__class__(""),
-                    bypass_readonly=True,
-                )
+    def _set_log_text(self, log_area: TextArea, text: str, cursor: int) -> None:
+        """Replace the log pane text, placing the cursor at the given offset.
 
-            # Open fd if not open
-            if self._log_fd is None:
-                fd = safe_open_log_for_read(new_path, self._log_base)
-                if fd is None:
-                    continue
-                self._log_fd = fd
+        Args:
+            log_area(TextArea): The log pane text area.
+            text(str): Full text to display.
+            cursor(int): Cursor position (len(text) keeps follow active).
+        """
+        buf = log_area.buffer
+        buf.set_document(
+            buf.document.__class__(text, cursor_position=cursor),
+            bypass_readonly=True,
+        )
 
-            # Check for rotation (inode change) or truncation
+    def _trim_front(self, max_lines: int) -> int:
+        """Drop leading lines so the plain window holds at most max_lines lines.
+
+        Cuts only at newline boundaries, so a multibyte UTF-8 sequence is never
+        split. Advances log_win_start by the dropped byte count.
+
+        Args:
+            max_lines(int): Maximum number of lines to retain.
+
+        Return:
+            dropped_chars(int): Number of characters removed from the front
+                (for cursor adjustment), 0 if nothing was dropped.
+        """
+        wb = self._log_win_bytes
+        lines = wb.count(b"\n")
+        if lines <= max_lines:
+            return 0
+        cut = _front_cut_offset(wb, lines - max_lines)
+        dropped = wb[:cut]
+        self._log_win_bytes = wb[cut:]
+        self._state.log_win_start += cut
+        # Trimmed-away lines remain on disk above the window: enable page-up.
+        self._state.log_more_above = self._state.log_win_start > 0
+        return len(dropped.decode("utf-8", errors="replace"))
+
+    def _tail_live(self, app: Application, log_area: TextArea, new_path: Path) -> None:
+        """Live-tail a running log with windowed initial load and follow.
+
+        Args:
+            app(Application): Running application (for invalidate calls).
+            log_area(TextArea): Log pane text area to write content to.
+            new_path(Path): Path to the running log file.
+        """
+        state = self._state
+
+        if new_path != state.log_tail_path or not state.log_tail_live:
+            self._reset_log_window()
+            state.log_tail_path = new_path
+            state.log_tail_live = True
+
+        # Open and load the initial tail window.
+        if self._log_fd is None:
+            fd = safe_open_log_for_read(new_path, self._log_base)
+            if fd is None:
+                return
             try:
-                st = os.fstat(self._log_fd)
+                size = os.fstat(fd).st_size
             except OSError:
-                os.close(self._log_fd)
-                self._log_fd = None
-                state.log_tail_offset = 0
-                continue
-
-            if _is_rotated(self._log_fd, new_path) or st.st_size < state.log_tail_offset:
-                # Rotated or truncated: close fd and reset
-                os.close(self._log_fd)
-                self._log_fd = None
-                state.log_tail_offset = 0
-                log_area.buffer.set_document(
-                    log_area.buffer.document.__class__(""),
-                    bypass_readonly=True,
-                )
-                continue
-
-            # Read new bytes
-            try:
-                os.lseek(self._log_fd, state.log_tail_offset, os.SEEK_SET)
-                chunk = os.read(self._log_fd, 65536)
-            except OSError:
-                os.close(self._log_fd)
-                self._log_fd = None
-                state.log_tail_offset = 0
-                continue
-
-            if not chunk:
-                continue
-
-            state.log_tail_offset += len(chunk)
-            text = chunk.decode("utf-8", errors="replace")
-
-            buf = log_area.buffer
-            # Determine if we should auto-follow
-            current_text = buf.text
-            was_at_end = buf.cursor_position >= len(current_text)
-            combined = _trim_log_text(current_text + text)
-            # Trimming may shift the cursor when the user has scrolled up; auto-follow resumes correctly via End/G.
-            buf.set_document(
-                buf.document.__class__(combined, cursor_position=len(combined) if was_at_end else buf.cursor_position),
-                bypass_readonly=True,
-            )
+                os.close(fd)
+                return
+            self._log_fd = fd
+            start = _start_of_last_n_lines(fd, size, LOG_INITIAL_LINES)
+            self._log_win_bytes = _read_bytes_range(fd, start, size)
+            state.log_win_start = start
+            state.log_more_above = start > 0
+            text = self._log_win_bytes.decode("utf-8", errors="replace")
+            self._set_log_text(log_area, text, len(text))
             app.invalidate()
+            return
+
+        try:
+            st = os.fstat(self._log_fd)
+        except OSError:
+            self._reset_log_window()
+            return
+
+        eof = state.log_win_start + len(self._log_win_bytes)
+        if _is_rotated(self._log_fd, new_path) or st.st_size < eof:
+            # Rotated or truncated: drop the window and reload next tick.
+            self._reset_log_window()
+            self._set_log_text(log_area, "", 0)
+            app.invalidate()
+            return
+
+        if st.st_size <= eof:
+            return  # No new data.
+
+        chunk = _read_bytes_range(self._log_fd, eof, st.st_size)
+        if not chunk:
+            return
+
+        buf = log_area.buffer
+        old_cursor = buf.cursor_position
+        following = old_cursor >= len(buf.text)
+        self._log_win_bytes += chunk
+
+        dropped = 0
+        if following:
+            self._trim_front(LOG_FOLLOW_MAX_LINES)
+        else:
+            dropped = self._trim_front(LOG_MAX_LOADED_LINES)
+
+        text = self._log_win_bytes.decode("utf-8", errors="replace")
+        cursor = len(text) if following else max(0, old_cursor - dropped)
+        self._set_log_text(log_area, text, cursor)
+        app.invalidate()
+
+    def _load_more_above(self, log_area: TextArea) -> bool:
+        """Load the previous page of lines and prepend them, preserving the view.
+
+        Args:
+            log_area(TextArea): The log pane text area.
+
+        Return:
+            loaded(bool): True if older lines were prepended.
+        """
+        state = self._state
+        if not state.log_more_above:
+            return False
+
+        if self._log_gzip_lines is not None:
+            old_start = state.log_gzip_start
+            new_start = max(0, old_start - LOG_PAGE_LINES)
+            if new_start >= old_start:
+                state.log_more_above = old_start > 0
+                return False
+            prepend = "".join(self._log_gzip_lines[new_start:old_start])
+            state.log_gzip_start = new_start
+            state.log_more_above = new_start > 0
+            text = "".join(self._log_gzip_lines[new_start:])
+        else:
+            if self._log_fd is None or state.log_win_start <= 0:
+                state.log_more_above = state.log_win_start > 0
+                return False
+            new_start = _start_of_last_n_lines(
+                self._log_fd, state.log_win_start, LOG_PAGE_LINES
+            )
+            prepend_bytes = _read_bytes_range(self._log_fd, new_start, state.log_win_start)
+            if not prepend_bytes:
+                state.log_more_above = False
+                return False
+            self._log_win_bytes = prepend_bytes + self._log_win_bytes
+            state.log_win_start = new_start
+            state.log_more_above = new_start > 0
+            prepend = prepend_bytes.decode("utf-8", errors="replace")
+            text = self._log_win_bytes.decode("utf-8", errors="replace")
+
+        # Keep the previously-first line in view: cursor at its start, viewport
+        # scrolled down by the number of prepended lines (best-effort).
+        self._set_log_text(log_area, text, len(prepend))
+        try:
+            log_area.window.vertical_scroll = prepend.count("\n")
+        except Exception:
+            pass
+        return True
+
+    def _maybe_load_more_above(self, app: Application, log_area: TextArea) -> None:
+        """Load older lines once when the viewport newly reaches the top.
+
+        Uses a rising-edge guard so paging happens at most once per arrival at
+        the top, regardless of whether the viewport-scroll reset takes effect.
+
+        Args:
+            app(Application): Running application (for focus/invalidate).
+            log_area(TextArea): The log pane text area.
+        """
+        state = self._state
+        ri = getattr(log_area.window, "render_info", None)
+        at_top = (
+            state.show_log
+            and app.layout.has_focus(log_area)
+            and ri is not None
+            and ri.vertical_scroll == 0
+        )
+        if at_top and not state.log_was_at_top and state.log_more_above:
+            if self._load_more_above(log_area):
+                app.invalidate()
+        state.log_was_at_top = at_top
+
+    def _show_latest_log(self, app: Application, log_area: TextArea, pkg: Package) -> None:
+        """Display the package's latest completed log statically (windowed).
+
+        Loads the most recent success/error log (gzip-aware) with only the last
+        LOG_INITIAL_LINES lines shown; older lines load on scroll-to-top. Shows
+        a blank pane when the package has no completed log recorded.
+
+        Args:
+            app(Application): Running application (for invalidate calls).
+            log_area(TextArea): Log pane text area to write content to.
+            pkg(Package): Currently selected package.
+        """
+        state = self._state
+        latest = latest_completed_log(pkg)
+
+        # Transition from a live tail to the static view: drop the live window.
+        if state.log_tail_live:
+            self._reset_log_window()
+            state.log_tail_live = False
+            state.log_tail_path = None
+
+        if latest is None:
+            # No completed log: blank the pane if anything is still shown
+            # (e.g. the previously selected package's log).
+            if state.log_tail_path is not None or log_area.buffer.text:
+                self._reset_log_window()
+                state.log_tail_path = None
+                self._set_log_text(log_area, "", 0)
+                app.invalidate()
+            return
+
+        # Already showing this exact log statically: nothing to refresh.
+        if latest == state.log_tail_path:
+            return
+
+        if latest.suffix == ".gz":
+            lines = read_gzip_lines(latest, self._log_base, LOG_GZIP_MAX_LINES)
+            if lines is None:
+                # Transient read failure: do not pin the path; retry next tick.
+                return
+            self._reset_log_window()
+            self._log_gzip_lines = lines
+            start = max(0, len(lines) - LOG_INITIAL_LINES)
+            state.log_gzip_start = start
+            state.log_more_above = start > 0
+            state.log_tail_path = latest
+            text = "".join(lines[start:])
+            self._set_log_text(log_area, text, len(text))
+            app.invalidate()
+            return
+
+        # Plain completed log: tail-load the last LOG_INITIAL_LINES lines.
+        fd = safe_open_log_for_read(latest, self._log_base)
+        if fd is None:
+            return
+        try:
+            size = os.fstat(fd).st_size
+        except OSError:
+            os.close(fd)
+            return
+        self._reset_log_window()
+        self._log_fd = fd
+        start = _start_of_last_n_lines(fd, size, LOG_INITIAL_LINES)
+        self._log_win_bytes = _read_bytes_range(fd, start, size)
+        state.log_win_start = start
+        state.log_more_above = start > 0
+        state.log_tail_path = latest
+        text = self._log_win_bytes.decode("utf-8", errors="replace")
+        self._set_log_text(log_area, text, len(text))
+        app.invalidate()
 
     async def _run_async(self) -> None:
         """Build and run the prompt_toolkit application asynchronously.

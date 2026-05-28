@@ -15,13 +15,16 @@ import pytest
 
 import mirror.structure
 from mirror.command.tui import (
-    LOG_BUFFER_MAX_LINES,
+    LOG_FOLLOW_MAX_LINES,
+    LOG_INITIAL_LINES,
+    LOG_PAGE_LINES,
     MirrorTUI,
     TUIState,
     _fallback_package_from_dict,
     _is_rotated,
     _modal_active,
-    _trim_log_text,
+    _read_bytes_range,
+    _start_of_last_n_lines,
     _visible_columns,
     apply_filter,
     apply_sort,
@@ -35,7 +38,9 @@ from mirror.command.tui import (
     format_elapsed,
     format_last_success,
     format_started,
+    latest_completed_log,
     packages_from_rpc,
+    read_gzip_lines,
     safe_open_log_for_read,
     status_style,
     visible_packages,
@@ -499,6 +504,441 @@ class TestSafeOpenLogForRead:
         assert fd is None
 
 
+class TestLatestCompletedLog:
+    def test_none_when_no_logs(self):
+        pkg = _make_package()
+        assert latest_completed_log(pkg) is None
+
+    def test_returns_success_log_when_only_success(self):
+        pkg = _make_package(lastsuccesstime=100.0)
+        pkg.statusinfo.lastsuccesslog = "/var/log/mirror/packages/success.log.gz"
+        assert latest_completed_log(pkg) == Path(pkg.statusinfo.lastsuccesslog)
+
+    def test_returns_error_log_when_only_error(self):
+        pkg = _make_package(lasterrortime=100.0)
+        pkg.statusinfo.lasterrorlog = "/var/log/mirror/packages/error.log.gz"
+        assert latest_completed_log(pkg) == Path(pkg.statusinfo.lasterrorlog)
+
+    def test_picks_newer_by_timestamp(self):
+        pkg = _make_package(lastsuccesstime=100.0, lasterrortime=200.0)
+        pkg.statusinfo.lastsuccesslog = "/var/log/mirror/packages/success.log.gz"
+        pkg.statusinfo.lasterrorlog = "/var/log/mirror/packages/error.log.gz"
+        assert latest_completed_log(pkg) == Path(pkg.statusinfo.lasterrorlog)
+
+        pkg.statusinfo.lastsuccesstime = 300.0
+        assert latest_completed_log(pkg) == Path(pkg.statusinfo.lastsuccesslog)
+
+
+class TestShowLatestLog:
+    def _make_tui(self, base):
+        from prompt_toolkit.widgets import TextArea
+
+        tui = MirrorTUI(socket_path="/tmp/none.sock", log_base=base)
+        log_area = TextArea(text="", read_only=True)
+        return tui, log_area
+
+    def test_displays_latest_gzipped_success_log(self, tmp_path):
+        import gzip
+
+        base = tmp_path / "logs"
+        base.mkdir()
+        log_file = base / "success.log.gz"
+        with gzip.open(log_file, "wt", encoding="utf-8") as fh:
+            fh.write("sync complete\nall good\n")
+
+        pkg = _make_package(status="ACTIVE", lastsuccesstime=100.0)
+        pkg.statusinfo.lastsuccesslog = str(log_file)
+
+        tui, log_area = self._make_tui(base)
+        tui._show_latest_log(MagicMock(), log_area, pkg)
+
+        assert log_area.text == "sync complete\nall good\n"
+        assert tui._state.log_tail_live is False
+        assert tui._state.log_tail_path == log_file
+
+    def test_blank_pane_when_no_completed_log(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        pkg = _make_package(status="ACTIVE")
+
+        tui, log_area = self._make_tui(base)
+        tui._show_latest_log(MagicMock(), log_area, pkg)
+
+        assert log_area.text == ""
+        assert tui._state.log_tail_path is None
+
+    def test_picks_newer_error_log_over_older_success(self, tmp_path):
+        import gzip
+
+        base = tmp_path / "logs"
+        base.mkdir()
+        success = base / "success.log.gz"
+        with gzip.open(success, "wt", encoding="utf-8") as fh:
+            fh.write("old success\n")
+        error = base / "error.log.gz"
+        with gzip.open(error, "wt", encoding="utf-8") as fh:
+            fh.write("recent error\n")
+
+        pkg = _make_package(status="ERROR", lastsuccesstime=100.0, lasterrortime=200.0)
+        pkg.statusinfo.lastsuccesslog = str(success)
+        pkg.statusinfo.lasterrorlog = str(error)
+
+        tui, log_area = self._make_tui(base)
+        tui._show_latest_log(MagicMock(), log_area, pkg)
+
+        assert log_area.text == "recent error\n"
+
+    def test_read_failure_does_not_pin_path(self, tmp_path):
+        # A latest log that fails the safety check (outside base) must not
+        # pin log_tail_path, so the next tick can retry.
+        base = tmp_path / "logs"
+        base.mkdir()
+        outside = tmp_path / "outside.log"
+        outside.write_text("evil\n")
+
+        pkg = _make_package(status="ACTIVE", lastsuccesstime=100.0)
+        pkg.statusinfo.lastsuccesslog = str(outside)
+
+        tui, log_area = self._make_tui(base)
+        tui._show_latest_log(MagicMock(), log_area, pkg)
+
+        assert log_area.text == ""
+        assert tui._state.log_tail_path is None
+
+    def test_closes_live_tail_fd_on_static(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        running = base / "running.log"
+        running.write_text("live\n")
+
+        pkg = _make_package(status="ACTIVE")
+        tui, log_area = self._make_tui(base)
+        # Simulate a leftover live tail (fd + live flag + path).
+        tui._log_fd = safe_open_log_for_read(running, base)
+        tui._state.log_tail_live = True
+        tui._state.log_tail_path = running
+        assert tui._log_fd is not None
+
+        tui._show_latest_log(MagicMock(), log_area, pkg)
+
+        assert tui._log_fd is None
+        assert tui._state.log_tail_live is False
+
+
+class TestStartOfLastNLines:
+    def _fd(self, tmp_path, data: bytes) -> int:
+        p = tmp_path / "f"
+        p.write_bytes(data)
+        return os.open(str(p), os.O_RDONLY)
+
+    def test_exact_offsets_with_trailing_newline(self, tmp_path):
+        fd = self._fd(tmp_path, b"a\nb\nc\n")  # size 6
+        try:
+            assert _start_of_last_n_lines(fd, 6, 1) == 4
+            assert _start_of_last_n_lines(fd, 6, 2) == 2
+            assert _start_of_last_n_lines(fd, 6, 3) == 0
+            assert _start_of_last_n_lines(fd, 6, 5) == 0
+        finally:
+            os.close(fd)
+
+    def test_no_trailing_newline(self, tmp_path):
+        fd = self._fd(tmp_path, b"a\nb\nc")  # size 5
+        try:
+            assert _start_of_last_n_lines(fd, 5, 1) == 4
+            assert _start_of_last_n_lines(fd, 5, 2) == 2
+            assert _start_of_last_n_lines(fd, 5, 3) == 0
+        finally:
+            os.close(fd)
+
+    def test_empty(self, tmp_path):
+        fd = self._fd(tmp_path, b"")
+        try:
+            assert _start_of_last_n_lines(fd, 0, 5) == 0
+        finally:
+            os.close(fd)
+
+    def test_n_zero_returns_end(self, tmp_path):
+        fd = self._fd(tmp_path, b"a\nb\n")
+        try:
+            assert _start_of_last_n_lines(fd, 4, 0) == 4
+        finally:
+            os.close(fd)
+
+    def test_page_up_offsets(self, tmp_path):
+        data = b"l0\nl1\nl2\nl3\nl4\n"  # 5 lines, 3 bytes each, size 15
+        fd = self._fd(tmp_path, data)
+        try:
+            assert _start_of_last_n_lines(fd, 15, 2) == 9  # last 2 lines: l3,l4
+            assert _start_of_last_n_lines(fd, 9, 2) == 3   # previous 2: l1,l2
+        finally:
+            os.close(fd)
+
+
+class TestReadBytesRange:
+    def test_reads_subrange(self, tmp_path):
+        p = tmp_path / "f"
+        p.write_bytes(b"0123456789")
+        fd = os.open(str(p), os.O_RDONLY)
+        try:
+            assert _read_bytes_range(fd, 2, 5) == b"234"
+            assert _read_bytes_range(fd, 0, 10) == b"0123456789"
+            assert _read_bytes_range(fd, 5, 5) == b""
+        finally:
+            os.close(fd)
+
+
+class TestReadGzipLines:
+    def test_reads_all_lines(self, tmp_path):
+        import gzip
+
+        base = tmp_path / "logs"
+        base.mkdir()
+        p = base / "a.log.gz"
+        with gzip.open(p, "wt", encoding="utf-8") as fh:
+            fh.write("l0\nl1\nl2\n")
+        assert read_gzip_lines(p, base, 1000) == ["l0\n", "l1\n", "l2\n"]
+
+    def test_caps_to_last_max_lines(self, tmp_path):
+        import gzip
+
+        base = tmp_path / "logs"
+        base.mkdir()
+        p = base / "a.log.gz"
+        with gzip.open(p, "wt", encoding="utf-8") as fh:
+            fh.write("".join(f"l{i}\n" for i in range(100)))
+        out = read_gzip_lines(p, base, 10)
+        assert len(out) == 10
+        assert out[0] == "l90\n"
+        assert out[-1] == "l99\n"
+
+    def test_outside_base_rejected(self, tmp_path):
+        import gzip
+
+        base = tmp_path / "logs"
+        base.mkdir()
+        p = tmp_path / "out.log.gz"
+        with gzip.open(p, "wt", encoding="utf-8") as fh:
+            fh.write("x\n")
+        assert read_gzip_lines(p, base, 10) is None
+
+
+class TestLogPaging:
+    def _make_tui(self, base):
+        from prompt_toolkit.widgets import TextArea
+
+        tui = MirrorTUI(socket_path="/tmp/none.sock", log_base=base)
+        log_area = TextArea(text="", read_only=True)
+        return tui, log_area
+
+    def _write_lines(self, path, n):
+        path.write_text("".join(f"line{i}\n" for i in range(n)))
+
+    def test_live_initial_loads_last_n_lines(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        running = base / "running.log"
+        self._write_lines(running, 3000)
+        tui, log_area = self._make_tui(base)
+        try:
+            tui._tail_live(MagicMock(), log_area, running)
+            text = log_area.buffer.text
+            assert text.count("\n") == LOG_INITIAL_LINES
+            assert text.startswith("line2000\n")
+            assert text.endswith("line2999\n")
+            assert tui._state.log_more_above is True
+            assert tui._state.log_win_start > 0
+        finally:
+            if tui._log_fd is not None:
+                os.close(tui._log_fd)
+
+    def test_live_page_up_prepends_previous_lines(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        running = base / "running.log"
+        self._write_lines(running, 3000)
+        tui, log_area = self._make_tui(base)
+        try:
+            tui._tail_live(MagicMock(), log_area, running)
+            assert tui._load_more_above(log_area) is True
+            text = log_area.buffer.text
+            assert text.count("\n") == 2 * LOG_PAGE_LINES
+            assert text.startswith("line1000\n")
+            assert text.endswith("line2999\n")
+            prepend = "".join(f"line{i}\n" for i in range(1000, 2000))
+            assert log_area.buffer.cursor_position == len(prepend)
+            assert tui._state.log_more_above is True
+        finally:
+            if tui._log_fd is not None:
+                os.close(tui._log_fd)
+
+    def test_live_page_up_reaches_top(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        running = base / "running.log"
+        self._write_lines(running, 1500)
+        tui, log_area = self._make_tui(base)
+        try:
+            tui._tail_live(MagicMock(), log_area, running)
+            assert tui._state.log_more_above is True
+            tui._load_more_above(log_area)
+            text = log_area.buffer.text
+            assert text.count("\n") == 1500
+            assert text.startswith("line0\n")
+            assert tui._state.log_more_above is False
+        finally:
+            if tui._log_fd is not None:
+                os.close(tui._log_fd)
+
+    def test_live_append_while_following_trims_front(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        running = base / "running.log"
+        self._write_lines(running, 100)
+        tui, log_area = self._make_tui(base)
+        try:
+            tui._tail_live(MagicMock(), log_area, running)
+            with open(running, "a") as f:
+                f.write("".join(f"extra{i}\n" for i in range(LOG_FOLLOW_MAX_LINES + 200)))
+            tui._tail_live(MagicMock(), log_area, running)
+            text = log_area.buffer.text
+            assert text.count("\n") <= LOG_FOLLOW_MAX_LINES
+            assert text.endswith(f"extra{LOG_FOLLOW_MAX_LINES + 199}\n")
+        finally:
+            if tui._log_fd is not None:
+                os.close(tui._log_fd)
+
+    def test_live_append_while_scrolled_up_preserves_top(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        running = base / "running.log"
+        self._write_lines(running, 2000)
+        tui, log_area = self._make_tui(base)
+        try:
+            tui._tail_live(MagicMock(), log_area, running)
+            first_line = log_area.buffer.text.split("\n", 1)[0]
+            log_area.buffer.cursor_position = 0  # scrolled up, not following
+            with open(running, "a") as f:
+                f.write("new0\nnew1\n")
+            tui._tail_live(MagicMock(), log_area, running)
+            text = log_area.buffer.text
+            assert text.startswith(first_line + "\n")
+            assert text.endswith("new1\n")
+        finally:
+            if tui._log_fd is not None:
+                os.close(tui._log_fd)
+
+    def test_static_gzip_initial_and_page_up(self, tmp_path):
+        import gzip
+
+        base = tmp_path / "logs"
+        base.mkdir()
+        gz = base / "s.log.gz"
+        with gzip.open(gz, "wt", encoding="utf-8") as fh:
+            fh.write("".join(f"g{i}\n" for i in range(2500)))
+        pkg = _make_package(status="ACTIVE", lastsuccesstime=100.0)
+        pkg.statusinfo.lastsuccesslog = str(gz)
+        tui, log_area = self._make_tui(base)
+        tui._show_latest_log(MagicMock(), log_area, pkg)
+        text = log_area.buffer.text
+        assert text.count("\n") == LOG_INITIAL_LINES
+        assert text.startswith("g1500\n")
+        assert text.endswith("g2499\n")
+        assert tui._state.log_more_above is True
+
+        tui._load_more_above(log_area)
+        text = log_area.buffer.text
+        assert text.count("\n") == 2 * LOG_PAGE_LINES
+        assert text.startswith("g500\n")
+
+    def test_maybe_load_more_above_rising_edge(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        tui, log_area = self._make_tui(base)
+        tui._state.log_more_above = True
+        calls = []
+        tui._load_more_above = lambda la: (calls.append(1) or True)
+        app = MagicMock()
+        app.layout.has_focus.return_value = True
+
+        class RI:
+            vertical_scroll = 0
+
+        log_area.window.render_info = RI()
+
+        tui._maybe_load_more_above(app, log_area)  # at top -> load
+        assert len(calls) == 1
+        assert tui._state.log_was_at_top is True
+
+        tui._maybe_load_more_above(app, log_area)  # still at top -> no rising edge
+        assert len(calls) == 1
+
+        RI.vertical_scroll = 5  # scrolled away
+        tui._maybe_load_more_above(app, log_area)
+        assert tui._state.log_was_at_top is False
+
+        RI.vertical_scroll = 0  # back to top -> rising edge -> load again
+        tui._maybe_load_more_above(app, log_area)
+        assert len(calls) == 2
+
+    def test_following_trim_enables_page_up(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        running = base / "running.log"
+        self._write_lines(running, 100)  # fits entirely, nothing above yet
+        tui, log_area = self._make_tui(base)
+        try:
+            tui._tail_live(MagicMock(), log_area, running)
+            assert tui._state.log_win_start == 0
+            assert tui._state.log_more_above is False
+            # Append past the follow cap so the front gets trimmed.
+            with open(running, "a") as f:
+                f.write("".join(f"x{i}\n" for i in range(LOG_FOLLOW_MAX_LINES + 100)))
+            tui._tail_live(MagicMock(), log_area, running)
+            assert tui._state.log_win_start > 0
+            assert tui._state.log_more_above is True
+        finally:
+            if tui._log_fd is not None:
+                os.close(tui._log_fd)
+
+    def test_no_completed_log_clears_stale_text(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        tui, log_area = self._make_tui(base)
+        # Leftover text from a previously shown package; selection change has
+        # already nulled log_tail_path.
+        log_area.buffer.set_document(
+            log_area.buffer.document.__class__("old package log\n"),
+            bypass_readonly=True,
+        )
+        tui._state.log_tail_path = None
+        pkg = _make_package(status="ACTIVE")  # no completed log
+        tui._show_latest_log(MagicMock(), log_area, pkg)
+        assert log_area.buffer.text == ""
+
+    def test_static_plain_completed_log_and_page_up(self, tmp_path):
+        base = tmp_path / "logs"
+        base.mkdir()
+        plain = base / "done.log"
+        self._write_lines(plain, 1500)
+        pkg = _make_package(status="ERROR", lasterrortime=100.0)
+        pkg.statusinfo.lasterrorlog = str(plain)
+        tui, log_area = self._make_tui(base)
+        try:
+            tui._show_latest_log(MagicMock(), log_area, pkg)
+            text = log_area.buffer.text
+            assert text.count("\n") == LOG_INITIAL_LINES
+            assert text.startswith("line500\n")
+            assert text.endswith("line1499\n")
+            assert tui._state.log_more_above is True
+
+            tui._load_more_above(log_area)
+            assert log_area.buffer.text.startswith("line0\n")
+            assert tui._state.log_more_above is False
+        finally:
+            if tui._log_fd is not None:
+                os.close(tui._log_fd)
+
+
 # ---------------------------------------------------------------------------
 # 10. State transitions (dialog open/confirm/failure)
 # ---------------------------------------------------------------------------
@@ -604,32 +1044,20 @@ class TestShowLogToggle:
         _, _, text = state.toast
         assert "on" in text.lower()
 
-    def test_toggle_on_resets_offset_to_eof(self, tmp_path):
+    def test_toggle_on_forces_reload(self, tmp_path):
         base = tmp_path / "logs"
         base.mkdir()
         log_file = base / "running.log"
         log_file.write_bytes(b"z" * 50)
 
-        state = TUIState(show_log=True, log_tail_path=log_file, log_tail_offset=0)
+        state = TUIState(
+            show_log=True, log_tail_path=log_file, log_tail_live=True, log_more_above=True
+        )
         state.toggle_log()  # off
-        state.toggle_log()  # on — should reset offset to EOF (50)
-        assert state.log_tail_offset == 50
-
-
-# ---------------------------------------------------------------------------
-# _trim_log_text
-# ---------------------------------------------------------------------------
-
-
-class TestTrimLogText:
-    def test_log_buffer_caps_at_max_lines(self):
-        short = "\n".join(f"l{i}" for i in range(10)) + "\n"
-        assert _trim_log_text(short) == short
-
-        long = "\n".join(f"l{i}" for i in range(LOG_BUFFER_MAX_LINES + 50)) + "\n"
-        trimmed = _trim_log_text(long)
-        assert trimmed.count("\n") == LOG_BUFFER_MAX_LINES
-        assert trimmed.endswith(f"l{LOG_BUFFER_MAX_LINES + 49}\n")
+        state.toggle_log()  # on — should force a fresh tail reload
+        assert state.log_tail_path is None
+        assert state.log_tail_live is False
+        assert state.log_more_above is False
 
 
 # ---------------------------------------------------------------------------
