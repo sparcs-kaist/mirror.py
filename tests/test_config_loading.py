@@ -373,6 +373,33 @@ def test_package_disabled_field_loads_from_config(tmp_path, monkeypatch):
     assert "disabled" not in saved
 
 
+def test_package_to_dict_includes_disabled(tmp_path, monkeypatch):
+    """Package.to_dict must carry disabled so the RPC payload preserves it."""
+    stat_path = tmp_path / "stat.json"
+    status_path = tmp_path / "status.json"
+    config = {
+        "mirrorname": "TestMirror",
+        "hostname": "test.local",
+        "settings": _make_settings_config({
+            "statfile": str(stat_path),
+            "statusfile": str(status_path),
+        })["settings"],
+        "packages": {
+            "pkg1": _make_pkg_config({"disabled": True}),
+            "pkg2": _make_pkg_config({"id": "pkg2"}),
+        },
+    }
+    stat_path.write_text(json.dumps({"packages": {}}))
+    status_path.write_text(json.dumps({}))
+    monkeypatch.setattr(mirror, "STATE_PATH", tmp_path / "state", raising=False)
+    monkeypatch.setattr(mirror, "log", type("Log", (), {"warning": lambda *a, **k: None, "error": lambda *a, **k: None})(), raising=False)
+
+    mirror.config._load_from_dict(config, source_path=tmp_path / "config.json", load_plugins=False)
+
+    assert mirror.packages.get("pkg1").to_dict()["disabled"] is True
+    assert mirror.packages.get("pkg2").to_dict()["disabled"] is False
+
+
 def test_save_stat_data_omits_disabled(tmp_path, monkeypatch):
     """disabled is config-owned and should not be persisted as runtime stat."""
     stat_path = tmp_path / "stat.json"

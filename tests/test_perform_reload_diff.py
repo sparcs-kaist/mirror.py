@@ -227,6 +227,18 @@ def test_perform_reload_detects_modified_package(reload_env):
     assert "pkg-one" in result["modified"]
 
 
+def test_perform_reload_detects_disabled_flip(reload_env):
+    """Flipping only the disabled flag must be reported in result['modified']."""
+    flipped = {"pkg-one": {**_make_pkg_entry("pkg-one"), "disabled": True}}
+    _write_config(reload_env, flipped)
+
+    result = mirror.config._perform_reload()
+
+    assert result["status"] == "ok"
+    assert "pkg-one" in result["modified"]
+    assert mirror.packages.get("pkg-one").is_disabled() is True
+
+
 def test_perform_reload_preserves_lastsync_and_applies_config_changes(reload_env):
     """Reload must keep runtime stat fields without hiding config edits."""
     reload_env["stat_path"].write_text(json.dumps({

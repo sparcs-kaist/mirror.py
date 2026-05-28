@@ -508,9 +508,6 @@ def packages_from_rpc(payload: dict) -> list[Package]:
         packages(list[Package]): Rehydrated Package instances.
     """
     result = []
-    # disabled flag is currently lost over the RPC (Package.to_dict drops it);
-    # the TUI cannot distinguish disabled packages until the daemon-side
-    # serializer is fixed.
     for raw in payload.get("packages", []):
         try:
             result.append(Package.from_dict(raw))
