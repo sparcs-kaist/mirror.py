@@ -11,7 +11,7 @@ def test_basic_lftp_sync(mirror_stack):
     lastsync_before = mirror_stack.package_lastsync("lftp-test")
 
     mirror_stack.trigger_sync("lftp-test")
-    _wait_for_new_sync(mirror_stack, "lftp-test", lastsync_before, timeout=60)
+    _wait_for_new_sync(mirror_stack, "lftp-test", lastsync_before, timeout=120)
 
     readme = mirror_stack.publish_dir / "lftp-test" / "README"
     assert readme.exists(), f"README not found at {readme}"

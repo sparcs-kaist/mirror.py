@@ -243,7 +243,12 @@ def mirror_stack(docker_services, integration_tmp: Path) -> MirrorStack:
 
     # Master triggers auto-syncs immediately on a fresh stat.json (lastsync=0
     # makes every package due). Tests that probe the system independently must
-    # not race those in-flight syncs, so wait until none are SYNC.
+    # not race those baseline syncs. A freshly loaded package starts as UNKNOWN
+    # before master drives it through SYNC to a terminal state, so waiting only
+    # for "no SYNC" can break in the window before master's first loop pass even
+    # begins — yielding while a sync is about to start (holding e.g. the ftpsync
+    # Archive-lock, or before lftp's lastsync advances). Wait until every package
+    # has left UNKNOWN and settled to a terminal state (ACTIVE/ERROR).
     deadline = time.monotonic() + 60
     statuses: dict[str, str] = {}
     while time.monotonic() < deadline:
@@ -252,15 +257,15 @@ def mirror_stack(docker_services, integration_tmp: Path) -> MirrorStack:
             pkgid: pkg.get("status", {}).get("status", "UNKNOWN")
             for pkgid, pkg in data.get("packages", {}).items()
         }
-        if all(s != "SYNC" for s in statuses.values()):
+        if statuses and all(s not in ("SYNC", "UNKNOWN") for s in statuses.values()):
             break
         time.sleep(0.5)
     else:
-        stuck = [pkgid for pkgid, s in statuses.items() if s == "SYNC"]
-        if stuck:
+        unsettled = [pkgid for pkgid, s in statuses.items() if s in ("SYNC", "UNKNOWN")]
+        if unsettled:
             raise TimeoutError(
-                f"mirror_stack: package(s) {stuck} stuck in SYNC after 60s; "
-                f"all statuses: {statuses}"
+                f"mirror_stack: package(s) {unsettled} did not reach a terminal "
+                f"state within 60s; all statuses: {statuses}"
             )
 
     yield stack
