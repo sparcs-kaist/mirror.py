@@ -122,6 +122,9 @@ def test_on_sync_done_records_post_compression_path(tmp_path, monkeypatch):
     """on_sync_done must use the path close_logger returns (post-gzip),
     not the pre-compression path from get_log_path."""
     pkg = _make_package()
+    # on_sync_done only runs for a package currently in SYNC; reflect that
+    # precondition so the stale-completion guard does not short-circuit.
+    pkg.status = "SYNC"
     monkeypatch.setattr(mirror, "packages", {"pkg": pkg}, raising=False)
 
     pre_path = tmp_path / "session.pkg.log"
