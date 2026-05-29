@@ -34,6 +34,26 @@ def test_cli_ubuntu_help_lists_options():
         assert option in result.output, f"Expected '{option}' in help output"
 
 
+def test_cli_ubuntu_shows_help_when_no_args():
+    """Invoking the subcommand with no arguments must print full usage/help
+    instead of a terse 'missing option' error, so the user immediately sees
+    which flags are available."""
+    r = CliRunner()
+    result = r.invoke(main, ["worker-execute", "ubuntu"])
+    # All option flags must appear in the help output.
+    for flag in (
+        "--src",
+        "--dst",
+        "--trace",
+        "--no-trace",
+        "--trace-path",
+        "--trace-hostname",
+        "--extra-rsync-arg",
+        "--rsync-bin",
+    ):
+        assert flag in result.output, f"expected {flag} in help output, got: {result.output}"
+
+
 def test_cli_ubuntu_requires_src():
     """Omitting --src must trigger a click usage error."""
     r = CliRunner()

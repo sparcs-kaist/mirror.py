@@ -13,7 +13,7 @@ def worker_execute_group() -> None:
     """Standalone worker-side syncs that run without the daemon."""
 
 
-@worker_execute_group.command("ubuntu")
+@worker_execute_group.command("ubuntu", no_args_is_help=True)
 @click.option(
     "--src", required=True, type=str,
     help="rsync source URL or path (e.g. rsync://kr.archive.ubuntu.com/ubuntu).",
