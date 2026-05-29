@@ -12,8 +12,12 @@ logger = logging.getLogger(__name__)
 _jobs: dict[str, 'Job'] = {}
 _jobs_lock = threading.Lock()
 
-# Maximum notification attempts before force-pruning a finished job
-NOTIFY_ATTEMPT_BUDGET = 3
+# Maximum notification attempts before force-pruning a finished job.
+# The manage() loop retries once per second, so this is roughly a 40s window
+# for the master to re-establish its notification connection and accept the
+# completion. Beyond that the job is dropped; the master-side reconciliation
+# then marks the package ERROR and it re-syncs on the next cycle.
+NOTIFY_ATTEMPT_BUDGET = 40
 HELPER_DRAIN_TIMEOUT = 5.0
 
 

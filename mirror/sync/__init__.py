@@ -263,6 +263,22 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
                 _watchdog_fired.discard(pkgid)
             return
 
+        # Stale/duplicate completion: the package already left SYNC. This happens
+        # when the daemon reconciliation gave up and marked the package ERROR
+        # (e.g. the worker restarted and the notification arrived too late), or
+        # when a duplicate notification is delivered. Do NOT overwrite the
+        # already-resolved status; just drop the in-flight bookkeeping so the
+        # next scheduled sync starts clean.
+        if not package.is_syncing():
+            mirror.log.warning(
+                f"on_sync_done({pkgid}): package no longer in SYNC "
+                f"(status={package.status}); ignoring stale completion notification"
+            )
+            with _start_lock:
+                _extra_args.pop(pkgid, None)
+                _watchdog_fired.discard(pkgid)
+            return
+
         if success:
             pkglogger.info("Sync done successfully")
             pkglogger.info(f"Returncode: {returncode}")
