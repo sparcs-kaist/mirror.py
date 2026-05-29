@@ -5,6 +5,7 @@ import mirror.command
 
 from mirror import __version__
 from mirror.command.config import config_group
+from mirror.command.worker_execute import worker_execute_group
 
 @click.version_option(prog_name="mirror", version=__version__)
 @click.group()
@@ -70,3 +71,4 @@ def tui(socket_path: str | None) -> None:
 
 
 main.add_command(config_group)
+main.add_command(worker_execute_group)

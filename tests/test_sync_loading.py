@@ -9,7 +9,7 @@ from mirror.plugin import load_builtin_plugins
 
 @pytest.fixture(autouse=True)
 def _ensure_builtins_loaded():
-    """Guarantee all five built-ins are registered before each test.
+    """Guarantee all six built-ins are registered before each test.
 
     test_example_config.py replaces mirror.sync.methods with a truncated list,
     so we always rebuild from scratch here rather than relying on whatever state
@@ -34,8 +34,8 @@ def _ensure_builtins_loaded():
 
 
 def test_builtin_methods_present():
-    """All five built-in sync types must be registered after phase A."""
-    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local"}
+    """All six built-in sync types must be registered after phase A."""
+    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu"}
     assert expected == set(mirror.sync.methods), (
         f"Expected {expected}, got {set(mirror.sync.methods)}"
     )
@@ -52,7 +52,7 @@ def test_rsync_record_is_valid():
 
 def test_all_five_records_have_execute():
     """Every built-in sync plug-in must expose a callable execute."""
-    for name in ("rsync", "ftpsync", "lftp", "bandersnatch", "local"):
+    for name in ("rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu"):
         record = mirror.plugin.get_record(name)
         assert record is not None, f"{name} not in registry"
         assert callable(record.execute), f"{name}.execute not callable"
