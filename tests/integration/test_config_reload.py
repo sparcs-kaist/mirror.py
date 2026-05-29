@@ -14,6 +14,32 @@ import time
 import pytest
 
 
+# Runtime fields that background auto-sync mutates independently of config reload.
+_VOLATILE_PKG_FIELDS = {"status", "lastsync", "timestamp", "statusinfo"}
+
+
+def _config_invariant(stat: dict) -> dict:
+    """Project stat.json onto config-derived fields a reload must preserve.
+
+    Drops volatile runtime fields (status/lastsync/timestamp/statusinfo) that
+    background auto-sync legitimately mutates, so the assertion isolates whether
+    the reload itself altered package definitions.
+
+    Args:
+        stat(dict): Parsed stat.json contents.
+
+    Return:
+        invariant(dict): mirrorname plus per-package config-derived fields only.
+    """
+    return {
+        "mirrorname": stat.get("mirrorname"),
+        "packages": {
+            pkgid: {k: v for k, v in pkg.items() if k not in _VOLATILE_PKG_FIELDS}
+            for pkgid, pkg in stat.get("packages", {}).items()
+        },
+    }
+
+
 @pytest.mark.integration
 def test_add_remove_package_via_master_restart(mirror_stack):
     """Editing config.json and restarting master registers the new package in stat.json.
@@ -446,7 +472,7 @@ def test_malformed_config_no_state_change(mirror_stack):
     # Snapshot stat.json.
     stat_before = mirror_stack.docker_exec("cat", "/var/lib/mirror/stat.json")
     assert stat_before.returncode == 0, "Failed to read stat.json before test"
-    stat_snapshot = stat_before.stdout
+    stat_snapshot = _config_invariant(json.loads(stat_before.stdout))
 
     # Snapshot original config for restoration.
     original_config = _read_config(mirror_stack)
@@ -468,8 +494,8 @@ def test_malformed_config_no_state_change(mirror_stack):
 
         stat_after = mirror_stack.docker_exec("cat", "/var/lib/mirror/stat.json", check=False)
         if stat_after.returncode == 0:
-            assert stat_after.stdout == stat_snapshot, (
-                "stat.json changed after malformed-config reload; expected no change"
+            assert _config_invariant(json.loads(stat_after.stdout)) == stat_snapshot, (
+                "package definitions changed after malformed-config reload; expected no change"
             )
 
     finally:
