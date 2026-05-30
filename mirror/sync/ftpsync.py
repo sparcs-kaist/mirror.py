@@ -239,20 +239,20 @@ def _config(
     if "user" in opts and "password" in opts:
         lines.append(f"RSYNC_USER={_q('user', opts['user'])}")
         lines.append(f"RSYNC_PASSWORD={_q('password', opts['password'])}")
-    if "maintainer" in opts:
-        lines.append(f"INFO_MAINTAINER={_q('maintainer', opts['maintainer'])}")
-    if "sponsor" in opts:
-        lines.append(f"INFO_SPONSOR={_q('sponsor', opts['sponsor'])}")
-    if "country" in opts:
-        lines.append(f"INFO_COUNTRY={_q('country', opts['country'])}")
-    if "location" in opts:
-        lines.append(f"INFO_LOCATION={_q('location', opts['location'])}")
-    if "throughput" in opts:
-        lines.append(f"INFO_THROUGHPUT={_q('throughput', opts['throughput'])}")
-    if "arch_include" in opts:
-        lines.append(f"ARCH_INCLUDE={_q('arch_include', opts['arch_include'])}")
-    if "arch_exclude" in opts:
-        lines.append(f"ARCH_EXCLUDE={_q('arch_exclude', opts['arch_exclude'])}")
+    # INFO_* and ARCH_* default from the global settings.ftpsync block;
+    # per-package options override on a per-key basis.
+    gftp = mirror.conf.ftpsync
+    lines.append(f"INFO_MAINTAINER={_q('maintainer', opts.get('maintainer', gftp.maintainer))}")
+    lines.append(f"INFO_SPONSOR={_q('sponsor', opts.get('sponsor', gftp.sponsor))}")
+    lines.append(f"INFO_COUNTRY={_q('country', opts.get('country', gftp.country))}")
+    lines.append(f"INFO_LOCATION={_q('location', opts.get('location', gftp.location))}")
+    lines.append(f"INFO_THROUGHPUT={_q('throughput', opts.get('throughput', gftp.throughput))}")
+    arch_include = opts.get('arch_include', gftp.include)
+    if arch_include:
+        lines.append(f"ARCH_INCLUDE={_q('arch_include', arch_include)}")
+    arch_exclude = opts.get('arch_exclude', gftp.exclude)
+    if arch_exclude:
+        lines.append(f"ARCH_EXCLUDE={_q('arch_exclude', arch_exclude)}")
     lines.append(f"LOGDIR={_q('logdir', log_dir or opts.get('logdir', mirror.conf.logfolder))}")
     return "\n".join(lines) + "\n"
 
