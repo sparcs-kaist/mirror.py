@@ -182,6 +182,13 @@ def test_config_accepts_rsync_url_without_path_option(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_mirrorname_uses_config_hostname(tmp_path, base_opts):
+    pkg = _make_package(base_opts)
+    conf = _config(pkg)
+    assert _eval_key(conf, "MIRRORNAME", tmp_path) == "ftp.example.org"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
 def test_tracehost_defaults_to_config_hostname(tmp_path, base_opts):
     pkg = _make_package(base_opts)
     conf = _config(pkg)
@@ -189,11 +196,11 @@ def test_tracehost_defaults_to_config_hostname(tmp_path, base_opts):
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
-def test_tracehost_option_overrides_config_hostname(tmp_path, base_opts):
+def test_tracehost_ignores_package_option(tmp_path, base_opts):
     base_opts["tracehost"] = "mirror.override.org"
     pkg = _make_package(base_opts)
     conf = _config(pkg)
-    assert _eval_key(conf, "TRACEHOST", tmp_path) == "mirror.override.org"
+    assert _eval_key(conf, "TRACEHOST", tmp_path) == "ftp.example.org"
 
 
 def test_tracehost_omitted_when_hostname_empty(monkeypatch, base_opts):

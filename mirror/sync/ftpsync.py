@@ -282,16 +282,17 @@ def _config(
     rsync_host, rsync_path = _split_rsync_src(package.settings.src, opts)
 
     lines = [
-        f"MIRRORNAME={_q('mirrorname', mirror.conf.name)}",
+        f"MIRRORNAME={_q('mirrorname', mirror.conf.hostname)}",
         f"TO={_q('dst', package.settings.dst)}",
         f"HUB={_q('hub', opts.get('hub', 'false'))}",
         f"RSYNC_HOST={_q('src', rsync_host)}",
         f"RSYNC_PATH={_q('path', rsync_path)}",
     ]
-    # Pin the trace host from config; without it archvsync falls back to
-    # `hostname -f`, which aborts the run (set -e) on hosts whose FQDN does not
-    # resolve.
-    tracehost = opts.get('tracehost', getattr(mirror.conf, 'hostname', '') or '')
+    # Pin the trace host to the configured hostname only; without TRACEHOST set
+    # archvsync falls back to `hostname -f`, which aborts the run (set -e) on
+    # hosts whose FQDN does not resolve. Per-package overrides are intentionally
+    # not honoured: the trace host must always be the mirror's own hostname.
+    tracehost = getattr(mirror.conf, 'hostname', '') or ''
     if tracehost:
         lines.append(f"TRACEHOST={_q('tracehost', tracehost)}")
     if log_name is not None:
