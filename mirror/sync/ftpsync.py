@@ -63,6 +63,28 @@ def setup_ftpsync(
 
     (path / "etc" / "ftpsync.conf").write_text(_config(package, log_dir, log_name))
 
+    # The tree is created by the master (root) but executed by the worker
+    # subprocess after it drops to the configured uid/gid. Hand ownership of
+    # the whole tree to that uid/gid so the dropped subprocess can traverse the
+    # 0700 temp dir and exec bin/ftpsync.
+    _apply_owner_recursive(path)
+
+
+def _apply_owner_recursive(root: Path) -> None:
+    """Apply the configured mirror uid/gid ownership to a directory tree.
+
+    Args:
+        root(Path): Directory tree to chown (no-op when not running as root or
+            when uid/gid are not configured).
+    """
+    from mirror.logger.handler import apply_configured_owner
+
+    apply_configured_owner(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        base = Path(dirpath)
+        for name in dirnames + filenames:
+            apply_configured_owner(base / name)
+
 def execute(package: mirror.structure.Package, logger: logging.Logger):
     """Sync package via ftpsync subprocess.
 

@@ -1,4 +1,5 @@
 """ftpsync tempdir is created under STATE_PATH and cleaned up via handle map."""
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import mirror
@@ -50,3 +51,27 @@ def test_tempdir_under_state_path_and_cleanup_via_handle_map(monkeypatch, tmp_pa
     ftpsync_mod.on_sync_done(pkg, logger, True, 0)
     assert pkg.pkgid not in ftpsync_mod._ftpsync_handles
     assert not p.exists()
+
+
+def test_apply_owner_recursive_covers_whole_tree(monkeypatch, tmp_path):
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "etc").mkdir()
+    (tmp_path / "bin" / "ftpsync").write_text("#!/bin/sh\n")
+    (tmp_path / "etc" / "ftpsync.conf").write_text("TO=/x\n")
+
+    seen = []
+    import mirror.logger.handler as handler_mod
+    monkeypatch.setattr(
+        handler_mod, "apply_configured_owner", lambda p: seen.append(Path(p))
+    )
+
+    ftpsync_mod._apply_owner_recursive(tmp_path)
+
+    expected = {
+        tmp_path,
+        tmp_path / "bin",
+        tmp_path / "etc",
+        tmp_path / "bin" / "ftpsync",
+        tmp_path / "etc" / "ftpsync.conf",
+    }
+    assert set(seen) == expected
