@@ -229,8 +229,7 @@ def _config(
     lines = [
         f"MIRRORNAME={_q('mirrorname', mirror.conf.name)}",
         f"TO={_q('dst', package.settings.dst)}",
-        f"MAILTO={_q('email', opts['email'])}",
-        f"HUB={_q('hub', opts['hub'])}",
+        f"HUB={_q('hub', opts.get('hub', 'false'))}",
         f"RSYNC_HOST={_q('src', package.settings.src)}",
         f"RSYNC_PATH={_q('path', opts['path'])}",
     ]
@@ -239,20 +238,33 @@ def _config(
     if "user" in opts and "password" in opts:
         lines.append(f"RSYNC_USER={_q('user', opts['user'])}")
         lines.append(f"RSYNC_PASSWORD={_q('password', opts['password'])}")
-    if "maintainer" in opts:
-        lines.append(f"INFO_MAINTAINER={_q('maintainer', opts['maintainer'])}")
-    if "sponsor" in opts:
-        lines.append(f"INFO_SPONSOR={_q('sponsor', opts['sponsor'])}")
-    if "country" in opts:
-        lines.append(f"INFO_COUNTRY={_q('country', opts['country'])}")
-    if "location" in opts:
-        lines.append(f"INFO_LOCATION={_q('location', opts['location'])}")
-    if "throughput" in opts:
-        lines.append(f"INFO_THROUGHPUT={_q('throughput', opts['throughput'])}")
-    if "arch_include" in opts:
-        lines.append(f"ARCH_INCLUDE={_q('arch_include', opts['arch_include'])}")
-    if "arch_exclude" in opts:
-        lines.append(f"ARCH_EXCLUDE={_q('arch_exclude', opts['arch_exclude'])}")
+    email = opts.get('email')
+    if email:
+        lines.append(f"MAILTO={_q('email', email)}")
+    # INFO_* and ARCH_* default from the global settings.ftpsync block;
+    # per-package options override on a per-key basis; emitted only when non-empty.
+    gftp = mirror.conf.ftpsync
+    maintainer = opts.get('maintainer', gftp.maintainer)
+    if maintainer:
+        lines.append(f"INFO_MAINTAINER={_q('maintainer', maintainer)}")
+    sponsor = opts.get('sponsor', gftp.sponsor)
+    if sponsor:
+        lines.append(f"INFO_SPONSOR={_q('sponsor', sponsor)}")
+    country = opts.get('country', gftp.country)
+    if country:
+        lines.append(f"INFO_COUNTRY={_q('country', country)}")
+    location = opts.get('location', gftp.location)
+    if location:
+        lines.append(f"INFO_LOCATION={_q('location', location)}")
+    throughput = opts.get('throughput', gftp.throughput)
+    if throughput:
+        lines.append(f"INFO_THROUGHPUT={_q('throughput', throughput)}")
+    arch_include = opts.get('arch_include', gftp.include)
+    if arch_include:
+        lines.append(f"ARCH_INCLUDE={_q('arch_include', arch_include)}")
+    arch_exclude = opts.get('arch_exclude', gftp.exclude)
+    if arch_exclude:
+        lines.append(f"ARCH_EXCLUDE={_q('arch_exclude', arch_exclude)}")
     lines.append(f"LOGDIR={_q('logdir', log_dir or opts.get('logdir', mirror.conf.logfolder))}")
     return "\n".join(lines) + "\n"
 

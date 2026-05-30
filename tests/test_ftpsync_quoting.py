@@ -1,6 +1,7 @@
 """Regression tests for ftpsync shell-quoting (Commit 1, finding C1)."""
 import shutil
 import subprocess
+import types
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -23,6 +24,15 @@ def _stub_mirror_conf(monkeypatch):
     fake_conf = MagicMock()
     fake_conf.name = "TestMirror"
     fake_conf.logfolder = Path("/var/log/mirror")
+    fake_conf.ftpsync = types.SimpleNamespace(
+        maintainer="Admins <admins@example.com>",
+        sponsor="Example <https://example.com>",
+        country="KR",
+        location="Seoul",
+        throughput="1G",
+        include="",
+        exclude="",
+    )
     monkeypatch.setattr(mirror, "conf", fake_conf, raising=False)
 
 
