@@ -298,11 +298,11 @@ class PluginSettings(Options):
 class Config:
     @dataclass
     class FTPSync(Options):
-        maintainer: str
-        sponsor: str
-        country: str
-        location: str
-        throughput: str
+        maintainer: str = ""
+        sponsor: str = ""
+        country: str = ""
+        location: str = ""
+        throughput: str = ""
         include: str = ""
         exclude: str = ""
 
@@ -399,7 +399,7 @@ class Config:
             statusfile=Path(config["settings"]["statusfile"]),
             uid=uid,
             gid=gid,
-            ftpsync=Config.FTPSync(**config["settings"]["ftpsync"]),
+            ftpsync=Config.FTPSync(**config["settings"].get("ftpsync", {})),
             maintainer=config["settings"].get("maintainer", {}),
             localtimezone=config["settings"]["localtimezone"],
             logger=config["settings"]["logger"],

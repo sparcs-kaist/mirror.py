@@ -48,7 +48,7 @@ def _kv(key: str, value: str) -> str:
 
 
 def test_info_fields_fall_back_to_global_defaults():
-    """All five INFO_* fields are always emitted using global values when absent from options."""
+    """All five INFO_* fields fall back to (non-empty) global values when absent from options."""
     pkg = _make_package(_base_opts())
     conf = _config(pkg)
     assert _kv("INFO_MAINTAINER", "Admins <admins@example.com>") in conf
@@ -120,3 +120,61 @@ def test_explicit_empty_arch_option_suppresses_global_default(monkeypatch):
     conf = _config(pkg)
     assert "ARCH_INCLUDE" not in conf
     assert "ARCH_EXCLUDE" not in conf
+
+
+def test_info_fields_omitted_when_global_empty_and_option_absent(monkeypatch):
+    """INFO_* fields are not emitted when global defaults are empty and options lack them."""
+    import mirror
+    mirror.conf.ftpsync.maintainer = ""
+    mirror.conf.ftpsync.sponsor = ""
+    mirror.conf.ftpsync.country = ""
+    mirror.conf.ftpsync.location = ""
+    mirror.conf.ftpsync.throughput = ""
+    pkg = _make_package(_base_opts())
+    conf = _config(pkg)
+    assert "INFO_MAINTAINER" not in conf
+    assert "INFO_SPONSOR" not in conf
+    assert "INFO_COUNTRY" not in conf
+    assert "INFO_LOCATION" not in conf
+    assert "INFO_THROUGHPUT" not in conf
+
+
+def test_explicit_empty_info_option_suppresses_non_empty_global(monkeypatch):
+    """An explicit empty per-package INFO_* value suppresses a non-empty global default."""
+    import mirror
+    # fixture already sets maintainer to "Admins <admins@example.com>"
+    opts = _base_opts({"maintainer": ""})
+    pkg = _make_package(opts)
+    conf = _config(pkg)
+    assert "INFO_MAINTAINER" not in conf
+
+
+def test_mailto_omitted_when_email_absent():
+    """MAILTO is not emitted when email is absent from options."""
+    opts = {"hub": "hub.example.com", "path": "/debian"}
+    pkg = _make_package(opts)
+    conf = _config(pkg)
+    assert "MAILTO" not in conf
+
+
+def test_mailto_present_when_email_given():
+    """MAILTO is emitted when email is present in options."""
+    pkg = _make_package(_base_opts())
+    conf = _config(pkg)
+    assert _kv("MAILTO", "ops@example.com") in conf
+
+
+def test_hub_defaults_to_false_when_absent():
+    """HUB defaults to the string 'false' when hub is absent from options."""
+    opts = {"path": "/debian"}
+    pkg = _make_package(opts)
+    conf = _config(pkg)
+    assert _kv("HUB", "false") in conf
+
+
+def test_hub_uses_provided_value():
+    """HUB uses the provided value when hub is present in options."""
+    opts = {"hub": "true", "path": "/debian"}
+    pkg = _make_package(opts)
+    conf = _config(pkg)
+    assert _kv("HUB", "true") in conf
