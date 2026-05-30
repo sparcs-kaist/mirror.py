@@ -288,6 +288,12 @@ def _config(
         f"RSYNC_HOST={_q('src', rsync_host)}",
         f"RSYNC_PATH={_q('path', rsync_path)}",
     ]
+    # Pin the trace host from config; without it archvsync falls back to
+    # `hostname -f`, which aborts the run (set -e) on hosts whose FQDN does not
+    # resolve.
+    tracehost = opts.get('tracehost', getattr(mirror.conf, 'hostname', '') or '')
+    if tracehost:
+        lines.append(f"TRACEHOST={_q('tracehost', tracehost)}")
     if log_name is not None:
         lines.append(f"NAME={_q('name', log_name)}")
     if "user" in opts and "password" in opts:

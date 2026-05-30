@@ -23,6 +23,7 @@ def _stub_mirror_conf(monkeypatch):
     import mirror
     fake_conf = MagicMock()
     fake_conf.name = "TestMirror"
+    fake_conf.hostname = "ftp.example.org"
     fake_conf.logfolder = Path("/var/log/mirror")
     fake_conf.ftpsync = types.SimpleNamespace(
         maintainer="Admins <admins@example.com>",
@@ -178,3 +179,26 @@ def test_config_accepts_rsync_url_without_path_option(tmp_path):
     assert "RSYNC_HOST='syncproxy2.wna.debian.org'" in conf or \
         "RSYNC_HOST=syncproxy2.wna.debian.org" in conf
     assert "RSYNC_PATH=debian" in conf
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_tracehost_defaults_to_config_hostname(tmp_path, base_opts):
+    pkg = _make_package(base_opts)
+    conf = _config(pkg)
+    assert _eval_key(conf, "TRACEHOST", tmp_path) == "ftp.example.org"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
+def test_tracehost_option_overrides_config_hostname(tmp_path, base_opts):
+    base_opts["tracehost"] = "mirror.override.org"
+    pkg = _make_package(base_opts)
+    conf = _config(pkg)
+    assert _eval_key(conf, "TRACEHOST", tmp_path) == "mirror.override.org"
+
+
+def test_tracehost_omitted_when_hostname_empty(monkeypatch, base_opts):
+    import mirror
+    monkeypatch.setattr(mirror.conf, "hostname", "", raising=False)
+    pkg = _make_package(base_opts)
+    conf = _config(pkg)
+    assert "TRACEHOST=" not in conf

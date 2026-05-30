@@ -29,6 +29,7 @@ def _stub_mirror_conf(monkeypatch):
     import mirror
     fake_conf = MagicMock()
     fake_conf.name = "TestMirror"
+    fake_conf.hostname = "ftp.example.org"
     fake_conf.logfolder = Path("/var/log/mirror")
     fake_conf.ftpsync = types.SimpleNamespace(
         maintainer="Admins <admins@example.com>",
