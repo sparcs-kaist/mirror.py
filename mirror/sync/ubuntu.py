@@ -219,7 +219,6 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger) -> 
         opts = package.settings.options
 
         trace = bool(opts.get("trace", True))
-        trace_path = str(opts.get("trace_path", UBUNTU_TRACE_PATH_DEFAULT))
         extra_rsync_args = list(opts.get("extra_rsync_args", []))
         stage1_excludes = list(opts.get("stage1_excludes", UBUNTU_STAGE1_EXCLUDES))
         user = str(opts.get("user", ""))
@@ -235,7 +234,6 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger) -> 
             sys.executable, "-m", "mirror", "worker-execute", "ubuntu",
             "--src", src,
             "--dst", str(dst),
-            "--trace-path", trace_path,
         ]
         if not trace:
             argv.append("--no-trace")

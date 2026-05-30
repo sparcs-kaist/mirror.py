@@ -28,12 +28,9 @@ def worker_execute_group() -> None:
     help="Write <dst>/project/trace/<hostname> on success.",
 )
 @click.option(
-    "--trace-path", default="project/trace", show_default=True,
-    help="Subdirectory under dst for the trace file.",
-)
-@click.option(
     "--trace-hostname", default=None,
-    help="Override the hostname used for the trace filename (default: socket.getfqdn()).",
+    help="Override the hostname used for the trace filename "
+         "(default: socket.getfqdn()).",
 )
 @click.option(
     "--extra-rsync-arg", "extra_rsync_args", multiple=True, metavar="ARG",
@@ -48,7 +45,6 @@ def ubuntu_cmd(
     src: str,
     dst: Path,
     trace: bool,
-    trace_path: str,
     trace_hostname: Optional[str],
     extra_rsync_args: tuple[str, ...],
     stage1_excludes: tuple[str, ...],
@@ -61,7 +57,6 @@ def ubuntu_cmd(
         src=src,
         dst=dst,
         trace=trace,
-        trace_path=trace_path,
         trace_hostname=trace_hostname,
         extra_rsync_args=tuple(extra_rsync_args),
         stage1_excludes=excludes,
