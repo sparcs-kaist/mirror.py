@@ -44,10 +44,6 @@ def worker_execute_group() -> None:
     help="Exclude pattern for stage 1 (metadata-free pass). Repeatable. "
          "If provided, overrides the built-in defaults.",
 )
-@click.option(
-    "--rsync-bin", default="rsync", show_default=True,
-    help="rsync executable.",
-)
 def ubuntu_cmd(
     src: str,
     dst: Path,
@@ -56,7 +52,6 @@ def ubuntu_cmd(
     trace_hostname: Optional[str],
     extra_rsync_args: tuple[str, ...],
     stage1_excludes: tuple[str, ...],
-    rsync_bin: str,
 ) -> None:
     """Two-stage Ubuntu archive sync: data first, then metadata + delete."""
     import mirror.sync.ubuntu
@@ -69,6 +64,5 @@ def ubuntu_cmd(
         trace_path=trace_path,
         trace_hostname=trace_hostname,
         extra_rsync_args=tuple(extra_rsync_args),
-        rsync_bin=rsync_bin,
         stage1_excludes=excludes,
     )

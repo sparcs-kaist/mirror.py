@@ -64,7 +64,6 @@ def build_ubuntu_commands(
     src: str,
     dst: Path,
     extra_rsync_args: Sequence[str] = (),
-    rsync_bin: str = "rsync",
     stage1_excludes: Sequence[str] = UBUNTU_STAGE1_EXCLUDES,
 ) -> tuple[list[str], list[str]]:
     """Build stage1 and stage2 rsync argv lists for Ubuntu mirroring.
@@ -73,7 +72,6 @@ def build_ubuntu_commands(
         src(str): Rsync source URL or path.
         dst(Path): Local destination directory.
         extra_rsync_args(Sequence[str]): Additional rsync flags appended after base args.
-        rsync_bin(str): Path or name of the rsync binary.
         stage1_excludes(Sequence[str]): Patterns to exclude in stage 1.
 
     Return:
@@ -82,7 +80,7 @@ def build_ubuntu_commands(
     src_arg = src if src.endswith("/") else src + "/"
     dst_arg = str(dst) if str(dst).endswith("/") else str(dst) + "/"
 
-    base = [rsync_bin, *UBUNTU_RSYNC_BASE_ARGS, *extra_rsync_args]
+    base = ["rsync", *UBUNTU_RSYNC_BASE_ARGS, *extra_rsync_args]
 
     stage1 = list(base)
     for pattern in stage1_excludes:
@@ -135,9 +133,7 @@ def run_standalone(
     trace_path: str = UBUNTU_TRACE_PATH_DEFAULT,
     trace_hostname: Optional[str] = None,
     extra_rsync_args: Sequence[str] = (),
-    rsync_bin: str = "rsync",
     stage1_excludes: Sequence[str] = UBUNTU_STAGE1_EXCLUDES,
-    runner=subprocess.run,
 ) -> None:
     """Run an Ubuntu two-stage rsync sync directly (standalone, no daemon).
 
@@ -149,9 +145,7 @@ def run_standalone(
         trace_hostname(Optional[str]): Hostname for the trace file name.
             Defaults to socket.getfqdn() when None.
         extra_rsync_args(Sequence[str]): Additional rsync flags.
-        rsync_bin(str): Path or name of the rsync binary.
         stage1_excludes(Sequence[str]): Patterns to exclude in stage 1.
-        runner: Callable matching subprocess.run signature; injectable for tests.
 
     Return:
         None
@@ -170,17 +164,17 @@ def run_standalone(
             sys.exit(1)
 
     stage1, stage2 = build_ubuntu_commands(
-        src, dst, extra_rsync_args, rsync_bin, stage1_excludes
+        src, dst, extra_rsync_args, stage1_excludes
     )
 
     print_formatted_text(FormattedText([("class:info", f"[INFO] Running stage 1: {' '.join(stage1)}")]))
-    result1 = runner(stage1)
+    result1 = subprocess.run(stage1)
     if result1.returncode != 0:
         print_formatted_text(FormattedText([("class:error", f"[ERROR] Stage 1 failed with return code {result1.returncode}")]))
         sys.exit(result1.returncode or 1)
 
     print_formatted_text(FormattedText([("class:info", f"[INFO] Running stage 2: {' '.join(stage2)}")]))
-    result2 = runner(stage2)
+    result2 = subprocess.run(stage2)
     if result2.returncode != 0:
         print_formatted_text(FormattedText([("class:error", f"[ERROR] Stage 2 failed with return code {result2.returncode}")]))
         sys.exit(result2.returncode or 1)
@@ -228,7 +222,6 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger) -> 
         trace_path = str(opts.get("trace_path", UBUNTU_TRACE_PATH_DEFAULT))
         extra_rsync_args = list(opts.get("extra_rsync_args", []))
         stage1_excludes = list(opts.get("stage1_excludes", UBUNTU_STAGE1_EXCLUDES))
-        rsync_bin = str(opts.get("rsync_bin", "rsync"))
         user = str(opts.get("user", ""))
         password = str(opts.get("password", ""))
 
@@ -243,7 +236,6 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger) -> 
             "--src", src,
             "--dst", str(dst),
             "--trace-path", trace_path,
-            "--rsync-bin", rsync_bin,
         ]
         if not trace:
             argv.append("--no-trace")

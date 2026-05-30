@@ -55,20 +55,21 @@ def _make_package(
     return pkg
 
 
-def _make_fake_runner(returncode: int = 0):
-    """Return a fake subprocess.run replacement that records its calls."""
+def _install_fake_subprocess_run(monkeypatch, returncode: int = 0):
+    """Replace subprocess.run with a recorder. Returns the captured-calls list."""
     calls = []
 
     class FakeResult:
         def __init__(self, rc):
             self.returncode = rc
 
-    def runner(argv, **kwargs):
+    def fake_run(argv, **kwargs):
         calls.append(argv)
         return FakeResult(returncode)
 
-    runner.calls = calls
-    return runner
+    import subprocess as _subprocess
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    return calls
 
 
 # ---------------------------------------------------------------------------
@@ -144,12 +145,12 @@ def test_write_trace_file_content_and_path(tmp_path):
 # 9. run_standalone — both stages called in order
 # ---------------------------------------------------------------------------
 
-def test_run_standalone_both_stages_in_order(tmp_path):
-    fake = _make_fake_runner(returncode=0)
-    run_standalone(src="rsync://x/u", dst=tmp_path, trace=False, runner=fake)
+def test_run_standalone_both_stages_in_order(tmp_path, monkeypatch):
+    calls = _install_fake_subprocess_run(monkeypatch, returncode=0)
+    run_standalone(src="rsync://x/u", dst=tmp_path, trace=False)
 
-    assert len(fake.calls) == 2
-    stage1_argv, stage2_argv = fake.calls
+    assert len(calls) == 2
+    stage1_argv, stage2_argv = calls
 
     # Stage 1 should contain --exclude= flags
     assert any(t.startswith("--exclude=") for t in stage1_argv)
@@ -163,34 +164,24 @@ def test_run_standalone_both_stages_in_order(tmp_path):
 # 10. run_standalone — aborts on stage1 failure
 # ---------------------------------------------------------------------------
 
-def test_run_standalone_aborts_on_stage1_failure(tmp_path):
-    call_count = 0
-
-    class FakeResult:
-        def __init__(self, rc):
-            self.returncode = rc
-
-    def runner(argv, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        # Always fail
-        return FakeResult(2)
+def test_run_standalone_aborts_on_stage1_failure(tmp_path, monkeypatch):
+    calls = _install_fake_subprocess_run(monkeypatch, returncode=2)
 
     with pytest.raises(SystemExit) as exc_info:
-        run_standalone(src="rsync://x/u", dst=tmp_path, trace=False, runner=runner)
+        run_standalone(src="rsync://x/u", dst=tmp_path, trace=False)
 
     assert exc_info.value.code == 2
     # Stage 2 must not have been invoked
-    assert call_count == 1
+    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
 # 11. run_standalone — no trace when trace=False
 # ---------------------------------------------------------------------------
 
-def test_run_standalone_skip_trace(tmp_path):
-    fake = _make_fake_runner(returncode=0)
-    run_standalone(src="rsync://x/u", dst=tmp_path, trace=False, runner=fake)
+def test_run_standalone_skip_trace(tmp_path, monkeypatch):
+    _install_fake_subprocess_run(monkeypatch, returncode=0)
+    run_standalone(src="rsync://x/u", dst=tmp_path, trace=False)
 
     assert not (tmp_path / "project").exists()
 
@@ -199,12 +190,12 @@ def test_run_standalone_skip_trace(tmp_path):
 # 12. run_standalone — creates missing dst
 # ---------------------------------------------------------------------------
 
-def test_run_standalone_creates_missing_dst(tmp_path):
+def test_run_standalone_creates_missing_dst(tmp_path, monkeypatch):
     new_dst = tmp_path / "newdir"
     assert not new_dst.exists()
 
-    fake = _make_fake_runner(returncode=0)
-    run_standalone(src="rsync://x/u", dst=new_dst, trace=False, runner=fake)
+    _install_fake_subprocess_run(monkeypatch, returncode=0)
+    run_standalone(src="rsync://x/u", dst=new_dst, trace=False)
 
     assert new_dst.is_dir()
 

@@ -30,7 +30,6 @@ def test_cli_ubuntu_help_lists_options():
         "--trace-hostname",
         "--extra-rsync-arg",
         "--stage1-exclude",
-        "--rsync-bin",
     ):
         assert option in result.output, f"Expected '{option}' in help output"
 
@@ -51,7 +50,6 @@ def test_cli_ubuntu_shows_help_when_no_args():
         "--trace-hostname",
         "--extra-rsync-arg",
         "--stage1-exclude",
-        "--rsync-bin",
     ):
         assert flag in result.output, f"expected {flag} in help output, got: {result.output}"
 
@@ -87,7 +85,6 @@ def test_cli_ubuntu_dispatches_to_run_standalone(monkeypatch):
         "--src", "rsync://host/u",
         "--dst", "/tmp/x",
         "--no-trace",
-        "--rsync-bin", "/opt/rsync",
         "--extra-rsync-arg", "--bw=10",
         "--extra-rsync-arg", "--stats",
     ])
@@ -97,7 +94,6 @@ def test_cli_ubuntu_dispatches_to_run_standalone(monkeypatch):
     assert captured["src"] == "rsync://host/u"
     assert captured["dst"] == Path("/tmp/x")
     assert captured["trace"] is False
-    assert captured["rsync_bin"] == "/opt/rsync"
     assert captured["extra_rsync_args"] == ("--bw=10", "--stats")
 
 
