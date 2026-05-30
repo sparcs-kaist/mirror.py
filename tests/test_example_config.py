@@ -43,6 +43,8 @@ def mock_dependencies():
                 return -1
             if duration_str == "PT10M":
                 return 600
+            if duration_str == "PT6H":
+                return 21600
             return 0
 
         def format_iso_duration(self, seconds):
@@ -52,6 +54,8 @@ def mock_dependencies():
                 return ""
             if seconds == 600:
                 return "PT10M"
+            if seconds == 21600:
+                return "PT6H"
             return ""
 
     mirror.toolbox = MockToolbox()
@@ -62,7 +66,7 @@ def mock_dependencies():
         class MockSync: pass
         mirror.sync = MockSync()
 
-    mirror.sync.methods = ['local', 'ftpsync', 'rsync']
+    mirror.sync.methods = ['rsync', 'ftpsync', 'lftp', 'local', 'ubuntu', 'jigdo']
 
     yield
 

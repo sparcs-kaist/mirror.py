@@ -116,6 +116,33 @@
                     "fftsfile": "fullfiletimelist-rocky"
                 }
             }
+        },
+        "ubuntu": {
+            "name": "Ubuntu",
+            "id": "ubuntu",
+            "href": "/ubuntu",
+            "synctype": "ubuntu",
+            "syncrate": "PT6H",
+            "link": [
+                {
+                    "rel": "home",
+                    "href": "http://www.ubuntu.com"
+                },
+                {
+                    "rel": "HTTP",
+                    "href": "http://ftp.kaist.ac.kr/ubuntu"
+                },
+                {
+                    "rel": "FTP",
+                    "href": "ftp://ftp.kaist.ac.kr/ubuntu"
+                }
+            ],
+            "settings": {
+                "hidden": false,
+                "src": "rsync://archive.ubuntu.com/ubuntu",
+                "dst": "/srv/ftp/ubuntu",
+                "options": {}
+            }
         }
     }
 }
