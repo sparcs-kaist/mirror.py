@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from mirror.sync.ftpsync import _config
+from mirror.sync.ftpsync import _config, _split_rsync_src
 
 
 def _make_package(opts: dict, src: str = "rsync.example.org", dst: str = "/tmp/dst"):
@@ -136,3 +136,45 @@ def test_optional_fields_are_quoted(tmp_path, base_opts):
     conf = _config(pkg)
     assert _eval_key(conf, "INFO_COUNTRY", tmp_path) == "KR; rm -rf /"
     assert _eval_key(conf, "INFO_THROUGHPUT", tmp_path) == "$(echo PWNED)"
+
+
+def test_split_rsync_src_url_splits_host_and_path():
+    host, path = _split_rsync_src("rsync://syncproxy2.wna.debian.org/debian", {})
+    assert host == "syncproxy2.wna.debian.org"
+    assert path == "debian"
+
+
+def test_split_rsync_src_url_keeps_trailing_slash():
+    host, path = _split_rsync_src("rsync://host.example.org/debian/", {})
+    assert host == "host.example.org"
+    assert path == "debian/"
+
+
+def test_split_rsync_src_explicit_path_overrides_url():
+    host, path = _split_rsync_src("rsync://host.example.org/debian", {"path": "ubuntu"})
+    assert host == "host.example.org"
+    assert path == "ubuntu"
+
+
+def test_split_rsync_src_bare_host_uses_path_option():
+    host, path = _split_rsync_src("rsync.example.org", {"path": "/debian"})
+    assert host == "rsync.example.org"
+    assert path == "/debian"
+
+
+def test_split_rsync_src_url_without_host_raises():
+    with pytest.raises(ValueError):
+        _split_rsync_src("rsync:///debian", {})
+
+
+def test_split_rsync_src_bare_host_without_path_raises():
+    with pytest.raises(ValueError):
+        _split_rsync_src("rsync.example.org", {})
+
+
+def test_config_accepts_rsync_url_without_path_option(tmp_path):
+    pkg = _make_package({"hub": "false"}, src="rsync://syncproxy2.wna.debian.org/debian")
+    conf = _config(pkg)
+    assert "RSYNC_HOST='syncproxy2.wna.debian.org'" in conf or \
+        "RSYNC_HOST=syncproxy2.wna.debian.org" in conf
+    assert "RSYNC_PATH=debian" in conf

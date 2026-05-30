@@ -17,6 +17,7 @@ import re
 import sys
 import uuid
 import datetime
+import urllib.parse
 
 ARCHVSYNC_REPO = "https://salsa.debian.org/mirror-team/archvsync.git"
 
@@ -205,6 +206,36 @@ def _extract_archvsync(path: Path) -> bool:
         logger.warning("archvsync extraction failed: %s", exc)
         return False
 
+def _split_rsync_src(src: str, opts: dict) -> tuple[str, str]:
+    """Split an rsync source into the RSYNC_HOST and RSYNC_PATH ftpsync expects.
+
+    Args:
+        src(str): Package source. Either a full rsync URL
+            (e.g. "rsync://host/module/") or a bare host (legacy shape).
+        opts(dict): Package sync options; supplies "path" for the bare-host
+            shape and may override the module derived from a URL.
+
+    Return:
+        host_path(tuple[str, str]): (host, module path) for RSYNC_HOST/RSYNC_PATH.
+
+    Raises:
+        ValueError: A URL src has no host, or a bare host src has no "path".
+    """
+    explicit_path = opts.get("path")
+    if "://" in src:
+        parsed = urllib.parse.urlparse(src)
+        host = parsed.netloc
+        if not host:
+            raise ValueError(f"ftpsync src {src!r} has no host")
+        path = explicit_path if explicit_path is not None else parsed.path.lstrip("/")
+        return host, path
+    if explicit_path is None:
+        raise ValueError(
+            "ftpsync requires either an rsync:// src URL or a 'path' option"
+        )
+    return src, explicit_path
+
+
 def _config(
     package: mirror.structure.Package,
     log_dir: Path | None = None,
@@ -226,12 +257,14 @@ def _config(
             raise ValueError(f"ftpsync option {key} must not contain newlines")
         return shlex.quote(s)
 
+    rsync_host, rsync_path = _split_rsync_src(package.settings.src, opts)
+
     lines = [
         f"MIRRORNAME={_q('mirrorname', mirror.conf.name)}",
         f"TO={_q('dst', package.settings.dst)}",
         f"HUB={_q('hub', opts.get('hub', 'false'))}",
-        f"RSYNC_HOST={_q('src', package.settings.src)}",
-        f"RSYNC_PATH={_q('path', opts['path'])}",
+        f"RSYNC_HOST={_q('src', rsync_host)}",
+        f"RSYNC_PATH={_q('path', rsync_path)}",
     ]
     if log_name is not None:
         lines.append(f"NAME={_q('name', log_name)}")
