@@ -29,6 +29,7 @@ def test_cli_ubuntu_help_lists_options():
         "--trace-path",
         "--trace-hostname",
         "--extra-rsync-arg",
+        "--stage1-exclude",
         "--rsync-bin",
     ):
         assert option in result.output, f"Expected '{option}' in help output"
@@ -49,6 +50,7 @@ def test_cli_ubuntu_shows_help_when_no_args():
         "--trace-path",
         "--trace-hostname",
         "--extra-rsync-arg",
+        "--stage1-exclude",
         "--rsync-bin",
     ):
         assert flag in result.output, f"expected {flag} in help output, got: {result.output}"
@@ -138,3 +140,47 @@ def test_cli_ubuntu_passes_trace_hostname(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert captured["trace_hostname"] == "my.example.org"
+
+
+def test_cli_ubuntu_stage1_exclude_overrides_default(monkeypatch):
+    """When --stage1-exclude is provided, it replaces UBUNTU_STAGE1_EXCLUDES."""
+    captured: dict = {}
+
+    def fake(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("mirror.sync.ubuntu.run_standalone", fake)
+
+    r = CliRunner()
+    result = r.invoke(main, [
+        "worker-execute", "ubuntu",
+        "--src", "rsync://host/u",
+        "--dst", "/tmp/x",
+        "--stage1-exclude", "foo*",
+        "--stage1-exclude", "bar*",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert captured["stage1_excludes"] == ("foo*", "bar*")
+
+
+def test_cli_ubuntu_stage1_exclude_omitted_uses_defaults(monkeypatch):
+    """Without --stage1-exclude, run_standalone receives the Ubuntu defaults."""
+    from mirror.sync.ubuntu import UBUNTU_STAGE1_EXCLUDES
+
+    captured: dict = {}
+
+    def fake(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("mirror.sync.ubuntu.run_standalone", fake)
+
+    r = CliRunner()
+    result = r.invoke(main, [
+        "worker-execute", "ubuntu",
+        "--src", "rsync://host/u",
+        "--dst", "/tmp/x",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert captured["stage1_excludes"] == UBUNTU_STAGE1_EXCLUDES
