@@ -17,7 +17,6 @@ from mirror.sync.ubuntu import (
     UBUNTU_RSYNC_BASE_ARGS,
     UBUNTU_STAGE1_EXCLUDES,
     UBUNTU_TRACE_PATH_DEFAULT,
-    build_daemon_shell_command,
     build_ubuntu_commands,
     execute,
     write_trace_file,
@@ -56,20 +55,21 @@ def _make_package(
     return pkg
 
 
-def _make_fake_runner(returncode: int = 0):
-    """Return a fake subprocess.run replacement that records its calls."""
+def _install_fake_subprocess_run(monkeypatch, returncode: int = 0):
+    """Replace subprocess.run with a recorder. Returns the captured-calls list."""
     calls = []
 
     class FakeResult:
         def __init__(self, rc):
             self.returncode = rc
 
-    def runner(argv, **kwargs):
+    def fake_run(argv, **kwargs):
         calls.append(argv)
         return FakeResult(returncode)
 
-    runner.calls = calls
-    return runner
+    import subprocess as _subprocess
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    return calls
 
 
 # ---------------------------------------------------------------------------
@@ -122,107 +122,6 @@ def test_build_ubuntu_commands_trailing_slash():
 # 4. build_daemon_shell_command — shell-quoting of dangerous metacharacters
 # ---------------------------------------------------------------------------
 
-def test_build_daemon_shell_command_quotes_paths():
-    # Hostile metacharacters in EVERY user-controllable token (src, dst,
-    # trace_path, rsync_bin, extra_rsync_args, stage1_excludes, trace_hostname).
-    result = build_daemon_shell_command(
-        src="rsync://host space/u`whoami`",
-        dst=Path("/tmp/space dir;rm -rf /"),
-        trace_path="weird path",
-        rsync_bin="/opt/rsync 1;evil",
-        extra_rsync_args=("--bw=1 2", "$(rm -rf /)"),
-        stage1_excludes=("a;b", "$(touch /tmp/pwn)"),
-        trace_hostname="myhost;evil",
-    )
-    import re
-    # After stripping every single-quoted segment, no raw shell metacharacter
-    # from a user-controllable token should remain. Outside-of-quotes we only
-    # expect the harness syntax: `set -e`, `&&`, `date -u > `, `"$(hostname -f)"`.
-    stripped = re.sub(r"'[^']*'", "", result)
-    # The hostile substrings must not appear unquoted.
-    for needle in (
-        "rsync://host space/u`whoami`",
-        "/tmp/space dir;rm -rf /",
-        "weird path",
-        "/opt/rsync 1;evil",
-        "--bw=1 2",
-        "$(rm -rf /)",
-        "a;b",
-        "$(touch /tmp/pwn)",
-        "myhost;evil",
-    ):
-        assert needle not in stripped, f"Unquoted hostile token {needle!r} found in: {result!r}"
-    # Raw ';' (other than inside quotes) must not appear at all.
-    assert ";" not in stripped, f"Unquoted ';' in: {result!r}"
-    # Command substitution backticks/dollar-paren outside the explicit
-    # $(hostname -f) site must not appear unquoted.
-    stripped_minus_hostname = stripped.replace('"$(hostname -f)"', "")
-    assert "`" not in stripped_minus_hostname, f"Unquoted backtick in: {result!r}"
-    assert "$(" not in stripped_minus_hostname, f"Unquoted $( in: {result!r}"
-
-
-# ---------------------------------------------------------------------------
-# 5. build_daemon_shell_command — explicit hostname is quoted
-# ---------------------------------------------------------------------------
-
-def test_build_daemon_shell_command_with_explicit_hostname():
-    import shlex
-    result = build_daemon_shell_command(
-        src="rsync://host/u",
-        dst=Path("/tmp/u"),
-        trace_hostname="mirror.example.com",
-    )
-    # shlex.quote returns the bare token when no metacharacters are present;
-    # the test asserts the hostname token appears in the oneliner exactly as
-    # shlex would emit it, and that the $(hostname -f) fallback is not used.
-    assert shlex.quote("mirror.example.com") in result
-    assert "mirror.example.com" in result
-    assert "$(hostname -f)" not in result
-
-    # A hostname with metacharacters MUST be wrapped in shlex's quoting.
-    hostile = "weird;host"
-    result_hostile = build_daemon_shell_command(
-        src="rsync://host/u",
-        dst=Path("/tmp/u"),
-        trace_hostname=hostile,
-    )
-    assert shlex.quote(hostile) in result_hostile
-    # Raw, unquoted hostile token must not appear.
-    import re
-    stripped = re.sub(r"'[^']*'", "", result_hostile)
-    assert hostile not in stripped
-
-
-# ---------------------------------------------------------------------------
-# 6. build_daemon_shell_command — fallback to $(hostname -f)
-# ---------------------------------------------------------------------------
-
-def test_build_daemon_shell_command_falls_back_to_hostname_f():
-    for hostname_arg in (None, ""):
-        result = build_daemon_shell_command(
-            src="rsync://host/u",
-            dst=Path("/tmp/u"),
-            trace_hostname=hostname_arg,
-        )
-        assert "$(hostname -f)" in result, (
-            f"Expected $(hostname -f) in oneliner when trace_hostname={hostname_arg!r}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# 7. build_daemon_shell_command — trace disabled
-# ---------------------------------------------------------------------------
-
-def test_build_daemon_shell_command_omits_trace_when_disabled():
-    result = build_daemon_shell_command(
-        src="rsync://host/u",
-        dst=Path("/tmp/u"),
-        trace=False,
-    )
-    assert "date -u" not in result
-    assert "$(hostname -f)" not in result
-
-
 # ---------------------------------------------------------------------------
 # 8. write_trace_file — content and path
 # ---------------------------------------------------------------------------
@@ -246,12 +145,12 @@ def test_write_trace_file_content_and_path(tmp_path):
 # 9. run_standalone — both stages called in order
 # ---------------------------------------------------------------------------
 
-def test_run_standalone_both_stages_in_order(tmp_path):
-    fake = _make_fake_runner(returncode=0)
-    run_standalone(src="rsync://x/u", dst=tmp_path, trace=False, runner=fake)
+def test_run_standalone_both_stages_in_order(tmp_path, monkeypatch):
+    calls = _install_fake_subprocess_run(monkeypatch, returncode=0)
+    run_standalone(src="rsync://x/u", dst=tmp_path, trace=False)
 
-    assert len(fake.calls) == 2
-    stage1_argv, stage2_argv = fake.calls
+    assert len(calls) == 2
+    stage1_argv, stage2_argv = calls
 
     # Stage 1 should contain --exclude= flags
     assert any(t.startswith("--exclude=") for t in stage1_argv)
@@ -265,34 +164,24 @@ def test_run_standalone_both_stages_in_order(tmp_path):
 # 10. run_standalone — aborts on stage1 failure
 # ---------------------------------------------------------------------------
 
-def test_run_standalone_aborts_on_stage1_failure(tmp_path):
-    call_count = 0
-
-    class FakeResult:
-        def __init__(self, rc):
-            self.returncode = rc
-
-    def runner(argv, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        # Always fail
-        return FakeResult(2)
+def test_run_standalone_aborts_on_stage1_failure(tmp_path, monkeypatch):
+    calls = _install_fake_subprocess_run(monkeypatch, returncode=2)
 
     with pytest.raises(SystemExit) as exc_info:
-        run_standalone(src="rsync://x/u", dst=tmp_path, trace=False, runner=runner)
+        run_standalone(src="rsync://x/u", dst=tmp_path, trace=False)
 
     assert exc_info.value.code == 2
     # Stage 2 must not have been invoked
-    assert call_count == 1
+    assert len(calls) == 1
 
 
 # ---------------------------------------------------------------------------
 # 11. run_standalone — no trace when trace=False
 # ---------------------------------------------------------------------------
 
-def test_run_standalone_skip_trace(tmp_path):
-    fake = _make_fake_runner(returncode=0)
-    run_standalone(src="rsync://x/u", dst=tmp_path, trace=False, runner=fake)
+def test_run_standalone_skip_trace(tmp_path, monkeypatch):
+    _install_fake_subprocess_run(monkeypatch, returncode=0)
+    run_standalone(src="rsync://x/u", dst=tmp_path, trace=False)
 
     assert not (tmp_path / "project").exists()
 
@@ -301,12 +190,12 @@ def test_run_standalone_skip_trace(tmp_path):
 # 12. run_standalone — creates missing dst
 # ---------------------------------------------------------------------------
 
-def test_run_standalone_creates_missing_dst(tmp_path):
+def test_run_standalone_creates_missing_dst(tmp_path, monkeypatch):
     new_dst = tmp_path / "newdir"
     assert not new_dst.exists()
 
-    fake = _make_fake_runner(returncode=0)
-    run_standalone(src="rsync://x/u", dst=new_dst, trace=False, runner=fake)
+    _install_fake_subprocess_run(monkeypatch, returncode=0)
+    run_standalone(src="rsync://x/u", dst=new_dst, trace=False)
 
     assert new_dst.is_dir()
 
@@ -315,7 +204,10 @@ def test_run_standalone_creates_missing_dst(tmp_path):
 # 13. execute — worker called with /bin/dash oneliner
 # ---------------------------------------------------------------------------
 
-def test_execute_calls_worker_with_dash_oneliner(monkeypatch):
+def test_execute_delegates_to_worker_execute_cli(monkeypatch):
+    """execute() must hand the worker an argv that re-invokes the CLI."""
+    import sys as _sys
+
     worker_calls = []
 
     def fake_execute_command(**kwargs):
@@ -331,28 +223,31 @@ def test_execute_calls_worker_with_dash_oneliner(monkeypatch):
     monkeypatch.setattr("mirror.sync.on_sync_done", lambda *a, **kw: None)
 
     pkg = _make_package(options={})
-    pkg_logger = logging.getLogger("test_execute_dash")
+    pkg_logger = logging.getLogger("test_execute_cli_delegation")
     pkg_logger.handlers = []
 
     execute(pkg, pkg_logger)
 
     assert len(worker_calls) == 1
-    cmd = worker_calls[0]["commandline"]
-    assert cmd[0] == "/bin/dash"
-    assert cmd[1] == "-c"
-
-    oneliner = cmd[2]
-    # Both rsync stages must appear
-    assert oneliner.count("rsync") >= 2
-    # Hostname fallback must be present when global hostname is empty
-    assert "$(hostname -f)" in oneliner
+    argv = worker_calls[0]["commandline"]
+    # CLI invocation prefix
+    assert argv[:5] == [_sys.executable, "-m", "mirror", "worker-execute", "ubuntu"]
+    # --src and --dst flags exist with the expected values
+    assert "--src" in argv
+    assert argv[argv.index("--src") + 1] == pkg.settings.src
+    assert "--dst" in argv
+    assert argv[argv.index("--dst") + 1] == str(pkg.settings.dst)
+    # No /bin/dash, no shell expressions
+    assert "/bin/dash" not in argv
+    assert "-c" not in argv  # no `sh -c` style invocation
+    assert not any("$(hostname -f)" in str(t) for t in argv)
 
 
 # ---------------------------------------------------------------------------
-# 14. execute — global hostname is used in the oneliner
+# 14. execute — global hostname becomes --trace-hostname
 # ---------------------------------------------------------------------------
 
-def test_execute_passes_global_hostname_to_oneliner(monkeypatch):
+def test_execute_passes_global_hostname_as_flag(monkeypatch):
     worker_calls = []
 
     def fake_execute_command(**kwargs):
@@ -368,23 +263,21 @@ def test_execute_passes_global_hostname_to_oneliner(monkeypatch):
     monkeypatch.setattr("mirror.sync.on_sync_done", lambda *a, **kw: None)
 
     pkg = _make_package(options={})
-    pkg_logger = logging.getLogger("test_execute_hostname")
+    pkg_logger = logging.getLogger("test_execute_hostname_flag")
     pkg_logger.handlers = []
 
     execute(pkg, pkg_logger)
 
-    oneliner = worker_calls[0]["commandline"][2]
-    import shlex
-    assert shlex.quote("foo.example") in oneliner
-    assert "foo.example" in oneliner
-    assert "$(hostname -f)" not in oneliner
+    argv = worker_calls[0]["commandline"]
+    assert "--trace-hostname" in argv
+    assert argv[argv.index("--trace-hostname") + 1] == "foo.example"
 
 
 # ---------------------------------------------------------------------------
-# 15. execute — empty global hostname falls back to $(hostname -f)
+# 15. execute — empty global hostname omits --trace-hostname
 # ---------------------------------------------------------------------------
 
-def test_execute_omits_hostname_when_global_empty(monkeypatch):
+def test_execute_omits_trace_hostname_when_global_empty(monkeypatch):
     worker_calls = []
 
     def fake_execute_command(**kwargs):
@@ -405,8 +298,79 @@ def test_execute_omits_hostname_when_global_empty(monkeypatch):
 
     execute(pkg, pkg_logger)
 
-    oneliner = worker_calls[0]["commandline"][2]
-    assert "$(hostname -f)" in oneliner
+    argv = worker_calls[0]["commandline"]
+    # No flag → run_standalone default (socket.getfqdn) decides at runtime.
+    assert "--trace-hostname" not in argv
+
+
+# ---------------------------------------------------------------------------
+# 15b. execute — trace disabled passes --no-trace
+# ---------------------------------------------------------------------------
+
+def test_execute_passes_no_trace_flag(monkeypatch):
+    worker_calls = []
+
+    def fake_execute_command(**kwargs):
+        worker_calls.append(kwargs)
+
+    monkeypatch.setattr("mirror.socket.worker.execute_command", fake_execute_command)
+    monkeypatch.setattr(
+        mirror,
+        "conf",
+        SimpleNamespace(hostname="", uid=1000, gid=1000),
+        raising=False,
+    )
+    monkeypatch.setattr("mirror.sync.on_sync_done", lambda *a, **kw: None)
+
+    pkg = _make_package(options={"trace": False})
+    pkg_logger = logging.getLogger("test_execute_no_trace")
+    pkg_logger.handlers = []
+
+    execute(pkg, pkg_logger)
+
+    argv = worker_calls[0]["commandline"]
+    assert "--no-trace" in argv
+
+
+# ---------------------------------------------------------------------------
+# 15c. execute — extra_rsync_args and stage1_excludes forwarded
+# ---------------------------------------------------------------------------
+
+def test_execute_passes_extra_rsync_args_and_stage1_excludes(monkeypatch):
+    worker_calls = []
+
+    def fake_execute_command(**kwargs):
+        worker_calls.append(kwargs)
+
+    monkeypatch.setattr("mirror.socket.worker.execute_command", fake_execute_command)
+    monkeypatch.setattr(
+        mirror,
+        "conf",
+        SimpleNamespace(hostname="", uid=1000, gid=1000),
+        raising=False,
+    )
+    monkeypatch.setattr("mirror.sync.on_sync_done", lambda *a, **kw: None)
+
+    pkg = _make_package(options={
+        "extra_rsync_args": ["--bwlimit=1000", "--stats"],
+        "stage1_excludes": ["foo*", "bar*"],
+    })
+    pkg_logger = logging.getLogger("test_execute_extra_args")
+    pkg_logger.handlers = []
+
+    execute(pkg, pkg_logger)
+
+    argv = worker_calls[0]["commandline"]
+    # Each extra arg appears as a separate --extra-rsync-arg <value> pair.
+    extra_indices = [i for i, t in enumerate(argv) if t == "--extra-rsync-arg"]
+    assert len(extra_indices) == 2
+    extra_values = [argv[i + 1] for i in extra_indices]
+    assert extra_values == ["--bwlimit=1000", "--stats"]
+
+    excl_indices = [i for i, t in enumerate(argv) if t == "--stage1-exclude"]
+    assert len(excl_indices) == 2
+    excl_values = [argv[i + 1] for i in excl_indices]
+    assert excl_values == ["foo*", "bar*"]
 
 
 # ---------------------------------------------------------------------------
@@ -440,26 +404,8 @@ def test_execute_passes_user_password_env(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 17. trace_path traversal rejection (daemon + standalone)
+# 17. trace_path traversal rejection (write_trace_file)
 # ---------------------------------------------------------------------------
-
-def test_build_daemon_shell_command_rejects_absolute_trace_path():
-    with pytest.raises(ValueError, match="must be relative"):
-        build_daemon_shell_command(
-            src="rsync://x/u",
-            dst=Path("/tmp/u"),
-            trace_path="/etc/evil",
-        )
-
-
-def test_build_daemon_shell_command_rejects_parent_traversal():
-    with pytest.raises(ValueError, match=r"must not contain '\.\.'"):
-        build_daemon_shell_command(
-            src="rsync://x/u",
-            dst=Path("/tmp/u"),
-            trace_path="../../etc",
-        )
-
 
 def test_write_trace_file_rejects_absolute_trace_path(tmp_path):
     with pytest.raises(ValueError, match="must be relative"):

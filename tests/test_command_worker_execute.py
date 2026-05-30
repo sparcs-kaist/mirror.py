@@ -26,10 +26,9 @@ def test_cli_ubuntu_help_lists_options():
         "--dst",
         "--trace",
         "--no-trace",
-        "--trace-path",
         "--trace-hostname",
         "--extra-rsync-arg",
-        "--rsync-bin",
+        "--stage1-exclude",
     ):
         assert option in result.output, f"Expected '{option}' in help output"
 
@@ -46,10 +45,9 @@ def test_cli_ubuntu_shows_help_when_no_args():
         "--dst",
         "--trace",
         "--no-trace",
-        "--trace-path",
         "--trace-hostname",
         "--extra-rsync-arg",
-        "--rsync-bin",
+        "--stage1-exclude",
     ):
         assert flag in result.output, f"expected {flag} in help output, got: {result.output}"
 
@@ -85,7 +83,6 @@ def test_cli_ubuntu_dispatches_to_run_standalone(monkeypatch):
         "--src", "rsync://host/u",
         "--dst", "/tmp/x",
         "--no-trace",
-        "--rsync-bin", "/opt/rsync",
         "--extra-rsync-arg", "--bw=10",
         "--extra-rsync-arg", "--stats",
     ])
@@ -95,7 +92,6 @@ def test_cli_ubuntu_dispatches_to_run_standalone(monkeypatch):
     assert captured["src"] == "rsync://host/u"
     assert captured["dst"] == Path("/tmp/x")
     assert captured["trace"] is False
-    assert captured["rsync_bin"] == "/opt/rsync"
     assert captured["extra_rsync_args"] == ("--bw=10", "--stats")
 
 
@@ -138,3 +134,47 @@ def test_cli_ubuntu_passes_trace_hostname(monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert captured["trace_hostname"] == "my.example.org"
+
+
+def test_cli_ubuntu_stage1_exclude_overrides_default(monkeypatch):
+    """When --stage1-exclude is provided, it replaces UBUNTU_STAGE1_EXCLUDES."""
+    captured: dict = {}
+
+    def fake(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("mirror.sync.ubuntu.run_standalone", fake)
+
+    r = CliRunner()
+    result = r.invoke(main, [
+        "worker-execute", "ubuntu",
+        "--src", "rsync://host/u",
+        "--dst", "/tmp/x",
+        "--stage1-exclude", "foo*",
+        "--stage1-exclude", "bar*",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert captured["stage1_excludes"] == ("foo*", "bar*")
+
+
+def test_cli_ubuntu_stage1_exclude_omitted_uses_defaults(monkeypatch):
+    """Without --stage1-exclude, run_standalone receives the Ubuntu defaults."""
+    from mirror.sync.ubuntu import UBUNTU_STAGE1_EXCLUDES
+
+    captured: dict = {}
+
+    def fake(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr("mirror.sync.ubuntu.run_standalone", fake)
+
+    r = CliRunner()
+    result = r.invoke(main, [
+        "worker-execute", "ubuntu",
+        "--src", "rsync://host/u",
+        "--dst", "/tmp/x",
+    ])
+
+    assert result.exit_code == 0, result.output
+    assert captured["stage1_excludes"] == UBUNTU_STAGE1_EXCLUDES

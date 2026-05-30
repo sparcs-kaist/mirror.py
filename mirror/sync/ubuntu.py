@@ -11,7 +11,6 @@ import mirror.structure
 import mirror.socket.worker
 import mirror.sync
 import mirror.toolbox
-import shlex
 import socket
 import subprocess
 import sys
@@ -29,6 +28,7 @@ UBUNTU_RSYNC_BASE_ARGS: tuple[str, ...] = (
     "--safe-links",
     "--hard-links",
     "--stats",
+    "--verbose",
 )
 
 UBUNTU_STAGE1_EXCLUDES: tuple[str, ...] = (
@@ -64,7 +64,6 @@ def build_ubuntu_commands(
     src: str,
     dst: Path,
     extra_rsync_args: Sequence[str] = (),
-    rsync_bin: str = "rsync",
     stage1_excludes: Sequence[str] = UBUNTU_STAGE1_EXCLUDES,
 ) -> tuple[list[str], list[str]]:
     """Build stage1 and stage2 rsync argv lists for Ubuntu mirroring.
@@ -73,7 +72,6 @@ def build_ubuntu_commands(
         src(str): Rsync source URL or path.
         dst(Path): Local destination directory.
         extra_rsync_args(Sequence[str]): Additional rsync flags appended after base args.
-        rsync_bin(str): Path or name of the rsync binary.
         stage1_excludes(Sequence[str]): Patterns to exclude in stage 1.
 
     Return:
@@ -82,7 +80,7 @@ def build_ubuntu_commands(
     src_arg = src if src.endswith("/") else src + "/"
     dst_arg = str(dst) if str(dst).endswith("/") else str(dst) + "/"
 
-    base = [rsync_bin, *UBUNTU_RSYNC_BASE_ARGS, *extra_rsync_args]
+    base = ["rsync", *UBUNTU_RSYNC_BASE_ARGS, *extra_rsync_args]
 
     stage1 = list(base)
     for pattern in stage1_excludes:
@@ -96,67 +94,6 @@ def build_ubuntu_commands(
     stage2.append(dst_arg)
 
     return stage1, stage2
-
-
-def build_daemon_shell_command(
-    src: str,
-    dst: Path,
-    trace: bool = True,
-    trace_path: str = UBUNTU_TRACE_PATH_DEFAULT,
-    trace_hostname: Optional[str] = None,
-    extra_rsync_args: Sequence[str] = (),
-    rsync_bin: str = "rsync",
-    stage1_excludes: Sequence[str] = UBUNTU_STAGE1_EXCLUDES,
-) -> str:
-    """Build a /bin/dash-runnable shell oneliner for two-stage Ubuntu rsync.
-
-    Quotes every token with shlex.quote so all user-supplied strings (src, dst,
-    rsync_bin, extra_rsync_args, stage1_excludes, trace_path) are shell-safe.
-    The trace $(hostname -f) subshell is deliberately left unquoted when
-    trace_hostname is not supplied, matching upstream Ubuntu mirror script behaviour.
-
-    Args:
-        src(str): Rsync source URL or path.
-        dst(Path): Local destination directory.
-        trace(bool): Whether to append the trace file write command.
-        trace_path(str): Relative path under dst where the trace file is stored.
-        trace_hostname(Optional[str]): Explicit hostname for the trace file.
-            When None or empty, the worker shell expands $(hostname -f) at runtime.
-        extra_rsync_args(Sequence[str]): Additional rsync flags.
-        rsync_bin(str): Path or name of the rsync binary.
-        stage1_excludes(Sequence[str]): Patterns to exclude in stage 1.
-
-    Return:
-        oneliner(str): Shell command string suitable for /bin/dash -c.
-    """
-    stage1, stage2 = build_ubuntu_commands(src, dst, extra_rsync_args, rsync_bin, stage1_excludes)
-
-    def _join(argv: list[str]) -> str:
-        return " ".join(shlex.quote(str(t)) for t in argv)
-
-    dst_str = str(dst) if str(dst).endswith("/") else str(dst) + "/"
-
-    parts = [
-        "set -e",
-        _join(stage1),
-        _join(stage2),
-    ]
-
-    if trace:
-        _validate_trace_path(trace_path)
-        trace_dir_quoted = shlex.quote(dst_str + trace_path + "/")
-        if trace_hostname:
-            # Quote the hostname through shlex.quote and rely on shell
-            # juxtaposition (adjacent quoted strings concatenate) so the
-            # literal hostname token appears quoted in the oneliner.
-            hostname_quoted = shlex.quote(trace_hostname)
-            trace_segment = "date -u > " + trace_dir_quoted + hostname_quoted
-        else:
-            # Leave $(hostname -f) unquoted so the worker shell expands it at runtime
-            trace_segment = "date -u > " + trace_dir_quoted + '"$(hostname -f)"'
-        parts.append(trace_segment)
-
-    return " && ".join(parts)
 
 
 def write_trace_file(
@@ -196,8 +133,7 @@ def run_standalone(
     trace_path: str = UBUNTU_TRACE_PATH_DEFAULT,
     trace_hostname: Optional[str] = None,
     extra_rsync_args: Sequence[str] = (),
-    rsync_bin: str = "rsync",
-    runner=subprocess.run,
+    stage1_excludes: Sequence[str] = UBUNTU_STAGE1_EXCLUDES,
 ) -> None:
     """Run an Ubuntu two-stage rsync sync directly (standalone, no daemon).
 
@@ -209,8 +145,7 @@ def run_standalone(
         trace_hostname(Optional[str]): Hostname for the trace file name.
             Defaults to socket.getfqdn() when None.
         extra_rsync_args(Sequence[str]): Additional rsync flags.
-        rsync_bin(str): Path or name of the rsync binary.
-        runner: Callable matching subprocess.run signature; injectable for tests.
+        stage1_excludes(Sequence[str]): Patterns to exclude in stage 1.
 
     Return:
         None
@@ -228,16 +163,18 @@ def run_standalone(
             print_formatted_text(FormattedText([("class:error", f"[ERROR] Could not create {dst}: {exc}")]))
             sys.exit(1)
 
-    stage1, stage2 = build_ubuntu_commands(src, dst, extra_rsync_args, rsync_bin)
+    stage1, stage2 = build_ubuntu_commands(
+        src, dst, extra_rsync_args, stage1_excludes
+    )
 
     print_formatted_text(FormattedText([("class:info", f"[INFO] Running stage 1: {' '.join(stage1)}")]))
-    result1 = runner(stage1)
+    result1 = subprocess.run(stage1)
     if result1.returncode != 0:
         print_formatted_text(FormattedText([("class:error", f"[ERROR] Stage 1 failed with return code {result1.returncode}")]))
         sys.exit(result1.returncode or 1)
 
     print_formatted_text(FormattedText([("class:info", f"[INFO] Running stage 2: {' '.join(stage2)}")]))
-    result2 = runner(stage2)
+    result2 = subprocess.run(stage2)
     if result2.returncode != 0:
         print_formatted_text(FormattedText([("class:error", f"[ERROR] Stage 2 failed with return code {result2.returncode}")]))
         sys.exit(result2.returncode or 1)
@@ -282,26 +219,30 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger) -> 
         opts = package.settings.options
 
         trace = bool(opts.get("trace", True))
-        trace_path = str(opts.get("trace_path", UBUNTU_TRACE_PATH_DEFAULT))
         extra_rsync_args = list(opts.get("extra_rsync_args", []))
         stage1_excludes = list(opts.get("stage1_excludes", UBUNTU_STAGE1_EXCLUDES))
-        rsync_bin = str(opts.get("rsync_bin", "rsync"))
         user = str(opts.get("user", ""))
         password = str(opts.get("password", ""))
 
         global_hostname = getattr(mirror.conf, "hostname", "") or ""
-        trace_hostname = global_hostname if global_hostname else None
 
-        oneliner = build_daemon_shell_command(
-            src=src,
-            dst=dst,
-            trace=trace,
-            trace_path=trace_path,
-            trace_hostname=trace_hostname,
-            extra_rsync_args=extra_rsync_args,
-            rsync_bin=rsync_bin,
-            stage1_excludes=stage1_excludes,
-        )
+        # Delegate to the same standalone CLI the operator would invoke by
+        # hand. The worker simply Popen's this argv with the configured uid/gid
+        # and forwarded env; the CLI subprocess runs run_standalone() which
+        # spawns rsync via subprocess.run. No shell, no quoting concerns.
+        argv: list[str] = [
+            sys.executable, "-m", "mirror", "worker-execute", "ubuntu",
+            "--src", src,
+            "--dst", str(dst),
+        ]
+        if not trace:
+            argv.append("--no-trace")
+        if global_hostname:
+            argv.extend(["--trace-hostname", global_hostname])
+        for arg in extra_rsync_args:
+            argv.extend(["--extra-rsync-arg", str(arg)])
+        for pattern in stage1_excludes:
+            argv.extend(["--stage1-exclude", str(pattern)])
 
         env: dict[str, str] = {}
         if user:
@@ -311,7 +252,7 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger) -> 
         pkg_logger.info(f"+ src={src}")
         pkg_logger.info(f"+ frequency={mirror.toolbox.format_iso_duration(package.syncrate)}")
         pkg_logger.info(f"+ lastupdate={time.ctime(package.lastsync)}")
-        pkg_logger.info("Running ubuntu sync (dash -c oneliner)")
+        pkg_logger.info(f"Running ubuntu sync via CLI delegation: {' '.join(argv)}")
 
         logpath = None
         for handler in pkg_logger.handlers:
@@ -322,7 +263,7 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger) -> 
         mirror.socket.worker.execute_command(
             job_id=package.pkgid,
             sync_method="ubuntu",
-            commandline=["/bin/dash", "-c", oneliner],
+            commandline=argv,
             env=env,
             uid=mirror.conf.uid,
             gid=mirror.conf.gid,

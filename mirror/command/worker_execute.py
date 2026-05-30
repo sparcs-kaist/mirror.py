@@ -28,40 +28,38 @@ def worker_execute_group() -> None:
     help="Write <dst>/project/trace/<hostname> on success.",
 )
 @click.option(
-    "--trace-path", default="project/trace", show_default=True,
-    help="Subdirectory under dst for the trace file.",
-)
-@click.option(
     "--trace-hostname", default=None,
-    help="Override the hostname used for the trace filename (default: socket.getfqdn()).",
+    help="Override the hostname used for the trace filename "
+         "(default: socket.getfqdn()).",
 )
 @click.option(
     "--extra-rsync-arg", "extra_rsync_args", multiple=True, metavar="ARG",
     help="Extra arg appended to BOTH rsync stages. Repeatable.",
 )
 @click.option(
-    "--rsync-bin", default="rsync", show_default=True,
-    help="rsync executable.",
+    "--stage1-exclude", "stage1_excludes", multiple=True, metavar="PATTERN",
+    help="Exclude pattern for stage 1 (metadata-free pass). Repeatable. "
+         "If provided, overrides the built-in defaults.",
 )
 def ubuntu_cmd(
     src: str,
     dst: Path,
     trace: bool,
-    trace_path: str,
     trace_hostname: Optional[str],
     extra_rsync_args: tuple[str, ...],
-    rsync_bin: str,
+    stage1_excludes: tuple[str, ...],
 ) -> None:
     """Two-stage Ubuntu archive sync: data first, then metadata + delete."""
     import mirror.sync.ubuntu
+    from mirror.sync.ubuntu import UBUNTU_STAGE1_EXCLUDES
+    excludes = tuple(stage1_excludes) if stage1_excludes else UBUNTU_STAGE1_EXCLUDES
     mirror.sync.ubuntu.run_standalone(
         src=src,
         dst=dst,
         trace=trace,
-        trace_path=trace_path,
         trace_hostname=trace_hostname,
         extra_rsync_args=tuple(extra_rsync_args),
-        rsync_bin=rsync_bin,
+        stage1_excludes=excludes,
     )
 
 
