@@ -12,7 +12,7 @@ worker: dict
 status: dict
 debug: bool = False
 exit: bool = False
-__version__ = "1.1.2"
+__version__ = "1.1.3rc1"
 
 STATE_PATH = Path("/var/lib/mirror/")
 RUN_PATH = Path("/var/run/mirror/")
