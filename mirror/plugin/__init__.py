@@ -247,6 +247,7 @@ _BUILTIN_ENTRY_POINTS: list[tuple[str, str]] = [
     ("mirror.sync.bandersnatch", "plugin"),
     ("mirror.sync.local", "plugin"),
     ("mirror.sync.ubuntu", "plugin"),
+    ("mirror.sync.jigdo", "plugin"),
 ]
 
 
