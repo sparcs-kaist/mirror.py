@@ -1,6 +1,8 @@
 """Tests for mirror.sync.ubuntu — pure helpers and daemon/standalone entries."""
 
 import logging
+import subprocess
+import sys
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -423,3 +425,19 @@ def test_write_trace_file_rejects_parent_traversal(tmp_path):
             trace_path="../escape",
             trace_hostname="h",
         )
+
+
+def test_python_m_mirror_dispatches_cli():
+    """`python -m mirror` must invoke the click group.
+
+    ubuntu/jigdo sync delegate via `sys.executable -m mirror worker-execute ...`;
+    without the __main__ entrypoint guard the module imports and exits 0 without
+    running anything, so syncs silently no-op while reporting success.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "mirror", "--help"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert "Usage:" in result.stdout
+    assert "worker-execute" in result.stdout
