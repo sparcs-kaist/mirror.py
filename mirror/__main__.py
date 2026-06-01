@@ -72,3 +72,7 @@ def tui(socket_path: str | None) -> None:
 
 main.add_command(config_group)
 main.add_command(worker_execute_group)
+
+
+if __name__ == "__main__":
+    main()
