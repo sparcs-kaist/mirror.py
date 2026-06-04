@@ -1640,7 +1640,7 @@ class MirrorTUI:
 
         dropped = 0
         if following:
-            self._trim_front(LOG_FOLLOW_MAX_LINES)
+            dropped = self._trim_front(LOG_FOLLOW_MAX_LINES)
         else:
             dropped = self._trim_front(LOG_MAX_LOADED_LINES)
 

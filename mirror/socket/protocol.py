@@ -79,7 +79,7 @@ def recv_message(sock: socket.socket, timeout: Optional[float] = None) -> dict:
     Return:
         data(dict): Deserialized JSON payload
     """
-    if timeout:
+    if timeout is not None:
         sock.settimeout(timeout)
 
     header = b""
