@@ -16,8 +16,10 @@ methods = []
 # _start_lock. set_status() fires PRE synchronously (wait=True) while holding
 # _start_lock; a listener that re-enters _start_lock from the same or another
 # thread would deadlock. In-tree audit: no such listener exists; only the POST
-# web-status persistence listener at mirror/config/__init__.py:584, which does
-# not touch _start_lock.
+# web-status persistence listener _on_package_status_update in
+# mirror/config/__init__.py, which does not touch _start_lock. PRE listeners
+# now observe package.statusinfo.runninglog already set, because runninglog is
+# assigned before set_status("SYNC") is called.
 _start_lock = threading.Lock()
 _extra_args: dict[str, dict[str, str]] = {}
 _watchdog_fired: set[str] = set()
@@ -146,25 +148,48 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
     registered_extra_args = False
     with mirror.config._reload_state_lock:
         with _start_lock:
+            # The already-in-progress rejection must stay OUTSIDE the cleanup
+            # try below (must not flip the live sync to ERROR or touch its state).
             if package.is_syncing():
                 raise RuntimeError(f"Package {pkgid} sync already in progress")
-            package.set_status("SYNC")
+            # Evict stale state from a previous sync BEFORE anything can fail,
+            # preserving the pre-restructure guarantee that even a failed start
+            # never leaves stale _extra_args / _watchdog_fired behind. Must stay
+            # below the is_syncing() check (must not touch a live sync's state).
+            _extra_args.pop(pkgid, None)
+            _watchdog_fired.discard(pkgid)
+            start_time = time.time()
+            try:
+                # Create the per-sync logger and record its path BEFORE
+                # set_status("SYNC"): the MASTER.PACKAGE_STATUS_UPDATE.POST
+                # listener runs asynchronously and snapshots the package for
+                # status.json / stat.json / plug-in outputs, so runninglog must
+                # already be assigned when the event fires. create_logger must
+                # NOT move above the is_syncing() check: it closes and replaces
+                # the handlers of an in-flight sync's logger.
+                pkg_logger = mirror.logger.create_logger(pkgid, start_time)
+                log_path = mirror.logger.get_log_path(pkg_logger)
+                if log_path is not None:
+                    package.statusinfo.runninglog = str(log_path)
+                package.set_status("SYNC")
+            except Exception:
+                lg = mirror.logger.get(pkgid)
+                if lg and lg.handlers:
+                    try:
+                        mirror.logger.close_logger(lg)
+                    except Exception as exc:
+                        mirror.log.error(f"start({pkgid}): close_logger failed: {exc}")
+                package.statusinfo.runninglog = None
+                package.set_status("ERROR")
+                raise
             if clean:
                 _extra_args[pkgid] = clean
                 registered_extra_args = True
-            else:
-                _extra_args.pop(pkgid, None)
-            _watchdog_fired.discard(pkgid)
 
     started = False
     try:
-        start_time = time.time()
-        pkg_logger = mirror.logger.create_logger(pkgid, start_time)
-        with mirror.config._reload_state_lock:
-            log_path = mirror.logger.get_log_path(pkg_logger)
-            if log_path is not None:
-                package.statusinfo.runninglog = str(log_path)
-                mirror.config.save_stat_data()
+        if log_path is not None:
+            mirror.config.save_stat_data()
         mirror.log.info(f"Starting sync for {package.name} ({method})")
         pkg_logger.info(f"Starting sync for {package.name} ({method})")
         pkg_logger.info(f"Time: {time.ctime(start_time)}")

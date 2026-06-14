@@ -163,8 +163,8 @@ def test_failure_path_acquires_reload_state_lock():
     with patch("mirror.logger.create_logger", side_effect=RuntimeError("logger failed")), \
          patch.dict("mirror.plugin._registry", {"rsync": MagicMock()}, clear=False), \
          patch.object(mirror, "sync", sync_mod):
-        # set_status("SYNC") runs first (under lock), then create_logger raises,
-        # then the finally block runs set_status("ERROR").
+        # create_logger raises (under lock), the in-lock except block then calls
+        # set_status("ERROR") while still holding _reload_state_lock.
         # We need pkg to start as not-syncing so start() doesn't reject.
         pkg.status = "UNKNOWN"
         with pytest.raises(RuntimeError, match="logger failed"):
