@@ -9,6 +9,7 @@ from mirror.sync import (
     _extra_args,
     _start_lock,
     _validate_extra_args,
+    _watchdog_fired,
     get_extra_args,
     on_sync_done,
     start,
@@ -231,3 +232,38 @@ def test_bad_input_does_not_mutate_state():
 
     with _start_lock:
         assert not _extra_args
+
+
+# ---------------------------------------------------------------------------
+# (g) create_logger failure evicts stale state atomically (in-lock cleanup)
+# ---------------------------------------------------------------------------
+
+def test_create_logger_failure_evicts_stale_state():
+    """When create_logger raises, stale _extra_args and _watchdog_fired are cleared."""
+    pkg = _make_pkg("pkg_g")
+    pkgid = pkg.pkgid
+
+    # Pre-seed stale entries (package is NOT syncing so start() won't reject it).
+    with _start_lock:
+        _extra_args[pkgid] = {"old": "val"}
+        _watchdog_fired.add(pkgid)
+
+    try:
+        fake_logger = MagicMock(handlers=[])
+
+        with patch("mirror.logger.create_logger", side_effect=RuntimeError("logger init failed")), \
+             patch("mirror.logger.get", return_value=fake_logger), \
+             patch.dict("mirror.plugin._registry", {"rsync": MagicMock()}, clear=False), \
+             patch.object(mirror, "sync", sync_mod):
+            with pytest.raises(RuntimeError, match="logger init failed"):
+                start(pkg)
+
+        assert get_extra_args(pkgid) == {}
+        with _start_lock:
+            assert pkgid not in _watchdog_fired
+        assert pkg.statusinfo.runninglog is None
+        assert pkg.status == "ERROR"
+    finally:
+        with _start_lock:
+            _extra_args.pop(pkgid, None)
+            _watchdog_fired.discard(pkgid)

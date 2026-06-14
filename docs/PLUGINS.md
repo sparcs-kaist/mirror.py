@@ -264,6 +264,8 @@ logged via `mirror.log.warning` and do not block sibling writes.
 
 All status files (stat.json, status.json, plug-in outputs) are written via
 tempfile + `os.replace` so readers never observe a partially-written file.
+Plug-in status output files are written with mode 0644 so a web server or
+other consumer running as a different user can read them.
 
 ## API reference
 

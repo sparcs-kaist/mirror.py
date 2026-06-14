@@ -1,13 +1,18 @@
 """Tests for runninglog population and cleanup in mirror.sync.start()."""
 import logging
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import mirror
 import mirror.config
+import mirror.event
 import mirror.plugin
+import mirror.structure
 import mirror.sync as sync_mod
+from mirror.structure import Package, PackageSettings
 from mirror.sync import _start_lock, start
 
 
@@ -96,3 +101,98 @@ def test_start_failure_clears_runninglog():
 
     assert pkg.statusinfo.runninglog is None
     assert pkg.status == "ERROR"
+
+
+def _make_real_pkg(pkgid: str = "real-pkg") -> Package:
+    """Build a real Package instance (uses mirror.event.post_event via set_status)."""
+    settings = PackageSettings(
+        hidden=False,
+        src="rsync://example.com/debian",
+        dst="/srv/debian",
+        options={},
+    )
+    return Package(
+        pkgid=pkgid,
+        name=pkgid,
+        status="UNKNOWN",
+        href=f"/{pkgid}",
+        synctype="rsync",
+        syncrate=3600,
+        link=[],
+        settings=settings,
+    )
+
+
+def test_post_listener_sees_runninglog_at_sync_transition():
+    """The POST listener must see runninglog already set when status transitions to SYNC."""
+    pkg = _make_real_pkg("event-rl-1")
+    log_path = "/tmp/event-rl-1.log"
+    pkg_logger = _make_pkg_logger(log_path)
+
+    captured_runninglog: list = []
+    received_event = threading.Event()
+
+    def _post_listener(p, new_status, **kwargs):
+        if new_status == "SYNC":
+            captured_runninglog.append(p.statusinfo.runninglog)
+            received_event.set()
+
+    fake_record = MagicMock()
+    fake_record.execute = MagicMock(return_value=None)
+    fake_record.on_sync_done = None
+
+    mirror.event.on("MASTER.PACKAGE_STATUS_UPDATE.POST", _post_listener)
+    try:
+        with patch.dict("mirror.plugin._registry", {"rsync": fake_record}, clear=False), \
+             patch("mirror.logger.create_logger", return_value=pkg_logger), \
+             patch("mirror.logger.get_log_path", return_value=log_path), \
+             patch("mirror.config.save_stat_data"), \
+             patch("mirror.config.generate_and_save_web_status"), \
+             patch("mirror.config._write_status_outputs"), \
+             patch.object(mirror, "sync", sync_mod):
+            start(pkg)
+
+        # Poll for async delivery
+        for _ in range(40):
+            if received_event.is_set():
+                break
+            time.sleep(0.05)
+
+        assert received_event.is_set(), "POST listener was never called for SYNC transition"
+        assert len(captured_runninglog) >= 1
+        assert captured_runninglog[0] == log_path
+    finally:
+        mirror.event.off("MASTER.PACKAGE_STATUS_UPDATE.POST", _post_listener)
+
+
+def test_runninglog_assigned_before_sync_post_event():
+    """Deterministic: runninglog must be set on the package when post_event fires for SYNC."""
+    pkg = _make_real_pkg("event-rl-2")
+    log_path = "/tmp/event-rl-2.log"
+    pkg_logger = _make_pkg_logger(log_path)
+
+    snapshotted_runninglog: list = []
+
+    def _recording_post_event(event_name, *args, **kwargs):
+        if event_name == "MASTER.PACKAGE_STATUS_UPDATE.POST" and args:
+            p = args[0]
+            new_status = args[1] if len(args) > 1 else None
+            if new_status == "SYNC":
+                snapshotted_runninglog.append(p.statusinfo.runninglog)
+
+    fake_record = MagicMock()
+    fake_record.execute = MagicMock(return_value=None)
+    fake_record.on_sync_done = None
+
+    with patch.dict("mirror.plugin._registry", {"rsync": fake_record}, clear=False), \
+         patch("mirror.logger.create_logger", return_value=pkg_logger), \
+         patch("mirror.logger.get_log_path", return_value=log_path), \
+         patch("mirror.config.save_stat_data"), \
+         patch("mirror.event.post_event", side_effect=_recording_post_event), \
+         patch.object(mirror, "sync", sync_mod):
+        start(pkg)
+
+    assert len(snapshotted_runninglog) >= 1, "post_event was never called for SYNC"
+    assert snapshotted_runninglog[0] == log_path, (
+        f"runninglog was {snapshotted_runninglog[0]!r} at POST event time, expected {log_path!r}"
+    )
