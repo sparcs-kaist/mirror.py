@@ -6,6 +6,7 @@ command dispatch, and message listener infrastructure.
 """
 
 import json
+import os
 import queue
 import socket
 import threading
@@ -35,9 +36,15 @@ class BaseServer:
     Args:
         socket_path(Path | str): Path to the Unix domain socket file
         role(str): Server role identifier for handshake
+        socket_uid(int, optional): UID for chown on the socket file
+        socket_gid(int, optional): GID for chown on the socket file
+        socket_mode(int, optional): Permission mode for the socket file
     """
 
-    def __init__(self, socket_path: Path | str, role: str):
+    def __init__(self, socket_path: Path | str, role: str,
+                 socket_uid: Optional[int] = None,
+                 socket_gid: Optional[int] = None,
+                 socket_mode: Optional[int] = None):
         self.socket_path = Path(socket_path)
         self.role = role
         self.running = False
@@ -46,6 +53,9 @@ class BaseServer:
         self._version = "unknown"
         self._connections: list[socket.socket] = []
         self._connections_lock = threading.Lock()
+        self._socket_uid = socket_uid
+        self._socket_gid = socket_gid
+        self._socket_mode = socket_mode
         self._register_exposed_handlers()
 
     def _register_exposed_handlers(self) -> None:
@@ -207,12 +217,41 @@ class BaseServer:
 
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(str(self.socket_path))
+        # Apply ownership/mode before listen() so the socket never accepts
+        # connections under unintended permissions.
+        try:
+            self._apply_socket_permissions()
+        except OSError:
+            self.stop()
+            raise
         self.server.listen()
         self.running = True
-        self.socket_path.chmod(0o600)
 
         thread = threading.Thread(target=self._accept_loop, daemon=True)
         thread.start()
+
+    def _apply_socket_permissions(self) -> None:
+        """Apply ownership and mode to the bound socket file.
+
+        Defaults preserve the historical behavior (mode 0o600, no chown). When
+        socket_uid/socket_gid are set, os.chown runs first (chown can clear the
+        setuid/setgid bits, so it must precede chmod). Any OSError is wrapped and
+        re-raised so the caller can abort startup rather than serve on a
+        mis-permissioned socket.
+        """
+        mode = self._socket_mode if self._socket_mode is not None else 0o600
+        try:
+            if self._socket_uid is not None or self._socket_gid is not None:
+                os.chown(
+                    self.socket_path,
+                    self._socket_uid if self._socket_uid is not None else -1,
+                    self._socket_gid if self._socket_gid is not None else -1,
+                )
+            self.socket_path.chmod(mode)
+        except OSError as exc:
+            raise OSError(
+                f"Failed to apply socket permissions to {self.socket_path}: {exc}"
+            ) from exc
 
     def _accept_loop(self) -> None:
         """Accept incoming connections and spawn handler threads"""

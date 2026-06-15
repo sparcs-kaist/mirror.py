@@ -340,6 +340,23 @@ def _perform_reload() -> dict:
         warnings.append("plugins change requires daemon restart (kept current value)")
     settings_block["plugins"] = current_plugins
 
+    # socket: restart-only. The master socket is bound once at startup and is
+    # never re-created on reload, so changing settings.socket here must not take
+    # effect live. Lock it to the current value and warn if the user changed it.
+    current_socket = mirror.conf.socket
+    supplied_socket = settings_block.get("socket")
+    if supplied_socket is not None:
+        try:
+            supplied_parsed = mirror.structure.Config.SocketSettings.from_dict(supplied_socket)
+        except Exception:
+            supplied_parsed = None
+        if supplied_parsed is None or (
+            (supplied_parsed.uid, supplied_parsed.gid, supplied_parsed.mode)
+            != (current_socket.uid, current_socket.gid, current_socket.mode)
+        ):
+            warnings.append("socket change requires daemon restart (kept current value)")
+    settings_block["socket"] = current_socket.to_config_dict()
+
     # Step e: Validate candidate config — catch any error without touching state.
     try:
         mirror.structure.Config.load_from_dict(sanitized_dict)

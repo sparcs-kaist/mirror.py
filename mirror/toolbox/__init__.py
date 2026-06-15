@@ -85,6 +85,31 @@ def format_iso_duration(duration: int) -> str:
             
     return iso8601
 
+def parse_file_mode(value: str) -> int:
+    """Parse an octal file-mode string into an integer.
+
+    Accepts forms like "0770", "0o770", or "770"; all interpreted as base-8.
+
+    Args:
+        value(str): Octal mode string from configuration.
+
+    Return:
+        mode(int): Parsed file mode as an integer (e.g. 0o770).
+    """
+    if isinstance(value, bool) or not isinstance(value, str):
+        raise ValueError('file mode must be an octal string like "0770"')
+    text = value.strip()
+    if not text:
+        raise ValueError("file mode string is empty")
+    try:
+        mode = int(text, 8)
+    except ValueError as exc:
+        raise ValueError(f"invalid octal file mode {value!r}: {exc}") from exc
+    if not (0 <= mode <= 0o7777):
+        raise ValueError(f"file mode {value!r} out of range (0..0o7777)")
+    return mode
+
+
 def set_rsync_user(url: str, user: str) -> str:
     """Embed a username into an rsync URL.
 
