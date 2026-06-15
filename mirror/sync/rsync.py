@@ -88,7 +88,7 @@ def rsync(logger: logging.Logger, pkgid: str, src: str, dst: Path, user: str, pa
     """
     command = [
         "rsync",
-        "-vrlptDSH",
+        "-vrltDSH",
         "--partial",
         "--exclude=*.~tmp~",
         "--delete-delay",
