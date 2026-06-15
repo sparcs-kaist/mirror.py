@@ -1,6 +1,6 @@
 [project]
 name = "mirror.py"
-version = "1.1.5"
+version = "1.2.0"
 description = "Mirror manager daemon that maintains local mirrors of remote package repositories via rsync, ftpsync, and other sync protocols."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -59,6 +59,11 @@ local = "mirror.sync.local:plugin"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
 
 [tool.setuptools.packages.find]
 include = ["mirror*"]
