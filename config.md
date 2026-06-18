@@ -178,14 +178,20 @@ skips the full sync when the upstream timestamp file is unchanged.
 |------------|--------|---------|--------------------------------------------------------------------------|
 | `ffts`     | bool   | `false` | Enable the FFTS dry-run pre-check before the full sync.                  |
 | `fftsfile` | string | `""`    | Upstream timestamp file checked by FFTS (e.g. `lastupdate`, `fullfiletimelist-rocky`). Required when `ffts` is `true`. |
-| `user`     | string | `""`    | rsync username (sets `USER` env). Leave empty for anonymous.            |
-| `password` | string | `""`    | rsync password (sets `RSYNC_PASSWORD` env).                             |
+| `user`           | string       | `""`    | rsync username (sets `USER` env). Leave empty for anonymous.            |
+| `password`       | string       | `""`    | rsync password (sets `RSYNC_PASSWORD` env).                            |
+| `option_include` | string       | `""`    | Flag characters to **add** to the default flag string. Each char must be in the whitelist `vrlptDSHaznhPxWENcimub`; no `-`, spaces, or control chars. Chars already present are skipped. e.g. `"p"` re-adds permission preservation. |
+| `option_exclude` | string       | `""`    | Flag characters to **remove** from the default flag string. No `-`, spaces, or control chars. e.g. `"H"` drops hard-link preservation. |
+| `exclude`        | list[string] | `[]`    | Extra `--exclude=<pattern>` rules, appended after the built-in `--exclude=*.~tmp~`. Items must be strings without control characters. |
 
 > Note: the rsync module reads `user`/`password`. A key named `username` is **not** read.
 >
-> Since 1.2, the default rsync flags are `-vrltDSH` (previously `-vrlptDSH`):
-> the `-p` (preserve permissions) flag was dropped, so upstream file modes are
-> no longer mirrored. This is not configurable.
+> Flag string: the default is `-vrltDSH` (since 1.2; previously `-vrlptDSH`,
+> i.e. `-p` was dropped, so upstream file modes are no longer mirrored by
+> default). `option_include` / `option_exclude` adjust this string —
+> `option_include` is applied first (appends missing chars), then
+> `option_exclude` removes chars. To restore permission mirroring, set
+> `"option_include": "p"`.
 
 ```json
 "archlinux": {
