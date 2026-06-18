@@ -275,5 +275,261 @@ class TestSyncWorkerDelegation(unittest.TestCase):
         self.assertTrue(needs_update)
 
 
+class TestRsyncOptions(unittest.TestCase):
+    """Tests for rsync option_exclude, option_include, and exclude list support."""
+
+    def _make_logger(self):
+        return MagicMock(spec=logging.Logger)
+
+    def _call_rsync(self, **kwargs):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        return rsync(logger, "pkg", "rsync://example.org/mod", Path("/srv/dst"), "", "", **kwargs)
+
+    # --- flag manipulation ---
+
+    def test_option_exclude_removes_flag(self):
+        command, _ = self._call_rsync(option_exclude="S")
+        flags_arg = command[1]
+        self.assertIn("-", flags_arg)
+        self.assertNotIn("S", flags_arg)
+        self.assertIn("v", flags_arg)
+        self.assertIn("H", flags_arg)
+        # full default minus S
+        self.assertEqual(flags_arg, "-vrltDH")
+
+    def test_option_include_adds_flag(self):
+        command, _ = self._call_rsync(option_include="z")
+        flags_arg = command[1]
+        self.assertIn("z", flags_arg)
+        self.assertTrue(flags_arg.startswith("-vrltDSH"))
+        self.assertTrue(flags_arg.endswith("z"))
+
+    def test_option_include_no_duplicate(self):
+        command, _ = self._call_rsync(option_include="v")
+        flags_arg = command[1]
+        self.assertEqual(flags_arg.count("v"), 1)
+
+    def test_option_include_and_exclude_combined(self):
+        # include "z" then exclude "S": result = vrltDHz
+        command, _ = self._call_rsync(option_include="z", option_exclude="S")
+        flags_arg = command[1]
+        self.assertIn("z", flags_arg)
+        self.assertNotIn("S", flags_arg)
+        self.assertIn("v", flags_arg)
+
+    def test_default_options_unchanged(self):
+        command, _ = self._call_rsync()
+        self.assertIn("-vrltDSH", command)
+
+    def test_option_exclude_all_flags_no_lone_dash(self):
+        # Remove every default flag character; no lone "-" should appear in argv
+        command, _ = self._call_rsync(option_exclude="vrltDSH")
+        for arg in command:
+            self.assertNotEqual(arg, "-")
+        # The flags arg should be absent entirely
+        self.assertNotIn("-vrltDSH", command)
+
+    # --- exclude list ---
+
+    def test_exclude_list_adds_patterns(self):
+        command, _ = self._call_rsync(excludes=["S3-mirror", "*.bak"])
+        self.assertIn("--exclude=*.~tmp~", command)
+        self.assertIn("--exclude=S3-mirror", command)
+        self.assertIn("--exclude=*.bak", command)
+
+    def test_exclude_list_hardcoded_pattern_always_present(self):
+        command, _ = self._call_rsync(excludes=["extra"])
+        self.assertIn("--exclude=*.~tmp~", command)
+
+    def test_exclude_list_user_excludes_before_src_dst(self):
+        command, _ = self._call_rsync(excludes=["foo"])
+        exclude_idx = command.index("--exclude=foo")
+        src_idx = command.index("rsync://example.org/mod/")
+        self.assertLess(exclude_idx, src_idx)
+
+    def test_exclude_leading_dash_allowed(self):
+        command, _ = self._call_rsync(excludes=["-foo"])
+        self.assertIn("--exclude=-foo", command)
+
+    # --- validation: option_include whitelist ---
+
+    def test_option_include_blocked_flag_e_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_include="e")
+
+    def test_option_include_dash_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_include="-")
+
+    def test_option_include_space_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_include=" ")
+
+    def test_option_include_non_string_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_include=42)
+
+    # --- validation: option_exclude ---
+
+    def test_option_exclude_dash_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_exclude="-")
+
+    def test_option_exclude_space_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_exclude=" ")
+
+    def test_option_exclude_non_string_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_exclude=["S"])
+
+    # --- validation: excludes list ---
+
+    def test_excludes_not_list_raises(self):
+        from mirror.sync.rsync import _validate_excludes
+        with self.assertRaises(ValueError):
+            _validate_excludes("not-a-list")
+
+    def test_excludes_non_string_item_raises(self):
+        from mirror.sync.rsync import _validate_excludes
+        with self.assertRaises(ValueError):
+            _validate_excludes([123])
+
+    def test_excludes_control_char_raises(self):
+        from mirror.sync.rsync import _validate_excludes
+        with self.assertRaises(ValueError):
+            _validate_excludes(["foo\nbar"])
+
+    def test_excludes_nul_raises(self):
+        from mirror.sync.rsync import _validate_excludes
+        with self.assertRaises(ValueError):
+            _validate_excludes(["foo\x00bar"])
+
+    # --- execute() path: options read from package.settings.options ---
+
+    @patch('mirror.socket.worker.execute_command')
+    def test_execute_option_exclude_applied(self, mock_execute_command):
+        pkg = MagicMock()
+        pkg.pkgid = "rsync-opt-test"
+        pkg.name = "Option Test"
+        pkg.settings.src = "rsync://example.org/mod"
+        pkg.settings.dst = "/srv/dst"
+        pkg.settings.options = {
+            "ffts": False,
+            "user": "",
+            "password": "",
+            "option_exclude": "S",
+        }
+        pkg.syncrate = 3600
+        pkg.lastsync = 0
+        pkg_logger = MagicMock()
+        pkg_logger.handlers = []
+        mock_execute_command.return_value = {}
+
+        import mirror.sync.rsync as rsync_module
+        rsync_module.execute(pkg, pkg_logger)
+
+        mock_execute_command.assert_called_once()
+        cmd = mock_execute_command.call_args[1]["commandline"]
+        self.assertIn("-vrltDH", cmd)
+        self.assertNotIn("-vrltDSH", cmd)
+
+    @patch('mirror.socket.worker.execute_command')
+    def test_execute_invalid_option_include_calls_on_sync_done(self, mock_execute_command):
+        import mirror.sync.rsync as rsync_module
+        pkg = MagicMock()
+        pkg.pkgid = "rsync-invalid-test"
+        pkg.name = "Invalid Option Test"
+        pkg.settings.src = "rsync://example.org/mod"
+        pkg.settings.dst = "/srv/dst"
+        pkg.settings.options = {
+            "ffts": False,
+            "user": "",
+            "password": "",
+            "option_include": "e",
+        }
+        pkg.syncrate = 3600
+        pkg.lastsync = 0
+        pkg_logger = MagicMock()
+        pkg_logger.handlers = []
+
+        with patch("mirror.sync.on_sync_done") as on_done:
+            rsync_module.execute(pkg, pkg_logger)
+
+        mock_execute_command.assert_not_called()
+        on_done.assert_called_once_with(pkg.pkgid, success=False, returncode=None)
+
+    # --- validation: DEL (0x7f) control character ---
+
+    def test_option_include_del_char_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_include="\x7f")
+
+    def test_option_exclude_del_char_raises(self):
+        from mirror.sync.rsync import rsync
+        logger = self._make_logger()
+        with self.assertRaises(ValueError):
+            rsync(logger, "p", "s", Path("d"), "", "", option_exclude="\x7f")
+
+    def test_excludes_del_char_raises(self):
+        from mirror.sync.rsync import _validate_excludes
+        with self.assertRaises(ValueError):
+            _validate_excludes(["foo\x7fbar"])
+
+    # --- validation via execute() path ---
+
+    def _run_execute_with_options(self, options):
+        """Run rsync.execute with the given options dict and capture on_sync_done."""
+        import mirror.sync.rsync as rsync_module
+        pkg = MagicMock()
+        pkg.pkgid = "rsync-execpath-test"
+        pkg.name = "Exec Path Test"
+        pkg.settings.src = "rsync://example.org/mod"
+        pkg.settings.dst = "/srv/dst"
+        pkg.settings.options = {"ffts": False, "user": "", "password": "", **options}
+        pkg.syncrate = 3600
+        pkg.lastsync = 0
+        pkg_logger = MagicMock()
+        pkg_logger.handlers = []
+        with patch("mirror.socket.worker.execute_command") as mock_exec, \
+                patch("mirror.sync.on_sync_done") as on_done:
+            rsync_module.execute(pkg, pkg_logger)
+        return mock_exec, on_done, pkg.pkgid
+
+    def test_execute_invalid_options_route_to_on_sync_done(self):
+        invalid_options = [
+            {"option_exclude": "-"},
+            {"option_exclude": " "},
+            {"option_exclude": ["S"]},
+            {"option_include": "-"},
+            {"option_include": " "},
+            {"option_include": 42},
+            {"exclude": "not-a-list"},
+            {"exclude": ["foo\nbar"]},
+        ]
+        for options in invalid_options:
+            with self.subTest(options=options):
+                mock_exec, on_done, pkgid = self._run_execute_with_options(options)
+                mock_exec.assert_not_called()
+                on_done.assert_called_once_with(pkgid, success=False, returncode=None)
+
+
 if __name__ == '__main__':
     unittest.main()
