@@ -2,6 +2,7 @@
 generate_and_save_web_status()."""
 import json
 import logging
+import stat
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -400,6 +401,33 @@ def test_status_output_writes_to_default_path(tmp_path: Path, monkeypatch) -> No
     assert output_file.exists()
     data = json.loads(output_file.read_text())
     assert data == {"output": "data"}
+
+
+def test_status_output_written_world_readable(tmp_path: Path, monkeypatch) -> None:
+    """StatusOutput files are written with mode 0o644 on every write."""
+    output_file = tmp_path / "readable-output.json"
+    pkg1 = _make_package("pkg1")
+    packages_mock = _make_packages("pkg1")
+    packages_mock.values = MagicMock(return_value=[pkg1])
+
+    def build_fn(packages):
+        return {"readable": True}
+
+    output = StatusOutput(name="readable-output", default_path=str(output_file), build=build_fn)
+    record = status_plugin(name="readable-plugin", outputs=[output])
+    _register_status(record)
+
+    monkeypatch.setattr(mirror, "packages", packages_mock, raising=False)
+    monkeypatch.setattr(mirror, "conf", _make_conf(), raising=False)
+
+    mirror.config._write_status_outputs()
+
+    assert output_file.exists()
+    assert stat.S_IMODE(output_file.stat().st_mode) == 0o644
+
+    mirror.config._write_status_outputs()
+
+    assert stat.S_IMODE(output_file.stat().st_mode) == 0o644
 
 
 def test_status_output_config_path_override(tmp_path: Path, monkeypatch) -> None:

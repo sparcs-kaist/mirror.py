@@ -306,6 +306,58 @@ class Config:
         include: str = ""
         exclude: str = ""
 
+    @dataclass
+    class SocketSettings(Options):
+        uid: Optional[int] = None
+        gid: Optional[int] = None
+        mode: int = 0o600
+
+        @classmethod
+        def from_dict(cls, data: dict) -> "Config.SocketSettings":
+            """Build SocketSettings from the settings.socket config dict.
+
+            Args:
+                data(dict): Raw socket settings ({"uid", "gid", "mode"}).
+
+            Return:
+                settings(SocketSettings): Parsed instance. uid/gid stay None
+                    when absent (no chown). mode defaults to 0o600 and is parsed
+                    from an octal string (e.g. "0770") via parse_file_mode.
+            """
+            from mirror.toolbox import parse_file_mode
+
+            def _opt_id(name: str, raw):
+                if raw is None:
+                    return None
+                # bool is a subclass of int; reject it explicitly.
+                if isinstance(raw, bool) or not isinstance(raw, int):
+                    raise ValueError(
+                        f"settings.socket.{name} must be an integer or omitted"
+                    )
+                return raw
+
+            uid = _opt_id("uid", data.get("uid"))
+            gid = _opt_id("gid", data.get("gid"))
+            mode_raw = data.get("mode")
+            mode = parse_file_mode(mode_raw) if mode_raw is not None else 0o600
+            return cls(uid=uid, gid=gid, mode=mode)
+
+        def to_config_dict(self) -> dict:
+            """Serialize back to the settings.socket config shape.
+
+            mode is emitted as an octal string; uid/gid are omitted when None
+            so the result round-trips through from_dict.
+
+            Return:
+                data(dict): {"mode": <octal string>} plus uid/gid when set.
+            """
+            out: dict = {"mode": format(self.mode, "04o")}
+            if self.uid is not None:
+                out["uid"] = self.uid
+            if self.gid is not None:
+                out["gid"] = self.gid
+            return out
+
     name: str
     hostname: str
     lastsettingmodified: int
@@ -325,6 +377,7 @@ class Config:
     logger: dict
     max_runtime_seconds: int = 0
     plugins: dict[str, PluginSettings] = field(default_factory=dict)
+    socket: "Config.SocketSettings" = field(default_factory=lambda: Config.SocketSettings())
 
     @staticmethod
     def _parse_plugins(raw: object) -> "dict[str, PluginSettings]":
@@ -405,6 +458,7 @@ class Config:
             logger=config["settings"]["logger"],
             max_runtime_seconds=max_runtime_seconds,
             plugins=Config._parse_plugins(raw_plugins),
+            socket=Config.SocketSettings.from_dict(config["settings"].get("socket", {})),
         )
 
     def _path_check(self, path: Path) -> None:
@@ -438,6 +492,7 @@ class Config:
                 "ftpsync": self.ftpsync.to_dict(),
                 "logger": self.logger,
                 "plugins": {name: ps.to_dict() for name, ps in self.plugins.items()},
+                "socket": self.socket.to_config_dict(),
             }
         }
 

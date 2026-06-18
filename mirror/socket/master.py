@@ -29,6 +29,19 @@ def _default_master_socket_path() -> Path:
     return mirror.RUN_PATH / "master.sock"
 
 
+def _resolve_master_socket_perms() -> tuple[Optional[int], Optional[int], Optional[int]]:
+    """Resolve master socket (uid, gid, mode) from the loaded config.
+
+    Returns (None, None, None) when no socket settings are configured, which
+    preserves the default behavior (mode 0o600, no chown).
+    """
+    conf = getattr(mirror, "conf", None)
+    socket_settings = getattr(conf, "socket", None)
+    if socket_settings is None:
+        return (None, None, None)
+    return (socket_settings.uid, socket_settings.gid, socket_settings.mode)
+
+
 MASTER_SOCKET_PATH = mirror.RUN_PATH / "master.sock"  # legacy default constant
 
 # Module-level instance (initialized via init_instance)
@@ -48,7 +61,14 @@ class MasterServer(BaseServer):
     def __init__(self, socket_path: Optional[Path | str] = None):
         if socket_path is None:
             socket_path = _default_master_socket_path()
-        super().__init__(socket_path, role="master")
+        uid, gid, mode = _resolve_master_socket_perms()
+        super().__init__(
+            socket_path,
+            role="master",
+            socket_uid=uid,
+            socket_gid=gid,
+            socket_mode=mode,
+        )
         self.started_at = time.time()
 
     @expose("ping")

@@ -296,13 +296,13 @@ class TestRsyncOptions(unittest.TestCase):
         self.assertIn("v", flags_arg)
         self.assertIn("H", flags_arg)
         # full default minus S
-        self.assertEqual(flags_arg, "-vrlptDH")
+        self.assertEqual(flags_arg, "-vrltDH")
 
     def test_option_include_adds_flag(self):
         command, _ = self._call_rsync(option_include="z")
         flags_arg = command[1]
         self.assertIn("z", flags_arg)
-        self.assertTrue(flags_arg.startswith("-vrlptDSH"))
+        self.assertTrue(flags_arg.startswith("-vrltDSH"))
         self.assertTrue(flags_arg.endswith("z"))
 
     def test_option_include_no_duplicate(self):
@@ -311,7 +311,7 @@ class TestRsyncOptions(unittest.TestCase):
         self.assertEqual(flags_arg.count("v"), 1)
 
     def test_option_include_and_exclude_combined(self):
-        # include "z" then exclude "S": result = vrlptDHz
+        # include "z" then exclude "S": result = vrltDHz
         command, _ = self._call_rsync(option_include="z", option_exclude="S")
         flags_arg = command[1]
         self.assertIn("z", flags_arg)
@@ -320,15 +320,15 @@ class TestRsyncOptions(unittest.TestCase):
 
     def test_default_options_unchanged(self):
         command, _ = self._call_rsync()
-        self.assertIn("-vrlptDSH", command)
+        self.assertIn("-vrltDSH", command)
 
     def test_option_exclude_all_flags_no_lone_dash(self):
         # Remove every default flag character; no lone "-" should appear in argv
-        command, _ = self._call_rsync(option_exclude="vrlptDSH")
+        command, _ = self._call_rsync(option_exclude="vrltDSH")
         for arg in command:
             self.assertNotEqual(arg, "-")
         # The flags arg should be absent entirely
-        self.assertNotIn("-vrlptDSH", command)
+        self.assertNotIn("-vrltDSH", command)
 
     # --- exclude list ---
 
@@ -446,8 +446,8 @@ class TestRsyncOptions(unittest.TestCase):
 
         mock_execute_command.assert_called_once()
         cmd = mock_execute_command.call_args[1]["commandline"]
-        self.assertIn("-vrlptDH", cmd)
-        self.assertNotIn("-vrlptDSH", cmd)
+        self.assertIn("-vrltDH", cmd)
+        self.assertNotIn("-vrltDSH", cmd)
 
     @patch('mirror.socket.worker.execute_command')
     def test_execute_invalid_option_include_calls_on_sync_done(self, mock_execute_command):

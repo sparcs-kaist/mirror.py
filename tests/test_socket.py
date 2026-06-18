@@ -1,11 +1,16 @@
 import pytest
 import queue
+import stat
 import tempfile
 import threading
 import time
+import types
 import sys
 import os
 from pathlib import Path
+
+import mirror
+from mirror.structure import Config
 
 # Use normal imports — earlier code used a `_load_module` helper that
 # overwrote `sys.modules['mirror.socket.*']`, causing contamination for
@@ -1162,3 +1167,99 @@ def test_master_get_runtime_info(monkeypatch):
                 assert abs(result["daemon_started_at"] - time.time()) < 60
         finally:
             server.stop()
+
+
+class TestMasterSocketPermissions:
+    """Test master socket ownership and mode configuration"""
+
+    def test_default_mode_is_0600(self, monkeypatch):
+        """MasterServer with no socket config defaults to mode 0o600"""
+        monkeypatch.setattr(mirror, "conf", types.SimpleNamespace(socket=None), raising=False)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            try:
+                actual_mode = stat.S_IMODE(os.stat(socket_path).st_mode)
+                assert actual_mode == 0o600
+            finally:
+                server.stop()
+
+    def test_configured_mode_applied(self, monkeypatch):
+        """MasterServer applies the configured socket mode"""
+        monkeypatch.setattr(
+            mirror, "conf",
+            types.SimpleNamespace(socket=Config.SocketSettings(uid=None, gid=None, mode=0o660)),
+            raising=False,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            try:
+                actual_mode = stat.S_IMODE(os.stat(socket_path).st_mode)
+                assert actual_mode == 0o660
+            finally:
+                server.stop()
+
+    def test_chown_uses_zero_not_minus_one(self, monkeypatch):
+        """uid/gid of 0 must be forwarded as 0 to os.chown, not treated as falsy"""
+        chown_calls = []
+
+        def fake_chown(path, uid, gid):
+            chown_calls.append((path, uid, gid))
+
+        monkeypatch.setattr(
+            mirror, "conf",
+            types.SimpleNamespace(socket=Config.SocketSettings(uid=0, gid=0, mode=0o660)),
+            raising=False,
+        )
+        monkeypatch.setattr(_base_module.os, "chown", fake_chown)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            server.start()
+            try:
+                assert len(chown_calls) == 1, f"expected 1 chown call, got {chown_calls}"
+                _, uid, gid = chown_calls[0]
+                assert uid == 0, f"expected uid=0, got {uid}"
+                assert gid == 0, f"expected gid=0, got {gid}"
+                actual_mode = stat.S_IMODE(os.stat(socket_path).st_mode)
+                assert actual_mode == 0o660
+            finally:
+                server.stop()
+
+    def test_perm_failure_aborts_and_cleans_up(self, monkeypatch):
+        """A chown failure during start() must abort (raise OSError) and clean up the socket"""
+        def fake_chown(path, uid, gid):
+            raise OSError("EPERM")
+
+        monkeypatch.setattr(
+            mirror, "conf",
+            types.SimpleNamespace(socket=Config.SocketSettings(uid=12345, gid=None, mode=0o660)),
+            raising=False,
+        )
+        monkeypatch.setattr(_base_module.os, "chown", fake_chown)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            server = MasterServer(socket_path)
+            with pytest.raises(OSError):
+                server.start()
+            assert not socket_path.exists(), "socket file must be cleaned up after perm failure"
+            assert server.running is False
+
+    def test_worker_socket_stays_0600(self):
+        """WorkerServer must keep mode 0o600 regardless of master socket config"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "worker.sock"
+            server = WorkerServer(socket_path)
+            server.start()
+            try:
+                actual_mode = stat.S_IMODE(os.stat(socket_path).st_mode)
+                assert actual_mode == 0o600
+            finally:
+                server.stop()

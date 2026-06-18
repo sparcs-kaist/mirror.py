@@ -9,7 +9,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-_DEFAULT_RSYNC_FLAGS = "vrlptDSH"
+_DEFAULT_RSYNC_FLAGS = "vrltDSH"
 _SAFE_RSYNC_FLAGS = "vrlptDSHaznhPxWENcimub"
 
 

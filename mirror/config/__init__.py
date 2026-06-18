@@ -34,7 +34,8 @@ def _atomic_write_json(path: Path, payload: dict, indent: int = 4, mode: int | N
         indent(int): json.dumps indent.
         mode(int, optional): If set, chmod the file before the swap. tempfile.mkstemp
             produces 0o600 by default; pass 0o644 for files the web UI / monitoring
-            must read. Plug-in outputs leave this unset to inherit the secure default.
+            must read. Plug-in status outputs are also written with 0o644 so
+            consumers running as a different user (e.g. a web server) can read them.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
@@ -339,6 +340,23 @@ def _perform_reload() -> dict:
         warnings.append("plugins change requires daemon restart (kept current value)")
     settings_block["plugins"] = current_plugins
 
+    # socket: restart-only. The master socket is bound once at startup and is
+    # never re-created on reload, so changing settings.socket here must not take
+    # effect live. Lock it to the current value and warn if the user changed it.
+    current_socket = mirror.conf.socket
+    supplied_socket = settings_block.get("socket")
+    if supplied_socket is not None:
+        try:
+            supplied_parsed = mirror.structure.Config.SocketSettings.from_dict(supplied_socket)
+        except Exception:
+            supplied_parsed = None
+        if supplied_parsed is None or (
+            (supplied_parsed.uid, supplied_parsed.gid, supplied_parsed.mode)
+            != (current_socket.uid, current_socket.gid, current_socket.mode)
+        ):
+            warnings.append("socket change requires daemon restart (kept current value)")
+    settings_block["socket"] = current_socket.to_config_dict()
+
     # Step e: Validate candidate config — catch any error without touching state.
     try:
         mirror.structure.Config.load_from_dict(sanitized_dict)
@@ -601,6 +619,10 @@ def _resolve_output_path(plugin_name: str, output) -> Path:
 def _write_status_outputs() -> None:
     """Write each plug-in-declared status output file.
 
+    Outputs are written world-readable (0o644), matching mirror.py's own
+    status.json and stat.json, so consumers running as a different user
+    (e.g. a web server) can read them.
+
     Per-plug-in isolation: failures are logged via mirror.log.warning and
     other outputs proceed.
     """
@@ -609,7 +631,7 @@ def _write_status_outputs() -> None:
         try:
             path = _resolve_output_path(plugin_name, output)
             payload = output.build(list(mirror.packages.values()))
-            _atomic_write_json(path, payload)
+            _atomic_write_json(path, payload, mode=0o644)
         except Exception as e:
             mirror.log.warning(
                 f"Status output '{output_name}' from plug-in '{plugin_name}' failed: {e}"
