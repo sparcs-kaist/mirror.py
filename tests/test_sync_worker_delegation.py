@@ -531,5 +531,78 @@ class TestRsyncOptions(unittest.TestCase):
                 on_done.assert_called_once_with(pkgid, success=False, returncode=None)
 
 
+class TestFtpsyncInfoTrigger(unittest.TestCase):
+    def test_info_trigger_mapping(self):
+        import mirror.sync.ftpsync as ftpsync_module
+
+        self.assertEqual(ftpsync_module._info_trigger("auto"), "mirror.py auto")
+        self.assertEqual(ftpsync_module._info_trigger("manual"), "mirror.py manual")
+        self.assertEqual(ftpsync_module._info_trigger("push"), "ssh")
+
+    def test_info_trigger_unknown_falls_back(self):
+        import mirror.sync.ftpsync as ftpsync_module
+
+        self.assertEqual(ftpsync_module._info_trigger("cron"), "mirror.py cron")
+
+
+class TestFtpsyncTriggerDelegation(unittest.TestCase):
+    def setUp(self):
+        import mirror.socket
+        mirror.sync = sys.modules["mirror.sync"]
+        mirror.socket.worker = sys.modules["mirror.socket.worker"]
+
+        mirror.log = MagicMock()
+        mirror.packages = {}
+        mirror.conf = MagicMock()
+        mirror.conf.uid = 1234
+        mirror.conf.gid = 5678
+
+        self.ftp_pkg = MagicMock(spec=mirror.structure.Package)
+        self.ftp_pkg.pkgid = "test-ftpsync-trigger"
+        self.ftp_pkg.name = "Test FTPSync Trigger"
+        self.ftp_pkg.synctype = "ftpsync"
+        self.ftp_pkg.settings = MagicMock()
+        self.ftp_pkg.settings.src = "ftp.debian.org"
+        self.ftp_pkg.settings.dst = "/var/www/debian"
+        self.ftp_pkg.settings.options = {}
+
+    @patch('mirror.socket.worker.execute_command')
+    @patch('mirror.sync.ftpsync.setup_ftpsync')
+    def _run_with_trigger(self, trigger, mock_setup_ftpsync, mock_execute_command):
+        mock_logger = MagicMock()
+        mock_logger.handlers = []
+        mock_execute_command.return_value = {"status": "started", "job_pid": 789}
+
+        import mirror.sync.ftpsync as ftpsync_module
+        ftpsync_module.execute(self.ftp_pkg, mock_logger, trigger)
+
+        return mock_execute_command.call_args[1]["commandline"]
+
+    def test_auto_trigger_command(self):
+        cmd = self._run_with_trigger("auto")
+        self.assertIn("-T", cmd)
+        self.assertEqual(cmd[cmd.index("-T") + 1], "mirror.py auto")
+
+    def test_manual_trigger_command(self):
+        cmd = self._run_with_trigger("manual")
+        self.assertEqual(cmd[cmd.index("-T") + 1], "mirror.py manual")
+
+    def test_push_trigger_command(self):
+        cmd = self._run_with_trigger("push")
+        self.assertEqual(cmd[cmd.index("-T") + 1], "ssh")
+
+    def test_default_trigger_is_auto(self):
+        import mirror.sync.ftpsync as ftpsync_module
+
+        with patch('mirror.socket.worker.execute_command') as mock_exec, \
+             patch('mirror.sync.ftpsync.setup_ftpsync'):
+            mock_logger = MagicMock()
+            mock_logger.handlers = []
+            mock_exec.return_value = {"status": "started"}
+            ftpsync_module.execute(self.ftp_pkg, mock_logger)
+            cmd = mock_exec.call_args[1]["commandline"]
+            self.assertEqual(cmd[cmd.index("-T") + 1], "mirror.py auto")
+
+
 if __name__ == '__main__':
     unittest.main()

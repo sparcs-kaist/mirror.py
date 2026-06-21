@@ -173,7 +173,7 @@ def _build_lftp_script(src: str, dst: str, options: dict) -> str:
     return "; ".join(settings + [" ".join(mirror_args)])
 
 
-def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
+def execute(package: mirror.structure.Package, pkg_logger: logging.Logger, trigger: str = "auto"):
     """Run the lftp Sync method (CORE)
 
     Args:

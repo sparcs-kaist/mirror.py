@@ -32,20 +32,30 @@ def setup_ftpsync(
     package: mirror.structure.Package,
     log_dir: Path | None = None,
     log_name: str | None = None,
+    logger: logging.Logger | None = None,
 ) -> None:
     """Set up archvsync binary and ftpsync.conf in a temporary directory.
 
     Args:
         path(Path): Temporary working directory for this sync session.
         package(mirror.structure.Package): Package whose settings drive the config.
+        log_dir(Path, optional): Directory for archvsync run logs.
+        log_name(str, optional): Log name passed to archvsync as NAME.
+        logger(logging.Logger, optional): Per-package sync logger; falls back to
+            the global "mirror" logger when not supplied.
     """
     (path / "bin").mkdir(exist_ok=True)
     (path / "etc").mkdir(exist_ok=True)
 
+    if logger is None:
+        logger = logging.getLogger("mirror")
+
     # Fetch archvsync: Try git clone first, fallback to base64 extraction
     if _check_git() and _clone_archvsync(path):
+        logger.info("archvsync provisioned via git clone from %s", ARCHVSYNC_REPO)
         archvsync_path = path / "archvsync"
     elif _extract_archvsync(path):
+        logger.info("archvsync provisioned via bundled base64 script (git clone unavailable or failed)")
         dirs = [d for d in path.iterdir() if d.is_dir() and d.name != "bin" and d.name != "etc"]
         if not dirs:
             raise RuntimeError("Failed to find archvsync directory after extraction")
@@ -85,12 +95,14 @@ def _apply_owner_recursive(root: Path) -> None:
         for name in dirnames + filenames:
             apply_configured_owner(base / name)
 
-def execute(package: mirror.structure.Package, logger: logging.Logger):
+def execute(package: mirror.structure.Package, logger: logging.Logger, trigger: str = "auto"):
     """Sync package via ftpsync subprocess.
 
     Args:
         package(mirror.structure.Package): Package to sync.
         logger(logging.Logger): Per-sync session logger.
+        trigger(str): Source of the sync trigger ("auto", "manual", "push").
+            Used to derive the archvsync INFO_TRIGGER trace field.
     """
     logger.info(f"Starting ftpsync for {package.name}")
 
@@ -123,11 +135,15 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
             )
 
         logger.info(f"Setting up ftpsync environment in {tmp_dir}")
-        setup_ftpsync(tmp_dir, package, ftpsync_log_dir, ftpsync_log_name)
+        setup_ftpsync(tmp_dir, package, ftpsync_log_dir, ftpsync_log_name, logger)
 
-        command = [str(tmp_dir / "bin" / "ftpsync")]
+        # -T sets the archvsync INFO_TRIGGER trace field, recording how this run
+        # was initiated. mirror.py-driven runs report "mirror.py auto"/"mirror.py
+        # manual"; push syncs report "ssh" (upstream push origin).
+        info_trigger = _info_trigger(trigger)
+        command = [str(tmp_dir / "bin" / "ftpsync"), "-T", info_trigger]
 
-        logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
+        logger.info(f"Delegating ftpsync to worker (trigger={info_trigger}): {' '.join(command)}")
 
         env = dict(mirror.sync.get_extra_args(package.pkgid))
         mirror.socket.worker.execute_command(
@@ -169,6 +185,26 @@ def on_sync_done(package: mirror.structure.Package, logger: logging.Logger, succ
             handle.cleanup()
         except Exception as e:
             logger.warning(f"Failed to clean up ftpsync temp dir: {e}")
+
+
+_INFO_TRIGGER_MAP = {
+    "auto": "mirror.py auto",
+    "manual": "mirror.py manual",
+    "push": "ssh",
+}
+
+
+def _info_trigger(trigger: str) -> str:
+    """Map a mirror.py sync trigger to an archvsync INFO_TRIGGER value.
+
+    Args:
+        trigger(str): Sync trigger source ("auto", "manual", "push").
+
+    Return:
+        info_trigger(str): INFO_TRIGGER trace value; unknown triggers fall back
+            to "mirror.py <trigger>".
+    """
+    return _INFO_TRIGGER_MAP.get(trigger, f"mirror.py {trigger}")
 
 
 def _check_git() -> bool:

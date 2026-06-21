@@ -13,7 +13,7 @@ import mirror.structure
 import mirror.sync
 
 
-def execute(package: mirror.structure.Package, pkg_logger: logging.Logger) -> None:
+def execute(package: mirror.structure.Package, pkg_logger: logging.Logger, trigger: str = "auto") -> None:
     """Mark a local-mirror package as successfully 'synced' without transferring.
 
     Args:
