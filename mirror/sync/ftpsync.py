@@ -42,10 +42,14 @@ def setup_ftpsync(
     (path / "bin").mkdir(exist_ok=True)
     (path / "etc").mkdir(exist_ok=True)
 
+    logger = logging.getLogger("mirror")
+
     # Fetch archvsync: Try git clone first, fallback to base64 extraction
     if _check_git() and _clone_archvsync(path):
+        logger.info("archvsync provisioned via git clone from %s", ARCHVSYNC_REPO)
         archvsync_path = path / "archvsync"
     elif _extract_archvsync(path):
+        logger.info("archvsync provisioned via bundled base64 script (git clone unavailable or failed)")
         dirs = [d for d in path.iterdir() if d.is_dir() and d.name != "bin" and d.name != "etc"]
         if not dirs:
             raise RuntimeError("Failed to find archvsync directory after extraction")
