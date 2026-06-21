@@ -32,17 +32,23 @@ def setup_ftpsync(
     package: mirror.structure.Package,
     log_dir: Path | None = None,
     log_name: str | None = None,
+    logger: logging.Logger | None = None,
 ) -> None:
     """Set up archvsync binary and ftpsync.conf in a temporary directory.
 
     Args:
         path(Path): Temporary working directory for this sync session.
         package(mirror.structure.Package): Package whose settings drive the config.
+        log_dir(Path, optional): Directory for archvsync run logs.
+        log_name(str, optional): Log name passed to archvsync as NAME.
+        logger(logging.Logger, optional): Per-package sync logger; falls back to
+            the global "mirror" logger when not supplied.
     """
     (path / "bin").mkdir(exist_ok=True)
     (path / "etc").mkdir(exist_ok=True)
 
-    logger = logging.getLogger("mirror")
+    if logger is None:
+        logger = logging.getLogger("mirror")
 
     # Fetch archvsync: Try git clone first, fallback to base64 extraction
     if _check_git() and _clone_archvsync(path):
@@ -129,7 +135,7 @@ def execute(package: mirror.structure.Package, logger: logging.Logger, trigger: 
             )
 
         logger.info(f"Setting up ftpsync environment in {tmp_dir}")
-        setup_ftpsync(tmp_dir, package, ftpsync_log_dir, ftpsync_log_name)
+        setup_ftpsync(tmp_dir, package, ftpsync_log_dir, ftpsync_log_name, logger)
 
         # -T sets the archvsync INFO_TRIGGER trace field, recording how this run
         # was initiated. mirror.py-driven runs report "mirror.py auto"/"mirror.py

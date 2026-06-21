@@ -87,7 +87,8 @@ def test_setup_ftpsync_uses_clone_path_end_to_end(tmp_path, monkeypatch):
         lambda path: pytest.fail("fallback extraction ran; clone path was not taken"),
     )
 
-    ftpsync_mod.setup_ftpsync(tmp_path, package)
+    pkg_logger = MagicMock()
+    ftpsync_mod.setup_ftpsync(tmp_path, package, logger=pkg_logger)
 
     ftpsync_script = tmp_path / "bin" / "ftpsync"
     assert ftpsync_script.is_file(), "bin/ftpsync missing after clone-based setup"
@@ -96,3 +97,7 @@ def test_setup_ftpsync_uses_clone_path_end_to_end(tmp_path, monkeypatch):
 
     conf_file = tmp_path / "etc" / "ftpsync.conf"
     assert conf_file.is_file(), "ftpsync.conf not written"
+
+    # Provisioning notice must go to the supplied per-package logger.
+    logged = " ".join(str(c.args[0]) for c in pkg_logger.info.call_args_list if c.args)
+    assert "git clone" in logged, f"provisioning log not routed to package logger: {logged!r}"
