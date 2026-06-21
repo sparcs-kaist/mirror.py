@@ -48,7 +48,7 @@ right information and emits a ready-to-use config block on its own.
     "maintainer": { "name": "Roul", "email": "roul@ftp.kaist.ac.kr" },
     "logger": { ... },
     "ftpsync": { ... },
-    "plugins": [],
+    "plugins": {},
     "socket": { "mode": "0770" }
 }
 ```
@@ -66,7 +66,7 @@ right information and emits a ready-to-use config block on its own.
 | `maintainer`        | object | `{ "name", "email" }`.                                                      |
 | `logger`            | object | Log levels, formats, and file rotation (see `config-example.json`).         |
 | `ftpsync`           | object | Global ftpsync defaults (see §4.2).                                         |
-| `plugins`           | object | Plugin settings map. Use `[]`/`{}` when unused.                             |
+| `plugins`           | object | Enable-only plugin map: `{ "<name>": {"enabled": bool} }`. Use `{}` when unused. Per-plugin config lives in `<name>.json` next to `config.json`. |
 | `socket`            | object | Master control socket ownership/permissions (see §2.2). Optional.           |
 
 The `logger` block is rarely changed; copy it verbatim from `config-example.json`.

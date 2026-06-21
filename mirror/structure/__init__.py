@@ -277,7 +277,6 @@ class Packages(Options):
 @dataclass
 class PluginSettings(Options):
     enabled: bool = True
-    config: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict) -> "PluginSettings":
@@ -289,7 +288,13 @@ class PluginSettings(Options):
         Return:
             settings(PluginSettings): Populated instance.
         """
-        known = {"enabled", "config"}
+        if "config" in data:
+            mirror.log.warning(
+                "Plugin 'config' key in settings is no longer supported; "
+                "per-plugin config now lives in <config_dir>/<plugin-name>.json. "
+                "Remove the 'config' key from your plugins settings."
+            )
+        known = {"enabled"}
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)
 
