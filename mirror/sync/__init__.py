@@ -202,7 +202,7 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
 
         def _runner() -> None:
             try:
-                sync_record.execute(package, pkg_logger)
+                sync_record.execute(package, pkg_logger, trigger)
             except Exception as exc:
                 pkg_logger.error(f"Unhandled exception in sync runner for {pkgid}: {exc}")
                 # If execute() failed before worker delegation, on_sync_done
@@ -334,6 +334,6 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
             _watchdog_fired.discard(pkgid)
 
 
-def execute(package: "mirror.structure.Package", logger: logging.Logger) -> None:
+def execute(package: "mirror.structure.Package", logger: logging.Logger, trigger: str = "auto") -> None:
     """Module-level execute placeholder; sync modules override this."""
     ...

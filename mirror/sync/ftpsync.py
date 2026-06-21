@@ -89,12 +89,14 @@ def _apply_owner_recursive(root: Path) -> None:
         for name in dirnames + filenames:
             apply_configured_owner(base / name)
 
-def execute(package: mirror.structure.Package, logger: logging.Logger):
+def execute(package: mirror.structure.Package, logger: logging.Logger, trigger: str = "auto"):
     """Sync package via ftpsync subprocess.
 
     Args:
         package(mirror.structure.Package): Package to sync.
         logger(logging.Logger): Per-sync session logger.
+        trigger(str): Source of the sync trigger ("auto", "manual", "push").
+            Used to derive the archvsync INFO_TRIGGER trace field.
     """
     logger.info(f"Starting ftpsync for {package.name}")
 
@@ -129,9 +131,13 @@ def execute(package: mirror.structure.Package, logger: logging.Logger):
         logger.info(f"Setting up ftpsync environment in {tmp_dir}")
         setup_ftpsync(tmp_dir, package, ftpsync_log_dir, ftpsync_log_name)
 
-        command = [str(tmp_dir / "bin" / "ftpsync")]
+        # -T sets the archvsync INFO_TRIGGER trace field, recording how this run
+        # was initiated. mirror.py-driven runs report "mirror.py auto"/"mirror.py
+        # manual"; push syncs report "ssh" (upstream push origin).
+        info_trigger = _info_trigger(trigger)
+        command = [str(tmp_dir / "bin" / "ftpsync"), "-T", info_trigger]
 
-        logger.info(f"Delegating ftpsync to worker: {' '.join(command)}")
+        logger.info(f"Delegating ftpsync to worker (trigger={info_trigger}): {' '.join(command)}")
 
         env = dict(mirror.sync.get_extra_args(package.pkgid))
         mirror.socket.worker.execute_command(
@@ -173,6 +179,26 @@ def on_sync_done(package: mirror.structure.Package, logger: logging.Logger, succ
             handle.cleanup()
         except Exception as e:
             logger.warning(f"Failed to clean up ftpsync temp dir: {e}")
+
+
+_INFO_TRIGGER_MAP = {
+    "auto": "mirror.py auto",
+    "manual": "mirror.py manual",
+    "push": "ssh",
+}
+
+
+def _info_trigger(trigger: str) -> str:
+    """Map a mirror.py sync trigger to an archvsync INFO_TRIGGER value.
+
+    Args:
+        trigger(str): Sync trigger source ("auto", "manual", "push").
+
+    Return:
+        info_trigger(str): INFO_TRIGGER trace value; unknown triggers fall back
+            to "mirror.py <trigger>".
+    """
+    return _INFO_TRIGGER_MAP.get(trigger, f"mirror.py {trigger}")
 
 
 def _check_git() -> bool:
