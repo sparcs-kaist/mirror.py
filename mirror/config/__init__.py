@@ -222,13 +222,12 @@ def _serialize_current_plugin_settings() -> dict:
     """Serialize the live plugin settings back to the dict shape Config.load_from_dict expects.
 
     Return:
-        out(dict): Mapping of plugin name to {"enabled": bool, "config": dict}.
+        out(dict): Mapping of plugin name to {"enabled": bool}.
     """
     out: dict = {}
     for name, settings in (mirror.conf.plugins or {}).items():
         out[name] = {
             "enabled": getattr(settings, "enabled", True),
-            "config": getattr(settings, "config", {}),
         }
     return out
 

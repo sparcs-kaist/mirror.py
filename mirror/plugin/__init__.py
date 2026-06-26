@@ -7,14 +7,31 @@ Loading splits into two phases:
   Phase B (load_external_plugins): called from mirror.config.load() after the
     config dict has been parsed; disables config-disabled built-ins and
     discovers + registers third-party plug-ins via importlib.metadata.
+
+Per-plugin configuration is read from a JSON file in the same directory as the
+main config.json.  The default filename is ``<plugin-name>.json``.  Operators
+can override the filename per-plugin by setting ``config_filename`` on the
+PluginRecord.  The config file is read lazily by get_config() and is never
+cached, so changes take effect on the next call.
+
+The plugins block in config.json uses an enable-only shape::
+
+    {
+        "<name>": {"enabled": true}
+    }
+
+The ``config`` sub-key previously accepted in that block is no longer
+supported; move any per-plugin settings to ``<config_dir>/<name>.json``.
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Literal, Optional
 
 import mirror
@@ -66,6 +83,9 @@ class PluginRecord:
             Single-owner: only one plug-in may register this per daemon instance.
         outputs(list, optional): List of StatusOutput instances describing additional
             output files this plug-in writes on every status update.
+        config_filename(str, optional): Optional override for the per-plugin config filename.
+            Defaults to ``<name>.json`` when absent. The file is resolved relative to the
+            directory that contains the main config.json.
     """
 
     name: str
@@ -78,6 +98,7 @@ class PluginRecord:
     transform_stat_payload: Optional[Callable] = field(default=None)
     transform_web_status_payload: Optional[Callable] = field(default=None)
     outputs: Optional[list] = field(default=None)  # list[StatusOutput] — kept generic to avoid forward-ref issues
+    config_filename: Optional[str] = field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +110,7 @@ def sync_plugin(
     execute: Callable,
     on_sync_done: Optional[Callable] = None,
     setup: Optional[Callable] = None,
+    config_filename: Optional[str] = None,
 ) -> PluginRecord:
     """Build a PluginRecord for a sync plug-in with contract validation.
 
@@ -97,6 +119,8 @@ def sync_plugin(
         execute(Callable): Sync execute callable — must be provided and callable.
         on_sync_done(Callable, optional): Post-sync hook callable.
         setup(Callable, optional): Optional setup callable.
+        config_filename(str, optional): Override for the per-plugin config filename.
+            Defaults to ``<name>.json`` when absent.
 
     Return:
         record(PluginRecord): Validated sync PluginRecord.
@@ -122,15 +146,22 @@ def sync_plugin(
         execute=execute,
         on_sync_done=on_sync_done,
         setup=setup,
+        config_filename=config_filename,
     )
 
 
-def event_plugin(name: str, setup: Callable) -> PluginRecord:
+def event_plugin(
+    name: str,
+    setup: Callable,
+    config_filename: Optional[str] = None,
+) -> PluginRecord:
     """Build a PluginRecord for an event plug-in with contract validation.
 
     Args:
         name(str): Unique plug-in name.
         setup(Callable): Required setup callable that registers event listeners.
+        config_filename(str, optional): Override for the per-plugin config filename.
+            Defaults to ``<name>.json`` when absent.
 
     Return:
         record(PluginRecord): Validated event PluginRecord.
@@ -142,7 +173,7 @@ def event_plugin(name: str, setup: Callable) -> PluginRecord:
         raise TypeError(
             f"event_plugin '{name}': setup is required and must be callable, got {type(setup)!r}"
         )
-    return PluginRecord(name=name, type="event", setup=setup)
+    return PluginRecord(name=name, type="event", setup=setup, config_filename=config_filename)
 
 
 def status_plugin(
@@ -153,6 +184,7 @@ def status_plugin(
     transform_web_status_payload: Optional[Callable] = None,
     outputs: Optional[list] = None,
     setup: Optional[Callable] = None,
+    config_filename: Optional[str] = None,
 ) -> PluginRecord:
     """Build a PluginRecord for a status plug-in with contract validation.
 
@@ -164,6 +196,8 @@ def status_plugin(
         transform_web_status_payload(Callable, optional): Transforms the full web status payload dict.
         outputs(list, optional): List of StatusOutput instances for additional output files.
         setup(Callable, optional): Optional setup callable.
+        config_filename(str, optional): Override for the per-plugin config filename.
+            Defaults to ``<name>.json`` when absent.
 
     Return:
         record(PluginRecord): Validated status PluginRecord.
@@ -224,6 +258,7 @@ def status_plugin(
         transform_web_status_payload=transform_web_status_payload,
         outputs=outputs,
         setup=setup,
+        config_filename=config_filename,
     )
 
 
@@ -467,16 +502,17 @@ def load_external_plugins(plugin_settings: dict) -> None:
 
     Args:
         plugin_settings(dict): Mapping of plug-in name to PluginSettings (or
-            equivalent with .enabled bool and .config dict).  If this is a
-            plain list (legacy format) a deprecation warning is logged and the
-            function returns without doing anything.
+            equivalent with an .enabled bool).  Each entry uses the shape
+            ``{"<name>": {"enabled": true}}``.  If this is a plain list
+            (legacy format) a deprecation warning is logged and the function
+            returns without doing anything.
     """
     # Backward-compat: old config had plugins as list[str] of file paths.
     if isinstance(plugin_settings, list):
         log.warning(
             "Deprecated: 'plugins' config is a list of file paths, which is no longer "
             "supported. Update your config to use the dict format: "
-            "{\"<name>\": {\"enabled\": true, \"config\": {}}}. "
+            "{\"<name>\": {\"enabled\": true}}. "
             "No plug-ins loaded from this config."
         )
         return
@@ -577,6 +613,38 @@ def load_external_plugins(plugin_settings: dict) -> None:
 # Public utility
 # ---------------------------------------------------------------------------
 
+def _resolve_plugin_config_path(record: PluginRecord) -> "Path | None":
+    """Resolve the filesystem path for a plug-in's per-plugin config file.
+
+    The path is resolved relative to the directory containing the main
+    config.json (mirror.config.CONFIG_PATH).  Returns None if the config
+    path is unknown or if the filename fails the safety check.
+
+    Args:
+        record(PluginRecord): Registered plug-in record.
+
+    Return:
+        path(Path | None): Resolved path, or None when resolution is not possible.
+    """
+    import mirror.config
+
+    config_path = getattr(mirror.config, "CONFIG_PATH", None)
+    if config_path is None:
+        return None
+
+    filename = record.config_filename or f"{record.name}.json"
+
+    # Safety: reject traversal attempts and empty/dot names.
+    if Path(filename).name != filename or filename in ("", ".", ".."):
+        log.warning(
+            "Plug-in %r has an unsafe config_filename %r; skipping config file lookup.",
+            record.name, filename,
+        )
+        return None
+
+    return Path(config_path).parent / filename
+
+
 def get_record(name: str) -> "PluginRecord | None":
     """Return the registered PluginRecord for the given plug-in name, or None.
 
@@ -592,11 +660,18 @@ def get_record(name: str) -> "PluginRecord | None":
 def get_config(name: str) -> dict:
     """Return the per-plug-in config dict for a registered plug-in.
 
+    Config is read from a JSON file in the same directory as the main
+    config.json.  The filename defaults to ``<name>.json`` and can be
+    overridden per-plugin via PluginRecord.config_filename.  The file is
+    read on every call (no caching).
+
     Args:
         name(str): Registered plug-in name.
 
     Return:
-        config(dict): The plug-in's config dict, or an empty dict if not configured.
+        config(dict): The parsed JSON object from the plug-in config file,
+            or an empty dict if the file is absent, unreadable, or not a JSON
+            object.
 
     Raises:
         KeyError: If name is not in the registry (plug-in not loaded).
@@ -604,10 +679,26 @@ def get_config(name: str) -> dict:
     if name not in _registry:
         raise KeyError(f"No plug-in named {name!r} is registered")
 
-    plugins_map = getattr(mirror.conf, "plugins", {}) if hasattr(mirror, "conf") else {}
-    if isinstance(plugins_map, list):
+    path = _resolve_plugin_config_path(_registry[name])
+    if path is None or not path.exists():
         return {}
-    settings = plugins_map.get(name, None)
-    if settings is None:
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning(
+            "Failed to read or parse plug-in config file %r for plug-in %r: %s",
+            str(path), name, exc,
+        )
         return {}
-    return getattr(settings, "config", {}) or {}
+
+    if not isinstance(parsed, dict):
+        log.warning(
+            "Plug-in config file %r for plug-in %r must contain a JSON object, "
+            "got %s; ignoring.",
+            str(path), name, type(parsed).__name__,
+        )
+        return {}
+
+    return parsed

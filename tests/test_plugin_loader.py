@@ -1,10 +1,13 @@
 """Unit tests for the mirror.plugin two-phase loader."""
+import json
 import logging
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import mirror
+import mirror.config
 import mirror.plugin
 import mirror.sync
 from mirror.plugin import (
@@ -15,6 +18,7 @@ from mirror.plugin import (
     get_record,
     load_builtin_plugins,
     load_external_plugins,
+    status_plugin,
     sync_plugin,
 )
 from mirror.structure import PluginSettings
@@ -261,3 +265,156 @@ def test_legacy_list_plugins_config_logs_and_returns_empty(monkeypatch):
     assert parsed == {}
     assert any("Legacy 'plugins' list-of-strings shape" in msg for msg in captured), \
         f"deprecation warning not emitted; captured: {captured}"
+
+
+# ---------------------------------------------------------------------------
+# get_config — file-based config tests
+# ---------------------------------------------------------------------------
+
+def _setup_config_path(tmp_path: Path, monkeypatch) -> Path:
+    """Write a placeholder config.json and point mirror.config.CONFIG_PATH at it."""
+    config_file = tmp_path / "config.json"
+    config_file.write_text("{}")
+    monkeypatch.setattr(mirror.config, "CONFIG_PATH", config_file, raising=False)
+    return config_file
+
+
+def test_get_config_reads_plugin_json_file(tmp_path, monkeypatch):
+    """get_config reads <config_dir>/<name>.json and returns its contents."""
+    _setup_config_path(tmp_path, monkeypatch)
+    (tmp_path / "rsync.json").write_text(json.dumps({"key": "value"}))
+
+    result = get_config("rsync")
+
+    assert result == {"key": "value"}
+
+
+def test_get_config_returns_empty_dict_when_file_absent(tmp_path, monkeypatch):
+    """get_config returns {} when no per-plugin JSON file exists."""
+    _setup_config_path(tmp_path, monkeypatch)
+    # No rsync.json written — file absent.
+
+    result = get_config("rsync")
+
+    assert result == {}
+
+
+def test_get_config_returns_empty_dict_on_malformed_json(tmp_path, monkeypatch, caplog):
+    """get_config returns {} and warns when the file contains malformed JSON."""
+    _setup_config_path(tmp_path, monkeypatch)
+    (tmp_path / "rsync.json").write_text("{not valid json")
+
+    with caplog.at_level(logging.WARNING, logger="mirror"):
+        result = get_config("rsync")
+
+    assert result == {}
+    assert any("rsync" in r.message for r in caplog.records)
+
+
+def test_get_config_returns_empty_dict_on_non_dict_json(tmp_path, monkeypatch, caplog):
+    """get_config returns {} and warns when file contains a JSON array or scalar."""
+    _setup_config_path(tmp_path, monkeypatch)
+    (tmp_path / "rsync.json").write_text(json.dumps(["not", "a", "dict"]))
+
+    with caplog.at_level(logging.WARNING, logger="mirror"):
+        result = get_config("rsync")
+
+    assert result == {}
+    assert any("rsync" in r.message for r in caplog.records)
+
+
+def test_get_config_honors_config_filename_override(tmp_path, monkeypatch):
+    """get_config uses PluginRecord.config_filename when set."""
+    from mirror.plugin import _register_sync, _unregister
+
+    _setup_config_path(tmp_path, monkeypatch)
+    (tmp_path / "custom-rsync-cfg.json").write_text(json.dumps({"custom": True}))
+
+    # Temporarily override the rsync record's config_filename.
+    original_record = mirror.plugin._registry["rsync"]
+    import dataclasses
+    overridden = dataclasses.replace(original_record, config_filename="custom-rsync-cfg.json")
+    mirror.plugin._registry["rsync"] = overridden
+
+    try:
+        result = get_config("rsync")
+    finally:
+        mirror.plugin._registry["rsync"] = original_record
+
+    assert result == {"custom": True}
+
+
+def test_get_config_returns_empty_on_traversal_attempt(tmp_path, monkeypatch, caplog):
+    """get_config returns {} and warns when config_filename attempts path traversal."""
+    from mirror.plugin import _register_sync, _unregister
+
+    _setup_config_path(tmp_path, monkeypatch)
+
+    original_record = mirror.plugin._registry["rsync"]
+    import dataclasses
+    traversal_record = dataclasses.replace(original_record, config_filename="../x.json")
+    mirror.plugin._registry["rsync"] = traversal_record
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="mirror"):
+            result = get_config("rsync")
+    finally:
+        mirror.plugin._registry["rsync"] = original_record
+
+    assert result == {}
+    assert any("unsafe" in r.message for r in caplog.records)
+
+
+def test_get_config_returns_empty_on_absolute_path_config_filename(tmp_path, monkeypatch, caplog):
+    """get_config returns {} and warns when config_filename is an absolute path."""
+    _setup_config_path(tmp_path, monkeypatch)
+
+    original_record = mirror.plugin._registry["rsync"]
+    import dataclasses
+    abs_record = dataclasses.replace(original_record, config_filename="/etc/passwd")
+    mirror.plugin._registry["rsync"] = abs_record
+
+    try:
+        with caplog.at_level(logging.WARNING, logger="mirror"):
+            result = get_config("rsync")
+    finally:
+        mirror.plugin._registry["rsync"] = original_record
+
+    assert result == {}
+    assert any("unsafe" in r.message for r in caplog.records)
+
+
+def test_plugin_absent_from_config_plugins_map_stays_enabled(monkeypatch):
+    """A plug-in not mentioned in config plugins stays enabled after load_external_plugins."""
+    assert "rsync" in mirror.plugin._registry
+
+    # Pass an empty plugins map — rsync is absent, so it must remain enabled.
+    load_external_plugins({})
+
+    assert "rsync" in mirror.plugin._registry
+    assert "rsync" in mirror.sync.methods
+
+
+# ---------------------------------------------------------------------------
+# _serialize_current_plugin_settings — enable-only output
+# ---------------------------------------------------------------------------
+
+def test_serialize_current_plugin_settings_no_config_key(monkeypatch):
+    """_serialize_current_plugin_settings must produce enable-only dicts with no 'config' key."""
+    from mirror.config import _serialize_current_plugin_settings
+
+    fake_conf = MagicMock()
+    fake_conf.plugins = {
+        "rsync": PluginSettings(enabled=True),
+        "ftpsync": PluginSettings(enabled=False),
+    }
+    monkeypatch.setattr(mirror, "conf", fake_conf, raising=False)
+
+    result = _serialize_current_plugin_settings()
+
+    assert result == {
+        "rsync": {"enabled": True},
+        "ftpsync": {"enabled": False},
+    }
+    for name, entry in result.items():
+        assert "config" not in entry, f"'config' key unexpectedly present for {name}"
