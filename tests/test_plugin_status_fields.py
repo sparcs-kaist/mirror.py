@@ -431,9 +431,15 @@ def test_status_output_written_world_readable(tmp_path: Path, monkeypatch) -> No
 
 
 def test_status_output_config_path_override(tmp_path: Path, monkeypatch) -> None:
-    """When config_path_key is set and the config has that key, the override path is used."""
+    """When config_path_key is set and the per-plugin JSON file has that key, the override path is used."""
     default_file = tmp_path / "default.json"
     override_file = tmp_path / "override.json"
+
+    # Write the per-plugin config file that get_config() will read.
+    config_file = tmp_path / "config.json"
+    config_file.write_text("{}")  # main config placeholder so CONFIG_PATH parent resolves
+    plugin_cfg_file = tmp_path / "cfg-plugin.json"
+    plugin_cfg_file.write_text(json.dumps({"output_path": str(override_file)}))
 
     pkg1 = _make_package("pkg1")
     packages_mock = _make_packages("pkg1")
@@ -451,11 +457,9 @@ def test_status_output_config_path_override(tmp_path: Path, monkeypatch) -> None
     record = status_plugin(name="cfg-plugin", outputs=[output])
     _register_status(record)
 
-    conf_mock = _make_conf()
-    plugin_settings = {"cfg-plugin": PluginSettings(enabled=True, config={"output_path": str(override_file)})}
-    conf_mock.plugins = plugin_settings
+    monkeypatch.setattr(mirror.config, "CONFIG_PATH", config_file, raising=False)
     monkeypatch.setattr(mirror, "packages", packages_mock, raising=False)
-    monkeypatch.setattr(mirror, "conf", conf_mock, raising=False)
+    monkeypatch.setattr(mirror, "conf", _make_conf(), raising=False)
 
     mirror.config._write_status_outputs()
 
@@ -466,9 +470,12 @@ def test_status_output_config_path_override(tmp_path: Path, monkeypatch) -> None
 
 
 def test_status_output_config_path_key_falls_back_when_no_config_block(tmp_path: Path, monkeypatch) -> None:
-    """If config_path_key is set but the plug-in has no entry in mirror.conf.plugins,
-    the writer falls back to default_path without crashing."""
+    """If config_path_key is set but no per-plugin JSON file is present, falls back to default_path."""
     default_file = tmp_path / "default.json"
+
+    # Point CONFIG_PATH to a directory with no per-plugin file for "fallback-plug".
+    config_file = tmp_path / "config.json"
+    config_file.write_text("{}")
 
     pkg1 = _make_package("pkg1")
     packages_mock = _make_packages("pkg1")
@@ -478,17 +485,14 @@ def test_status_output_config_path_key_falls_back_when_no_config_block(tmp_path:
         name="fallback-out",
         default_path=str(default_file),
         build=lambda pkgs: {"fallback": True},
-        config_path_key="output_path",  # set but operator never configured
+        config_path_key="output_path",  # set but no per-plugin file present
     )
     record = status_plugin(name="fallback-plug", outputs=[output])
     _register_status(record)
 
-    # mirror.conf.plugins is a real (empty) dict — get_config returns {} per contract
-    # because the registered name isn't in conf.plugins.
-    conf_mock = _make_conf()
-    conf_mock.plugins = {}
+    monkeypatch.setattr(mirror.config, "CONFIG_PATH", config_file, raising=False)
     monkeypatch.setattr(mirror, "packages", packages_mock, raising=False)
-    monkeypatch.setattr(mirror, "conf", conf_mock, raising=False)
+    monkeypatch.setattr(mirror, "conf", _make_conf(), raising=False)
 
     mirror.config._write_status_outputs()
 

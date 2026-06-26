@@ -82,16 +82,21 @@ pip install ./mirror-plugin-echo
 {
   "settings": {
     "plugins": {
-      "echo": {
-        "enabled": true,
-        "config": {"prefix": "[hello-from-echo]"}
-      }
+      "echo": {"enabled": true}
     }
   }
 }
 ```
 
-If you skip this, the plug-in is enabled by default with empty config.
+Per-plugin config lives in a separate file next to `config.json`. For the
+`echo` plugin, create `/etc/mirror/echo.json`:
+
+```json
+{"prefix": "[hello-from-echo]"}
+```
+
+If you skip both, the plug-in is enabled by default with empty config (prefix
+falls back to `[echo]`).
 
 ### 4. Restart the daemon
 
@@ -225,16 +230,23 @@ def plugin():
     )
 ```
 
-Operator can override the path through plug-in config:
+Operator can override the path through the per-plugin config file.
+In `config.json`:
 
 ```json
 "plugins": {
-  "kaist-status": {
-    "enabled": true,
-    "config": {"output_path": "/var/lib/mirror/kaist-status.json"}
-  }
+  "kaist-status": {"enabled": true}
 }
 ```
+
+In `<config_dir>/kaist-status.json`:
+
+```json
+{"output_path": "/var/lib/mirror/kaist-status.json"}
+```
+
+`config_path_key` names the key (`"output_path"`) that mirror.py reads from
+the per-plugin file to override `default_path`.
 
 #### Hook ordering and isolation
 
@@ -291,11 +303,12 @@ You should not construct `PluginRecord` directly — always use the factory func
 ### Factory functions
 
 ```python
-mirror.plugin.sync_plugin(name, execute, on_sync_done=None, setup=None) -> PluginRecord
-mirror.plugin.event_plugin(name, setup) -> PluginRecord
+mirror.plugin.sync_plugin(name, execute, on_sync_done=None, setup=None,
+                         config_filename=None) -> PluginRecord
+mirror.plugin.event_plugin(name, setup, config_filename=None) -> PluginRecord
 mirror.plugin.status_plugin(name, extend_stat_fields=None, extend_web_status_fields=None,
                            transform_stat_payload=None, transform_web_status_payload=None,
-                           outputs=None, setup=None) -> PluginRecord
+                           outputs=None, setup=None, config_filename=None) -> PluginRecord
 ```
 
 Each validates its required arguments and raises `TypeError` on contract violation, so a plug-in author with a typo gets a clear error at import time.
@@ -316,21 +329,41 @@ Import via `from mirror.plugin import StatusOutput`.
 ### Lookups
 
 - `mirror.plugin.get_record(name) -> PluginRecord | None` — registered record or None.
-- `mirror.plugin.get_config(name) -> dict` — the plug-in's config block from `mirror.conf.plugins[name].config`. Returns `{}` if the operator wrote no config block. Raises `KeyError` if the name is not registered.
+- `mirror.plugin.get_config(name) -> dict` — reads `<config_dir>/<name>.json` (or the file declared by the plugin's `config_filename`). Returns `{}` if the file is missing or invalid. Raises `KeyError` if the name is not registered.
 
 ## Config schema
 
-The `plugins` value under `settings` is a map of `name -> {enabled: bool, config: dict}`:
+The `plugins` value under `settings` is an enable-only map of `name -> {enabled: bool}`:
 
 ```json
 "plugins": {
-  "echo":         { "enabled": true,  "config": {"prefix": "[echo]"} },
-  "slack-notify": { "enabled": true,  "config": {"webhook_url": "https://..."} },
-  "lftp":         { "enabled": false }
+  "echo":         {"enabled": true},
+  "slack-notify": {"enabled": true},
+  "lftp":         {"enabled": false}
 }
 ```
 
-A plug-in absent from the map defaults to `enabled: true` with empty config. Setting `enabled: false` for a built-in (`rsync`, `ftpsync`, `lftp`, `bandersnatch`, `local`) prunes it from `mirror.sync.methods`; subsequent package validation rejects packages that still reference that synctype with `ValueError("Sync type not in [...]")`.
+A plug-in absent from the map defaults to `enabled: true`. Setting `enabled: false`
+for a built-in (`rsync`, `ftpsync`, `lftp`, `bandersnatch`, `local`) prunes it from
+`mirror.sync.methods`; subsequent package validation rejects packages that still
+reference that synctype with `ValueError("Sync type not in [...]")`.
+
+Any `config` key left in `config.json` is now ignored (a warning is emitted at load
+time) and should be moved to `<name>.json` in the same directory as `config.json`.
+
+## Per-plugin config files
+
+Each plugin reads its own config from `<config_dir>/<name>.json`, where
+`<config_dir>` is the directory containing `config.json` (typically `/etc/mirror/`).
+
+- The filename defaults to `<name>.json` but can be overridden by passing
+  `config_filename="myfile.json"` to the factory helper (`sync_plugin`,
+  `event_plugin`, or `status_plugin`) when declaring the plugin.
+- `mirror.plugin.get_config(name)` returns `{}` if the file is missing or
+  contains invalid JSON — it never raises from a bad operator file.
+- The filename is restricted to a plain basename. Path traversal attempts (e.g.
+  `../x.json`, absolute paths) are rejected: `get_config` logs a warning and
+  returns `{}`.
 
 The legacy list-of-strings shape (`"plugins": ["/path/to/plugin.py", ...]`) used by older mirror.py versions is detected at load time, logged as a deprecation warning, and ignored. There is no automatic migration — operators must rewrite the config to the dict shape.
 
