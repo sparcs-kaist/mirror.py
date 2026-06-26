@@ -1,0 +1,35 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    name: Build docs and deploy to Cloudflare Pages
+    runs-on: ubuntu-latest
+    steps:
+      # SECURITY: third-party actions are pinned to full commit SHAs (not moving tags)
+      # because the deploy step handles credentials. Update SHAs when bumping versions, e.g.
+      #   curl -s https://api.github.com/repos/actions/checkout/commits/v4 | jq -r .sha
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+      - name: Set up Python
+        run: uv python install 3.10
+      - name: Build HTML docs (warnings as errors)
+        run: uv run --group docs sphinx-build -b html -W --keep-going docs docs/_build/html
+      - name: Deploy to Cloudflare Pages
+        if: github.event_name == 'push'
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd  # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy docs/_build/html --project-name=mirror-py-docs --branch=${{ github.ref_name }}

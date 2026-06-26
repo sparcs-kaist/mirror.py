@@ -16,7 +16,7 @@ A single distribution (one pip-installable package) can ship multiple plug-ins a
 
 ## Quickstart: hello-world `event` plug-in
 
-This is the smallest end-to-end plug-in. Source lives under [`examples/mirror-plugin-echo/`](../examples/mirror-plugin-echo).
+This is the smallest end-to-end plug-in. Source lives under [`examples/mirror-plugin-echo/`](https://github.com/sparcs-kaist/mirror.py/tree/main/examples/mirror-plugin-echo/).
 
 ### 1. Create the package
 
@@ -404,4 +404,4 @@ This is currently out-of-scope for the codebase but informs the design.
 
 ## Worked example
 
-See [`examples/mirror-plugin-echo/`](../examples/mirror-plugin-echo/) for a complete, installable `event` plug-in package. It logs every package status change to mirror's logger with a configurable prefix.
+See [`examples/mirror-plugin-echo/`](https://github.com/sparcs-kaist/mirror.py/tree/main/examples/mirror-plugin-echo/) for a complete, installable `event` plug-in package. It logs every package status change to mirror's logger with a configurable prefix.
