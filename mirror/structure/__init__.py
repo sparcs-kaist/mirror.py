@@ -288,12 +288,6 @@ class PluginSettings(Options):
         Return:
             settings(PluginSettings): Populated instance.
         """
-        if "config" in data:
-            mirror.log.warning(
-                "Plugin 'config' key in settings is no longer supported; "
-                "per-plugin config now lives in <config_dir>/<plugin-name>.json. "
-                "Remove the 'config' key from your plugins settings."
-            )
         known = {"enabled"}
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)
