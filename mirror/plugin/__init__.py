@@ -45,6 +45,24 @@ class StatusOutput:
 
 
 # ---------------------------------------------------------------------------
+# ConfigCreateResult
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ConfigCreateResult:
+    """Outcome of a plug-in's create_config() call.
+
+    Args:
+        path(str): Filesystem path of the plug-in's config file.
+        created(bool): True if the file was written; False if the file already
+            existed and was left untouched (skipped because --force was not given).
+    """
+
+    path: str
+    created: bool
+
+
+# ---------------------------------------------------------------------------
 # PluginRecord
 # ---------------------------------------------------------------------------
 
@@ -66,6 +84,12 @@ class PluginRecord:
             Single-owner: only one plug-in may register this per daemon instance.
         outputs(list, optional): List of StatusOutput instances describing additional
             output files this plug-in writes on every status update.
+        create_config(Callable, optional): On-demand config-file creation callable.
+            Signature create_config(force: bool) -> ConfigCreateResult. The plug-in
+            writes its own config file at a path/name it owns, reading any global
+            settings from mirror.conf and its own per-plug-in config via
+            mirror.plugin.get_config(<name>); when the file already exists and force
+            is False it skips and returns created=False.
     """
 
     name: str
@@ -78,6 +102,7 @@ class PluginRecord:
     transform_stat_payload: Optional[Callable] = field(default=None)
     transform_web_status_payload: Optional[Callable] = field(default=None)
     outputs: Optional[list] = field(default=None)  # list[StatusOutput] — kept generic to avoid forward-ref issues
+    create_config: Optional[Callable] = field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +114,7 @@ def sync_plugin(
     execute: Callable,
     on_sync_done: Optional[Callable] = None,
     setup: Optional[Callable] = None,
+    create_config: Optional[Callable] = None,
 ) -> PluginRecord:
     """Build a PluginRecord for a sync plug-in with contract validation.
 
@@ -97,6 +123,7 @@ def sync_plugin(
         execute(Callable): Sync execute callable — must be provided and callable.
         on_sync_done(Callable, optional): Post-sync hook callable.
         setup(Callable, optional): Optional setup callable.
+        create_config(Callable, optional): On-demand config-file creation callable.
 
     Return:
         record(PluginRecord): Validated sync PluginRecord.
@@ -116,21 +143,31 @@ def sync_plugin(
         raise TypeError(
             f"sync_plugin '{name}': setup must be callable or None, got {type(setup)!r}"
         )
+    if create_config is not None and not callable(create_config):
+        raise TypeError(
+            f"sync_plugin '{name}': create_config must be callable or None, got {type(create_config)!r}"
+        )
     return PluginRecord(
         name=name,
         type="sync",
         execute=execute,
         on_sync_done=on_sync_done,
         setup=setup,
+        create_config=create_config,
     )
 
 
-def event_plugin(name: str, setup: Callable) -> PluginRecord:
+def event_plugin(
+    name: str,
+    setup: Callable,
+    create_config: Optional[Callable] = None,
+) -> PluginRecord:
     """Build a PluginRecord for an event plug-in with contract validation.
 
     Args:
         name(str): Unique plug-in name.
         setup(Callable): Required setup callable that registers event listeners.
+        create_config(Callable, optional): On-demand config-file creation callable.
 
     Return:
         record(PluginRecord): Validated event PluginRecord.
@@ -142,7 +179,11 @@ def event_plugin(name: str, setup: Callable) -> PluginRecord:
         raise TypeError(
             f"event_plugin '{name}': setup is required and must be callable, got {type(setup)!r}"
         )
-    return PluginRecord(name=name, type="event", setup=setup)
+    if create_config is not None and not callable(create_config):
+        raise TypeError(
+            f"event_plugin '{name}': create_config must be callable or None, got {type(create_config)!r}"
+        )
+    return PluginRecord(name=name, type="event", setup=setup, create_config=create_config)
 
 
 def status_plugin(
@@ -153,6 +194,7 @@ def status_plugin(
     transform_web_status_payload: Optional[Callable] = None,
     outputs: Optional[list] = None,
     setup: Optional[Callable] = None,
+    create_config: Optional[Callable] = None,
 ) -> PluginRecord:
     """Build a PluginRecord for a status plug-in with contract validation.
 
@@ -164,6 +206,7 @@ def status_plugin(
         transform_web_status_payload(Callable, optional): Transforms the full web status payload dict.
         outputs(list, optional): List of StatusOutput instances for additional output files.
         setup(Callable, optional): Optional setup callable.
+        create_config(Callable, optional): On-demand config-file creation callable.
 
     Return:
         record(PluginRecord): Validated status PluginRecord.
@@ -215,6 +258,10 @@ def status_plugin(
         raise TypeError(
             f"status_plugin '{name}': setup must be callable or None, got {type(setup)!r}"
         )
+    if create_config is not None and not callable(create_config):
+        raise TypeError(
+            f"status_plugin '{name}': create_config must be callable or None, got {type(create_config)!r}"
+        )
     return PluginRecord(
         name=name,
         type="status",
@@ -224,6 +271,7 @@ def status_plugin(
         transform_web_status_payload=transform_web_status_payload,
         outputs=outputs,
         setup=setup,
+        create_config=create_config,
     )
 
 
