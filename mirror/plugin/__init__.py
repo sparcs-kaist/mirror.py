@@ -22,6 +22,25 @@ The plugins block in config.json uses an enable-only shape::
 
 The ``config`` sub-key previously accepted in that block is no longer
 supported; move any per-plugin settings to ``<config_dir>/<name>.json``.
+
+Versioning
+----------
+``PLUGIN_API_VERSION`` is a ``(major, minor)`` tuple that describes the
+plug-in contract implemented by this core release.
+
+- **major** increments on breaking changes (calling convention, factory surface,
+  entry-point groups, plug-in types).  A plug-in whose declared major differs
+  from the core major is skipped at load time.
+- **minor** increments on additive, backward-compatible changes (new optional
+  hook, new optional field).  A plug-in whose declared minor is *greater* than
+  the core minor is also skipped (it was built against features the core does not
+  yet provide).  An older plug-in (declared minor <= core minor) continues to load.
+
+Plug-ins declare their target version via the ``api_version`` parameter of the
+factory helpers (``sync_plugin``, ``event_plugin``, ``status_plugin``).  The
+gate is applied only to external plug-ins loaded in Phase B; built-ins are
+loaded ungated in Phase A because they ship in lockstep with the core.  A plug-in
+that omits ``api_version`` (``None``) still loads but emits a deprecation warning.
 """
 
 from __future__ import annotations
@@ -110,6 +129,9 @@ class PluginRecord:
         config_filename(str, optional): Optional override for the per-plugin config filename.
             Defaults to ``<name>.json`` when absent. The file is resolved relative to the
             directory that contains the main config.json.
+        api_version(tuple, optional): ``(major, minor)`` API version this plug-in was built
+            against.  Compared against ``PLUGIN_API_VERSION`` at load time for external
+            plug-ins.  ``None`` means undeclared (loads with a deprecation warning).
     """
 
     name: str
@@ -124,11 +146,70 @@ class PluginRecord:
     outputs: Optional[list] = field(default=None)  # list[StatusOutput] — kept generic to avoid forward-ref issues
     create_config: Optional[Callable] = field(default=None)
     config_filename: Optional[str] = field(default=None)
+    api_version: Optional[tuple[int, int]] = field(default=None)
 
 
 # ---------------------------------------------------------------------------
 # Factory helpers
 # ---------------------------------------------------------------------------
+
+def _normalize_api_version(name: str, api_version) -> Optional[tuple[int, int]]:
+    """Return a normalized (major, minor) tuple, or None if api_version is None."""
+    if api_version is None:
+        return None
+    if not isinstance(api_version, (tuple, list)) or len(api_version) != 2:
+        raise TypeError(
+            f"plug-in '{name}': api_version must be a 2-element tuple or list, "
+            f"got {type(api_version)!r}"
+        )
+    major, minor = api_version
+    # Reject bool, which is a subclass of int.
+    if isinstance(major, bool) or not isinstance(major, int):
+        raise TypeError(
+            f"plug-in '{name}': api_version major must be an int (not bool), "
+            f"got {type(major)!r}"
+        )
+    if isinstance(minor, bool) or not isinstance(minor, int):
+        raise TypeError(
+            f"plug-in '{name}': api_version minor must be an int (not bool), "
+            f"got {type(minor)!r}"
+        )
+    if major < 1:
+        raise ValueError(
+            f"plug-in '{name}': api_version major must be >= 1, got {major!r}"
+        )
+    if minor < 0:
+        raise ValueError(
+            f"plug-in '{name}': api_version minor must be >= 0, got {minor!r}"
+        )
+    return (major, minor)
+
+
+def _is_api_compatible(name: str, api_version: Optional[tuple[int, int]]) -> bool:
+    """Return True if the already-normalized api_version is compatible with PLUGIN_API_VERSION."""
+    if api_version is None:
+        log.warning(
+            "Plug-in %r does not declare api_version; loading with deprecation warning. "
+            "Declare api_version=%r in the factory call to suppress this warning.",
+            name, PLUGIN_API_VERSION,
+        )
+        return True
+    if api_version[0] != PLUGIN_API_VERSION[0]:
+        log.warning(
+            "Plug-in %r declared api_version major %d but core supports major %d; "
+            "skipping (incompatible breaking version).",
+            name, api_version[0], PLUGIN_API_VERSION[0],
+        )
+        return False
+    if api_version[1] > PLUGIN_API_VERSION[1]:
+        log.warning(
+            "Plug-in %r declared api_version minor %d but core only supports minor %d; "
+            "skipping (plug-in requires a newer core).",
+            name, api_version[1], PLUGIN_API_VERSION[1],
+        )
+        return False
+    return True
+
 
 def sync_plugin(
     name: str,
@@ -137,6 +218,7 @@ def sync_plugin(
     setup: Optional[Callable] = None,
     create_config: Optional[Callable] = None,
     config_filename: Optional[str] = None,
+    api_version: Optional[tuple[int, int]] = None,
 ) -> PluginRecord:
     """Build a PluginRecord for a sync plug-in with contract validation.
 
@@ -148,12 +230,15 @@ def sync_plugin(
         create_config(Callable, optional): On-demand config-file creation callable.
         config_filename(str, optional): Override for the per-plugin config filename.
             Defaults to ``<name>.json`` when absent.
+        api_version(tuple, optional): ``(major, minor)`` API version this plug-in targets.
+            Validated and stored on the returned PluginRecord.
 
     Return:
         record(PluginRecord): Validated sync PluginRecord.
 
     Raises:
-        TypeError: If execute is missing or not callable.
+        TypeError: If execute is missing or not callable, or api_version has wrong type/shape.
+        ValueError: If api_version has out-of-range major or minor.
     """
     if execute is None or not callable(execute):
         raise TypeError(
@@ -171,6 +256,7 @@ def sync_plugin(
         raise TypeError(
             f"sync_plugin '{name}': create_config must be callable or None, got {type(create_config)!r}"
         )
+    norm_api_version = _normalize_api_version(name, api_version)
     return PluginRecord(
         name=name,
         type="sync",
@@ -179,6 +265,7 @@ def sync_plugin(
         setup=setup,
         create_config=create_config,
         config_filename=config_filename,
+        api_version=norm_api_version,
     )
 
 
@@ -187,6 +274,7 @@ def event_plugin(
     setup: Callable,
     create_config: Optional[Callable] = None,
     config_filename: Optional[str] = None,
+    api_version: Optional[tuple[int, int]] = None,
 ) -> PluginRecord:
     """Build a PluginRecord for an event plug-in with contract validation.
 
@@ -196,12 +284,15 @@ def event_plugin(
         create_config(Callable, optional): On-demand config-file creation callable.
         config_filename(str, optional): Override for the per-plugin config filename.
             Defaults to ``<name>.json`` when absent.
+        api_version(tuple, optional): ``(major, minor)`` API version this plug-in targets.
+            Validated and stored on the returned PluginRecord.
 
     Return:
         record(PluginRecord): Validated event PluginRecord.
 
     Raises:
-        TypeError: If setup is missing or not callable.
+        TypeError: If setup is missing or not callable, or api_version has wrong type/shape.
+        ValueError: If api_version has out-of-range major or minor.
     """
     if setup is None or not callable(setup):
         raise TypeError(
@@ -211,12 +302,14 @@ def event_plugin(
         raise TypeError(
             f"event_plugin '{name}': create_config must be callable or None, got {type(create_config)!r}"
         )
+    norm_api_version = _normalize_api_version(name, api_version)
     return PluginRecord(
         name=name,
         type="event",
         setup=setup,
         create_config=create_config,
         config_filename=config_filename,
+        api_version=norm_api_version,
     )
 
 
@@ -230,6 +323,7 @@ def status_plugin(
     setup: Optional[Callable] = None,
     create_config: Optional[Callable] = None,
     config_filename: Optional[str] = None,
+    api_version: Optional[tuple[int, int]] = None,
 ) -> PluginRecord:
     """Build a PluginRecord for a status plug-in with contract validation.
 
@@ -244,6 +338,8 @@ def status_plugin(
         create_config(Callable, optional): On-demand config-file creation callable.
         config_filename(str, optional): Override for the per-plugin config filename.
             Defaults to ``<name>.json`` when absent.
+        api_version(tuple, optional): ``(major, minor)`` API version this plug-in targets.
+            Validated and stored on the returned PluginRecord.
 
     Return:
         record(PluginRecord): Validated status PluginRecord.
@@ -251,7 +347,8 @@ def status_plugin(
     Raises:
         TypeError: If none of extend_*, transform_*, or outputs is provided,
             or if any callable argument is not actually callable, or if outputs
-            items are not StatusOutput instances.
+            items are not StatusOutput instances, or if api_version has wrong type/shape.
+        ValueError: If api_version has out-of-range major or minor.
     """
     has_outputs = outputs is not None and len(outputs) > 0
     if (
@@ -299,6 +396,7 @@ def status_plugin(
         raise TypeError(
             f"status_plugin '{name}': create_config must be callable or None, got {type(create_config)!r}"
         )
+    norm_api_version = _normalize_api_version(name, api_version)
     return PluginRecord(
         name=name,
         type="status",
@@ -310,12 +408,15 @@ def status_plugin(
         setup=setup,
         create_config=create_config,
         config_filename=config_filename,
+        api_version=norm_api_version,
     )
 
 
 # ---------------------------------------------------------------------------
 # Module-level state
 # ---------------------------------------------------------------------------
+
+PLUGIN_API_VERSION: tuple[int, int] = (1, 0)
 
 _registry: dict[str, PluginRecord] = {}
 _BUILTIN_NAMES: set[str] = set()
@@ -633,6 +734,18 @@ def load_external_plugins(plugin_settings: dict) -> None:
                     "skipping.",
                     ep.name, group, type(record),
                 )
+                continue
+
+            try:
+                norm = _normalize_api_version(ep.name, record.api_version)
+            except (TypeError, ValueError) as exc:
+                log.warning(
+                    "External plug-in %r has a malformed api_version: %s; skipping.",
+                    ep.name, exc,
+                )
+                continue
+
+            if not _is_api_compatible(ep.name, norm):
                 continue
 
             try:
