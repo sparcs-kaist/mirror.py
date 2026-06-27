@@ -11,6 +11,8 @@ import mirror.config
 import mirror.plugin
 import mirror.sync
 from mirror.plugin import (
+    PLUGIN_API_VERSION,
+    PluginRecord,
     _register_event,
     _register_sync,
     event_plugin,
@@ -398,6 +400,213 @@ def test_plugin_absent_from_config_plugins_map_stays_enabled(monkeypatch):
 # ---------------------------------------------------------------------------
 # _serialize_current_plugin_settings — enable-only output
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# api_version: factory stores normalized value on PluginRecord
+# ---------------------------------------------------------------------------
+
+def test_sync_plugin_stores_api_version_tuple():
+    """sync_plugin stores the normalized api_version on the returned PluginRecord."""
+    record = sync_plugin(name="test-sync-ver", execute=lambda pkg, log: None, api_version=(1, 0))
+    assert record.api_version == PLUGIN_API_VERSION
+
+
+def test_event_plugin_stores_api_version_tuple():
+    """event_plugin stores the normalized api_version on the returned PluginRecord."""
+    record = event_plugin(name="test-event-ver", setup=lambda: None, api_version=(1, 0))
+    assert record.api_version == PLUGIN_API_VERSION
+
+
+def test_status_plugin_stores_api_version_tuple():
+    """status_plugin stores the normalized api_version on the returned PluginRecord."""
+    record = status_plugin(
+        name="test-status-ver",
+        extend_stat_fields=lambda pkg: {},
+        api_version=(1, 0),
+    )
+    assert record.api_version == PLUGIN_API_VERSION
+
+
+def test_factory_normalizes_list_to_tuple():
+    """A list [1, 0] passed as api_version is normalized to the tuple (1, 0)."""
+    record = sync_plugin(name="test-list-ver", execute=lambda pkg, log: None, api_version=[1, 0])
+    assert record.api_version == (1, 0)
+    assert isinstance(record.api_version, tuple)
+
+
+def test_factory_none_api_version_stores_none():
+    """Omitting api_version leaves it as None on the record (no deprecation at factory time)."""
+    record = sync_plugin(name="test-none-ver", execute=lambda pkg, log: None)
+    assert record.api_version is None
+
+
+# ---------------------------------------------------------------------------
+# api_version: factory rejects malformed values
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad_value", ["1", 1, 1.0])
+def test_factory_rejects_non_sequence_api_version(bad_value):
+    """sync_plugin raises TypeError when api_version is not a tuple or list."""
+    with pytest.raises(TypeError):
+        sync_plugin(name="test-bad", execute=lambda pkg, log: None, api_version=bad_value)
+
+
+def test_factory_rejects_wrong_length_api_version():
+    """sync_plugin raises TypeError when api_version has more than 2 elements."""
+    with pytest.raises(TypeError):
+        sync_plugin(name="test-bad", execute=lambda pkg, log: None, api_version=(1, 0, 0))
+
+
+@pytest.mark.parametrize("bad_value", [(True, 0), (1, True)])
+def test_factory_rejects_bool_elements_in_api_version(bad_value):
+    """sync_plugin raises TypeError when api_version contains bool elements."""
+    with pytest.raises(TypeError):
+        sync_plugin(name="test-bad", execute=lambda pkg, log: None, api_version=bad_value)
+
+
+@pytest.mark.parametrize("bad_value", [("1", 0), (1, 0.0)])
+def test_factory_rejects_non_int_elements_in_api_version(bad_value):
+    """sync_plugin raises TypeError when api_version contains non-int elements."""
+    with pytest.raises(TypeError):
+        sync_plugin(name="test-bad", execute=lambda pkg, log: None, api_version=bad_value)
+
+
+def test_factory_rejects_major_less_than_one():
+    """sync_plugin raises ValueError when api_version major < 1."""
+    with pytest.raises(ValueError):
+        sync_plugin(name="test-bad", execute=lambda pkg, log: None, api_version=(0, 5))
+
+
+def test_factory_rejects_negative_minor():
+    """sync_plugin raises ValueError when api_version minor < 0."""
+    with pytest.raises(ValueError):
+        sync_plugin(name="test-bad", execute=lambda pkg, log: None, api_version=(1, -1))
+
+
+# ---------------------------------------------------------------------------
+# load_external_plugins: api_version gate
+# ---------------------------------------------------------------------------
+
+def test_external_plugin_matching_api_version_registers():
+    """External plug-in with api_version == PLUGIN_API_VERSION registers normally."""
+    def fake_execute(pkg, logger):
+        pass
+
+    def fake_factory():
+        return sync_plugin(name="versioned-ok", execute=fake_execute, api_version=PLUGIN_API_VERSION)
+
+    ep = _make_fake_entry_point("versioned-ok", "mirror.sync", fake_factory)
+
+    def fake_entry_points(*, group):
+        return [ep] if group == "mirror.sync" else []
+
+    with patch("mirror.plugin.importlib.metadata.entry_points", fake_entry_points):
+        load_external_plugins({})
+
+    assert "versioned-ok" in mirror.plugin._registry
+    assert "versioned-ok" in mirror.sync.methods
+
+
+def test_external_plugin_wrong_major_is_skipped(caplog):
+    """External plug-in with a different major is skipped and a warning is logged."""
+    def fake_execute(pkg, logger):
+        pass
+
+    def fake_factory():
+        return sync_plugin(name="wrong-major", execute=fake_execute, api_version=(2, 0))
+
+    ep = _make_fake_entry_point("wrong-major", "mirror.sync", fake_factory)
+
+    def fake_entry_points(*, group):
+        return [ep] if group == "mirror.sync" else []
+
+    with caplog.at_level(logging.WARNING, logger="mirror"):
+        with patch("mirror.plugin.importlib.metadata.entry_points", fake_entry_points):
+            load_external_plugins({})
+
+    assert "wrong-major" not in mirror.plugin._registry
+    assert "wrong-major" not in mirror.sync.methods
+    assert any("wrong-major" in r.message for r in caplog.records)
+
+
+def test_external_plugin_newer_minor_is_skipped(caplog):
+    """External plug-in with minor > core minor is skipped and a warning is logged."""
+    def fake_execute(pkg, logger):
+        pass
+
+    # api_version (1, 1) while PLUGIN_API_VERSION is (1, 0)
+    def fake_factory():
+        return sync_plugin(name="newer-minor", execute=fake_execute, api_version=(1, 1))
+
+    ep = _make_fake_entry_point("newer-minor", "mirror.sync", fake_factory)
+
+    def fake_entry_points(*, group):
+        return [ep] if group == "mirror.sync" else []
+
+    with caplog.at_level(logging.WARNING, logger="mirror"):
+        with patch("mirror.plugin.importlib.metadata.entry_points", fake_entry_points):
+            load_external_plugins({})
+
+    assert "newer-minor" not in mirror.plugin._registry
+    assert "newer-minor" not in mirror.sync.methods
+    assert any("newer-minor" in r.message for r in caplog.records)
+
+
+def test_external_plugin_none_api_version_registers_with_deprecation_warning(caplog):
+    """External plug-in with api_version=None registers but emits a deprecation warning."""
+    def fake_execute(pkg, logger):
+        pass
+
+    def fake_factory():
+        return sync_plugin(name="undeclared-ver", execute=fake_execute, api_version=None)
+
+    ep = _make_fake_entry_point("undeclared-ver", "mirror.sync", fake_factory)
+
+    def fake_entry_points(*, group):
+        return [ep] if group == "mirror.sync" else []
+
+    with caplog.at_level(logging.WARNING, logger="mirror"):
+        with patch("mirror.plugin.importlib.metadata.entry_points", fake_entry_points):
+            load_external_plugins({})
+
+    assert "undeclared-ver" in mirror.plugin._registry
+    assert "undeclared-ver" in mirror.sync.methods
+    assert any("undeclared-ver" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# load_external_plugins: malformed PluginRecord bypassing factory helpers
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad_api_version", [1, (True, 0), (1, 0, 0)])
+def test_external_plugin_malformed_direct_record_is_skipped_fail_soft(bad_api_version, caplog):
+    """Entry point returning PluginRecord with malformed api_version is skipped, no exception raised."""
+    def fake_execute(pkg, logger):
+        pass
+
+    bad_record = PluginRecord(
+        name="malformed-direct",
+        type="sync",
+        execute=fake_execute,
+        api_version=bad_api_version,
+    )
+
+    def fake_factory():
+        return bad_record
+
+    ep = _make_fake_entry_point("malformed-direct", "mirror.sync", fake_factory)
+
+    def fake_entry_points(*, group):
+        return [ep] if group == "mirror.sync" else []
+
+    with caplog.at_level(logging.WARNING, logger="mirror"):
+        with patch("mirror.plugin.importlib.metadata.entry_points", fake_entry_points):
+            load_external_plugins({})
+
+    assert "malformed-direct" not in mirror.plugin._registry
+    assert "malformed-direct" not in mirror.sync.methods
+    assert any("malformed-direct" in r.message for r in caplog.records)
+
 
 def test_serialize_current_plugin_settings_no_config_key(monkeypatch):
     """_serialize_current_plugin_settings must produce enable-only dicts with no 'config' key."""
