@@ -5,3 +5,4 @@ from .worker import worker as worker
 from .push import push as push
 from .tui import tui as tui
 from .worker_execute import worker_execute_group as worker_execute_group
+from .plugin import plugin_group as plugin_group
