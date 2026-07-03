@@ -24,6 +24,45 @@ _start_lock = threading.Lock()
 _extra_args: dict[str, dict[str, str]] = {}
 _watchdog_fired: set[str] = set()
 
+# Standalone mode: when True, on_sync_done short-circuits to avoid any
+# stat/web/status persistence, and execute_command runs in-process instead
+# of delegating to the worker socket.
+_standalone_mode: bool = False
+_standalone_result: dict[str, tuple[bool, Optional[int]]] = {}
+
+
+def set_standalone_mode(enabled: bool) -> None:
+    """Enable or disable standalone execution mode.
+
+    In standalone mode, on_sync_done records the result but does NOT write
+    stat.json, status.json, or mutate package status. execute_command runs
+    the subprocess in the foreground without a worker socket.
+
+    Enabling standalone mode clears any previously recorded results so a reused
+    pkgid cannot read a stale result from an earlier in-process run (e.g. a run
+    that raises before on_sync_done would otherwise see the prior success).
+
+    Args:
+        enabled(bool): True to activate standalone mode, False to deactivate.
+    """
+    global _standalone_mode
+    _standalone_mode = enabled
+    if enabled:
+        _standalone_result.clear()
+
+
+def get_standalone_result(pkgid: str) -> Optional[tuple[bool, Optional[int]]]:
+    """Return the recorded standalone sync result for a package, if any.
+
+    Args:
+        pkgid(str): Package identifier.
+
+    Return:
+        result(tuple, optional): (success, returncode) tuple, or None if no
+            result has been recorded for this pkgid.
+    """
+    return _standalone_result.get(pkgid)
+
 
 def get_module(method: str) -> Callable:
     """Return the loaded sync module for the given method name.
@@ -260,6 +299,19 @@ def on_sync_done(pkgid: str, success: bool, returncode: Optional[int]) -> None:
     """
     import mirror.sync
     import mirror.config
+
+    if _standalone_mode:
+        _standalone_result[pkgid] = (success, returncode)
+        try:
+            package = mirror.packages.get(pkgid)
+            import mirror.plugin
+            record = mirror.plugin.get_record(package.synctype) if package else None
+            hook = getattr(record, "on_sync_done", None) if record else None
+            if hook and package:
+                hook(package, mirror.log, success, returncode)
+        except Exception as exc:
+            mirror.log.warning("standalone on_sync_done cleanup failed: %s" % exc)
+        return
 
     with mirror.config._reload_state_lock:
         package = mirror.packages.get(pkgid)

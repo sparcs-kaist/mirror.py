@@ -474,6 +474,22 @@ def execute_command(
     socket_path: Optional[Path | str] = None,
 ) -> dict:
     """Execute a shell command via the persistent or a temporary client"""
+    import mirror.sync
+    if mirror.sync._standalone_mode:
+        import mirror.worker.process as process
+        rc = process.run_foreground(
+            job_id,
+            commandline,
+            env,
+            uid,
+            gid,
+            nice,
+            Path(log_path) if log_path else None,
+            log_helper_command,
+        )
+        mirror.sync.on_sync_done(job_id, success=(rc == 0), returncode=rc)
+        return {"job_id": job_id, "sync_method": sync_method, "status": "finished", "returncode": rc}
+
     if uid is None or gid is None:
         raise ValueError("execute_command requires explicit uid and gid")
     with _worker_client(socket_path) as c:
