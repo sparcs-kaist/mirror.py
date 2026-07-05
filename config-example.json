@@ -143,6 +143,26 @@
                 "dst": "/srv/ftp/ubuntu",
                 "options": {}
             }
+        },
+        "debmirror-debian": {
+            "name": "Debian (debmirror)", "id": "debmirror-debian",
+            "href": "/debmirror/debian", "synctype": "debmirror", "syncrate": "PT6H",
+            "link": [{ "rel": "HOME", "href": "https://www.debian.org" }],
+            "settings": {
+                "hidden": false,
+                "src": "http://deb.debian.org/debian",
+                "dst": "/srv/ftp/debmirror-debian",
+                "options": {
+                    "dist": ["bookworm", "bookworm-updates", "bookworm-security"],
+                    "section": "main,contrib,non-free,non-free-firmware",
+                    "arch": "amd64",
+                    "source": false,
+                    "check_gpg": true,
+                    "keyring": "/usr/share/keyrings/debian-archive-keyring.gpg",
+                    "cleanup": "postcleanup",
+                    "rsync_extra": "none"
+                }
+            }
         }
     }
 }
