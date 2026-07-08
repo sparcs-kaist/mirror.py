@@ -9,8 +9,8 @@ import logging
 import subprocess
 from pathlib import Path
 
-_DEFAULT_RSYNC_FLAGS = "vrltDSH"
-_SAFE_RSYNC_FLAGS = "vrlptDSHaznhPxWENcimub"
+_DEFAULT_RSYNC_FLAGS = "vrltDH"
+_SAFE_RSYNC_FLAGS = "vrlptDHaznhPxWENcimub"
 
 
 def _validate_flag_option(value, name: str, whitelist: str | None = None) -> str:
