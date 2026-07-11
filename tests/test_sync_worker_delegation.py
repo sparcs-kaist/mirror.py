@@ -302,7 +302,7 @@ class TestRsyncOptions(unittest.TestCase):
         command, _ = self._call_rsync(option_include="z")
         flags_arg = command[1]
         self.assertIn("z", flags_arg)
-        self.assertTrue(flags_arg.startswith("-vrltDSH"))
+        self.assertTrue(flags_arg.startswith("-vrltDH"))
         self.assertTrue(flags_arg.endswith("z"))
 
     def test_option_include_no_duplicate(self):
@@ -320,7 +320,7 @@ class TestRsyncOptions(unittest.TestCase):
 
     def test_default_options_unchanged(self):
         command, _ = self._call_rsync()
-        self.assertIn("-vrltDSH", command)
+        self.assertIn("-vrltDH", command)
 
     def test_option_exclude_all_flags_no_lone_dash(self):
         # Remove every default flag character; no lone "-" should appear in argv
