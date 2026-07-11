@@ -156,6 +156,7 @@ def _build_lftp_script(src: str, dst: str, options: dict) -> str:
     clean_options = _validate_lftp_options(options)
 
     settings = [
+        "set ftp:anon-user anonymous",
         f"set ftp:anon-pass mirror@{host}",
         "set cmd:verbose yes",
         f"set net:max-retries {clean_options['max_retries']}",
