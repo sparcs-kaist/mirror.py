@@ -9,7 +9,7 @@ from prompt_toolkit.shortcuts import print_formatted_text
 from mirror.config.config import DEFAULT_CONFIG
 from mirror.toolbox import command_exists
 
-_REQUIRED_BINARIES = ["rsync", "lftp", "bandersnatch"]
+_REQUIRED_BINARIES = ["rsync", "lftp", "bandersnatch", "apt-mirror"]
 _OPTIONAL_BINARIES = ["git"]
 
 _DIRECTORIES = [

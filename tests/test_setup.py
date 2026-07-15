@@ -72,7 +72,7 @@ def test_setup_aborts_when_not_linux(monkeypatch, tmp_path):
         assert not d.exists()
 
 
-@pytest.mark.parametrize("missing", ["rsync", "lftp", "bandersnatch"])
+@pytest.mark.parametrize("missing", ["rsync", "lftp", "bandersnatch", "apt-mirror"])
 def test_setup_fails_on_missing_required_binary(monkeypatch, tmp_path, capsys, missing):
     _redirect_paths(monkeypatch, tmp_path)
     monkeypatch.setattr(setup_mod, "print_formatted_text", print)
@@ -276,7 +276,7 @@ def test_required_directories_are_declared():
 
 def test_required_binaries_are_declared():
     fresh = importlib.reload(importlib.import_module("mirror.command.setup"))
-    assert set(fresh._REQUIRED_BINARIES) == {"rsync", "lftp", "bandersnatch"}
+    assert set(fresh._REQUIRED_BINARIES) == {"rsync", "lftp", "bandersnatch", "apt-mirror"}
 
 
 def test_next_steps_edit_config_before_enable_when_fresh(monkeypatch, tmp_path, capsys):

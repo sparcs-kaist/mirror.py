@@ -34,8 +34,8 @@ def _ensure_builtins_loaded():
 
 
 def test_builtin_methods_present():
-    """All seven built-in sync types must be registered after phase A."""
-    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo"}
+    """All eight built-in sync types must be registered after phase A."""
+    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo", "apt-mirror"}
     assert expected == set(mirror.sync.methods), (
         f"Expected {expected}, got {set(mirror.sync.methods)}"
     )
@@ -52,7 +52,7 @@ def test_rsync_record_is_valid():
 
 def test_all_builtin_records_have_execute():
     """Every built-in sync plug-in must expose a callable execute."""
-    for name in ("rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo"):
+    for name in ("rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo", "apt-mirror"):
         record = mirror.plugin.get_record(name)
         assert record is not None, f"{name} not in registry"
         assert callable(record.execute), f"{name}.execute not callable"
