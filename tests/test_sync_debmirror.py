@@ -3,6 +3,7 @@
 import logging
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -236,18 +237,69 @@ def test_build_command_rsync_src_parsing():
     assert argv[argv.index("--root") + 1] == "debian"
 
 
-def test_build_command_file_src_requires_host_override():
-    pkg = _make_pkg(src="file:///srv/repo/debian", options={"dist": "bookworm", "host": "localhost"})
+def test_build_command_file_src_without_host():
+    pkg = _make_pkg(src="file:///srv/repo/debian", options={"dist": "bookworm"})
     argv, _ = build_command(pkg)
     assert argv[argv.index("--method") + 1] == "file"
-    assert argv[argv.index("--host") + 1] == "localhost"
-    assert argv[argv.index("--root") + 1] == "srv/repo/debian"
+    assert "--host" not in argv
+    assert argv[argv.index("--root") + 1] == "/srv/repo/debian"
 
 
-def test_build_command_file_src_without_host_override_raises():
-    pkg = _make_pkg(src="file:///srv/repo/debian", options={"dist": "bookworm"})
+def test_build_command_file_localhost_and_percent_decoding():
+    pkg = _make_pkg(src="file://localhost/srv/repo/debian%20archive")
+    argv, _ = build_command(pkg)
+    assert "--host" not in argv
+    assert argv[argv.index("--root") + 1] == "/srv/repo/debian archive"
+
+
+@pytest.mark.parametrize("src", [
+    "file:relative/repo",
+    "file://localhost",
+    "file://remote.example/srv/repo",
+    "file:///srv/repo?mode=test",
+    "file:///srv/repo#fragment",
+    "file:///srv/repo%ZZ",
+    "file:///srv/repo%",
+    "file:///srv/repo%00bad",
+    "file:///srv/repo%0Abad",
+])
+def test_build_command_rejects_invalid_file_src(src):
+    with pytest.raises(ValueError):
+        build_command(_make_pkg(src=src))
+
+
+def test_build_command_file_root_absolute_override():
+    pkg = _make_pkg(src="file:///ignored", options={"dist": "bookworm", "root": "/srv/repo"})
+    argv, _ = build_command(pkg)
+    assert argv[argv.index("--root") + 1] == "/srv/repo"
+
+
+def test_build_command_file_rejects_host_option():
+    pkg = _make_pkg(src="file:///srv/repo", options={"dist": "bookworm", "host": "localhost"})
     with pytest.raises(ValueError):
         build_command(pkg)
+
+
+def test_build_command_file_rejects_non_file_source_override():
+    pkg = _make_pkg(
+        src="https://deb.debian.org/debian",
+        options={"dist": "bookworm", "method": "file", "root": "/srv/repo"},
+    )
+    with pytest.raises(ValueError):
+        build_command(pkg)
+
+
+def test_build_command_file_rejects_relative_root_override():
+    pkg = _make_pkg(src="file:///ignored", options={"dist": "bookworm", "root": "relative/repo"})
+    with pytest.raises(ValueError):
+        build_command(pkg)
+
+
+def test_build_command_disables_default_config_files():
+    argv, _ = build_command(_make_pkg())
+    config_path = Path(argv[argv.index("--config-file") + 1])
+    assert config_path.name == "debmirror-empty.conf"
+    assert config_path.read_text(encoding="utf-8").rstrip().endswith("1;")
 
 
 def test_build_command_src_option_overrides():

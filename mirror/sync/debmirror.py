@@ -6,12 +6,10 @@ build_command() and delegated to the worker via
 mirror.socket.worker.execute_command(). There is no temp dir and no
 on_sync_done cleanup hook (nothing to clean up).
 
-Note: debmirror auto-reads /etc/debmirror.conf and ~/.debmirror.conf when
-present on the host, so behavior can vary by machine. The argv assembled by
-build_command() is intentionally authoritative: every mirror-relevant option
-(method, host, root, dist, arch, cleanup mode, GPG check) is always emitted
-explicitly on the command line, so a stray host-level debmirror.conf cannot
-silently override the configured sync target.
+Debmirror normally auto-reads /etc/debmirror.conf and ~/.debmirror.conf.
+build_command() passes a bundled empty config file so package settings remain
+authoritative. Other process environment, such as proxy and GNUPGHOME
+variables, is intentionally inherited by the worker.
 """
 
 import logging
@@ -37,6 +35,8 @@ _METHODS = {"ftp", "http", "https", "rsync", "file"}
 _CLEANUP_MODES = {"postcleanup", "precleanup", "nocleanup"}
 _DIFF_MODES = {"use", "mirror", "none"}
 _RSYNC_EXTRA_CHOICES = {"doc", "indices", "tools", "trace", "none"}
+_EMPTY_CONFIG_PATH = Path(__file__).with_name("debmirror-empty.conf")
+_MALFORMED_PERCENT_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 
 
 def setup(path: Path, package: mirror.structure.Package) -> None:
@@ -127,7 +127,17 @@ def _extend_filter_args(argv: list, opts: dict, key: str, flag: str) -> None:
         argv.extend([flag, _no_ctrl(item, key)])
 
 
-def _parse_src(src: str, opts: dict) -> tuple[str, str, str]:
+def _validate_file_root(root: str) -> str:
+    """Validate an absolute local archive root for debmirror's file method."""
+    if not isinstance(root, str):
+        raise ValueError(f"debmirror root: must be a string, got {type(root)!r}")
+    root = _no_ctrl(root, "root")
+    if not root or not Path(root).is_absolute():
+        raise ValueError(f"debmirror root: file method requires an absolute path, got {root!r}")
+    return root
+
+
+def _parse_src(src: str, opts: dict) -> tuple[str, str | None, str]:
     """Resolve (method, host, root) from the package src URL, with per-field option overrides.
 
     Args:
@@ -136,7 +146,7 @@ def _parse_src(src: str, opts: dict) -> tuple[str, str, str]:
             corresponding value parsed from src.
 
     Return:
-        parsed(tuple[str, str, str]): Validated (method, host, root).
+        parsed(tuple[str, str | None, str]): Validated (method, host, root).
 
     Raises:
         ValueError: A part cannot be resolved from src or options, or fails validation.
@@ -148,6 +158,22 @@ def _parse_src(src: str, opts: dict) -> tuple[str, str, str]:
         raise ValueError("debmirror method: could not be resolved from src or options.method")
     method = _validate_token(method, "method", _METHOD_TOKEN_RE)
     _validate_enum(method, _METHODS, "method")
+
+    if method == "file":
+        if parsed is None or parsed.scheme != "file":
+            raise ValueError("debmirror src: file method requires a file: URL")
+        if "host" in opts:
+            raise ValueError("debmirror host: options.host is not supported for file method")
+        if parsed.netloc and parsed.netloc.lower() != "localhost":
+            raise ValueError("debmirror host: file URL authority must be empty or localhost")
+        if parsed.query or parsed.fragment:
+            raise ValueError("debmirror src: file URL must not contain a query or fragment")
+        if _MALFORMED_PERCENT_RE.search(parsed.path):
+            raise ValueError("debmirror src: file URL contains malformed percent escape")
+
+        root_opt = opts.get("root")
+        root = root_opt if root_opt is not None else urllib.parse.unquote(parsed.path)
+        return method, None, _validate_file_root(root)
 
     host = opts.get("host") or (parsed.netloc if parsed else None)
     if not host:
@@ -187,7 +213,13 @@ def build_command(package: mirror.structure.Package) -> tuple[list, dict]:
         raise ValueError("debmirror dist: option is required")
     dist = _join_multi(dist_opt, "dist", _DIST_RE)
 
-    argv = ["debmirror", "--verbose", "--method", method, "--host", host, "--root", root, "--dist", dist]
+    argv = [
+        "debmirror", "--config-file", str(_EMPTY_CONFIG_PATH),
+        "--verbose", "--method", method,
+    ]
+    if host is not None:
+        argv += ["--host", host]
+    argv += ["--root", root, "--dist", dist]
 
     section_opt = opts.get("section")
     if section_opt:

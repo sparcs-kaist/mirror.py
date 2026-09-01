@@ -67,3 +67,6 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["mirror*"]
+
+[tool.setuptools.package-data]
+"mirror.sync" = ["debmirror-empty.conf"]
