@@ -4,7 +4,7 @@ Minimal worked example of a mirror.py **event** plug-in. Logs every package stat
 transition through the mirror logger, with a configurable prefix.
 
 For the full plug-in author guide, see
-[`docs/PLUGINS.md`](../../docs/PLUGINS.md) at the mirror.py repo root.
+[`docs/PLUGINS.md`](https://github.com/sparcs-kaist/mirror.py/blob/main/docs/PLUGINS.md) at the mirror.py repo root.
 
 ## What it demonstrates
 

@@ -64,6 +64,11 @@ build-backend = "setuptools.build_meta"
 dev = [
     "pytest>=9.0.3",
 ]
+docs = [
+    "sphinx>=7.3",
+    "sphinx-rtd-theme>=3.0",
+    "myst-parser>=3.0",
+]
 
 [tool.setuptools.packages.find]
 include = ["mirror*"]
