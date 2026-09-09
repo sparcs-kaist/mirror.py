@@ -1,0 +1,21 @@
+Origin: mirror.py integration
+Label: mirror.py integration
+Suite: bookworm
+Codename: bookworm
+Version: 12
+Date: Tue, 01 Sep 2026 00:00:00 UTC
+Architectures: amd64
+Components: main
+Description: Signed debmirror integration fixture
+MD5Sum:
+ 7794910af3945f45ec3bddf86c84424b              438 main/binary-amd64/Packages
+ 0819c4feb46aa3896629bef291b12802              326 main/binary-amd64/Packages.gz
+ c8b9351bdcd34c3ac894f8c131a04ec8              125 main/binary-amd64/Release
+SHA1:
+ aa5a802dda925a80ab80e3d1f95c2c00032723b3              438 main/binary-amd64/Packages
+ 3fd96cce569a36f9d66855c6d8d4c313719d0820              326 main/binary-amd64/Packages.gz
+ fc29efba26bdaea4f7560f7942081505611214af              125 main/binary-amd64/Release
+SHA256:
+ a3c6dd3a21a33b79e6e5298cafea6b6c61b23e9bf27aea756d76f071d03c9849              438 main/binary-amd64/Packages
+ 152b1106a34573529174660e7025ad441bfa7f3a28df417ca91e721ee0345def              326 main/binary-amd64/Packages.gz
+ d451864d05a1da7109b45f1103e6cd50e96c017a89be366ed99524d4ab29e83d              125 main/binary-amd64/Release

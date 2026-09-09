@@ -39,6 +39,19 @@ services:
       retries: 10
       start_period: 3s
 
+  debmirror-fixture:
+    container_name: debmirror-fixture
+    build:
+      context: docker/debmirror-fixture
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/debian/dists/bookworm/Release', timeout=3).read()"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+
   mirror:
     container_name: mirror
     build:
@@ -55,9 +68,12 @@ services:
         condition: service_healthy
       lftp-fixture:
         condition: service_healthy
+      debmirror-fixture:
+        condition: service_healthy
     volumes:
       - "${INTEGRATION_TMP}/publish:/srv/publish"
       - "${INTEGRATION_TMP}/state:/var/lib/mirror"
       - "${INTEGRATION_TMP}/log:/var/log/mirror"
+      - "./docker/debmirror-fixture/keyring.gpg:/etc/mirror/debmirror-test.gpg:ro"
     environment:
       - PYTHONUNBUFFERED=1
