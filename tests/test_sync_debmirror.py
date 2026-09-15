@@ -3,7 +3,6 @@
 import logging
 import sys
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -72,7 +71,9 @@ class TestSyncDebmirrorDelegation(unittest.TestCase):
         call_kwargs = mock_exec.call_args[1]
         cmd = call_kwargs["commandline"]
 
-        self.assertEqual(cmd[0], "debmirror")
+        self.assertEqual(cmd[:5], [
+            sys.executable, "-c", "from mirror.sync.debmirror import main; main()", "--", "debmirror",
+        ])
         self.assertEqual(cmd[cmd.index("--method") + 1], "http")
         self.assertEqual(cmd[cmd.index("--host") + 1], "deb.debian.org")
         self.assertEqual(cmd[cmd.index("--dist") + 1], "bookworm,bookworm-updates")
@@ -98,11 +99,18 @@ class TestSyncDebmirrorDelegation(unittest.TestCase):
         mock_on_sync_done.assert_called_once_with(self.pkg.pkgid, success=False, returncode=None)
         self.pkg.set_status.assert_not_called()
 
-    def test_build_error_missing_dist_routes_to_on_sync_done(self):
+    def test_missing_selections_delegate_discovery_under_worker_identity(self):
         _, mock_exec, mock_on_done = self._run_execute(options={})
 
-        mock_exec.assert_not_called()
-        mock_on_done.assert_called_once_with(self.pkg.pkgid, success=False, returncode=None)
+        mock_on_done.assert_not_called()
+        call = mock_exec.call_args.kwargs
+        self.assertEqual(call["commandline"][:5], [
+            sys.executable, "-c", "from mirror.sync.debmirror import main; main()", "--", "debmirror",
+        ])
+        self.assertIn("--nosource", call["commandline"])
+        self.assertEqual(call["uid"], 4242)
+        self.assertEqual(call["gid"], 4343)
+        self.assertEqual(call["job_id"], self.pkg.pkgid)
         self.pkg.set_status.assert_not_called()
 
     def test_relative_dst_routes_to_on_sync_done(self):
@@ -114,9 +122,22 @@ class TestSyncDebmirrorDelegation(unittest.TestCase):
         mock_on_done.assert_called_once_with(self.pkg.pkgid, success=False, returncode=None)
         self.pkg.set_status.assert_not_called()
 
+    def test_each_missing_selection_uses_discovery_without_changing_settings(self):
+        selections = {"dist": ["bookworm"], "section": ["main"], "arch": ["amd64"]}
+        for missing in selections:
+            with self.subTest(missing=missing):
+                options = {key: value[:] for key, value in selections.items() if key != missing}
+                _, mock_exec, mock_on_done = self._run_execute(options=options)
+                command = mock_exec.call_args.kwargs["commandline"]
+                self.assertEqual(command[2], "from mirror.sync.debmirror import main; main()")
+                self.assertNotIn(f"--{missing}", command)
+                self.assertEqual(self.pkg.settings.options, options)
+                self.assertNotIn(missing, options)
+                mock_on_done.assert_not_called()
+
     def test_invalid_options_route_to_on_sync_done(self):
         invalid_option_sets = [
-            {},
+            {"dist": None},
             {"dist": ""},
             {"dist": "book\nworm"},
             {"dist": "bookworm", "method": "gopher"},
@@ -293,13 +314,6 @@ def test_build_command_file_rejects_relative_root_override():
     pkg = _make_pkg(src="file:///ignored", options={"dist": "bookworm", "root": "relative/repo"})
     with pytest.raises(ValueError):
         build_command(pkg)
-
-
-def test_build_command_disables_default_config_files():
-    argv, _ = build_command(_make_pkg())
-    config_path = Path(argv[argv.index("--config-file") + 1])
-    assert config_path.name == "debmirror-empty.conf"
-    assert config_path.read_text(encoding="utf-8").rstrip().endswith("1;")
 
 
 def test_build_command_src_option_overrides():
@@ -583,9 +597,22 @@ def test_build_command_empty_dist_raises():
         build_command(_make_pkg(options={"dist": ""}))
 
 
-def test_build_command_missing_dist_raises():
+@pytest.mark.parametrize("omitted", ["dist", "section", "arch"])
+def test_build_command_leaves_only_omitted_selection_for_discovery(omitted):
+    options = {"dist": ["bookworm"], "section": ["main", "contrib"], "arch": ["amd64"]}
+    del options[omitted]
+    argv, _ = build_command(_make_pkg(options=options))
+    assert f"--{omitted}" not in argv
+    for key, values in options.items():
+        assert argv[argv.index(f"--{key}") + 1] == ",".join(values)
+    assert "--nosource" in argv
+
+
+@pytest.mark.parametrize("key", ["dist", "section", "arch"])
+@pytest.mark.parametrize("value", [None, "", [], False, [""], 12])
+def test_build_command_rejects_explicit_empty_or_invalid_selection(key, value):
     with pytest.raises(ValueError):
-        build_command(_make_pkg(options={}))
+        build_command(_make_pkg(options={key: value}))
 
 
 # ---------------------------------------------------------------------------

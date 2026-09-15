@@ -109,7 +109,7 @@ Worker stays up across tests by design: tests that need worker restart explicitl
 |---|---|
 | `test_preflight.py` | Runs archvsync's `bin/ftpsync sync:all` directly inside the mirror container against the fixture tree, isolating fixture-layout validation from mirror.py orchestration |
 | `test_e2e_rsync.py` | Basic rsync; FFTS short-circuit when upstream unchanged; full sync when FFTS file changed |
-| `test_e2e_debmirror.py` | Signed HTTP sync; package update and cleanup; signature failure and recovery |
+| `test_e2e_debmirror.py` | Signed HTTP option discovery, explicit subsets, updates and cleanup, and failure recovery |
 | `test_e2e_ftpsync.py` | Basic ftpsync; offline fallback exercises the embedded base64 archvsync (`mirror/sync/_ftpsync_script.py`) by disconnecting mirror from the docker network |
 | `test_master_restart.py` | Master restart during a 200MB sync does not kill worker subprocess (PID stable); master reconnects and sync completes |
 | `test_worker_restart.py` | Worker restart recovery; master gracefully handles worker unavailability |
@@ -124,7 +124,10 @@ Worker stays up across tests by design: tests that need worker restart explicitl
 
 A Python HTTP server exposes a tiny signed Debian archive at
 `http://debmirror-fixture:8000/debian`. Static `v1/` and `v2/` trees contain
-package versions 1.0 and 2.0, package indexes, and signed Release metadata.
+multiple distributions, components, and architectures, plus binary and source
+indexes and signed `InRelease` and `Release` metadata. The `allonly`
+distribution intentionally has no `InRelease`, exercising the signed
+`Release.gpg` fallback. The `stable` alias duplicates `bookworm` metadata.
 Only the test public keyring is stored; its private key is not included.
 Compose mounts the keyring read-only at `/etc/mirror/debmirror-test.gpg`.
 The mirror image installs debmirror to execute the real subprocess.
@@ -132,10 +135,16 @@ The mirror image installs debmirror to execute the real subprocess.
 `test_e2e_debmirror.py` exercises master socket requests, worker subprocess
 execution, completion notifications, persisted status and package logs:
 
-- A signed sync reaches `ACTIVE` with a new `lastsync`, index, and payload.
-- Updating to v2 downloads the new package and removes the obsolete v1 file.
-- Tampering with Release metadata causes `ERROR` and increments `errorcount`;
-  restoring the signed archive allows a subsequent sync to reach `ACTIVE`.
+- Omitted `dist`, `section`, and `arch` discover all binary targets, deduplicate
+  the suite alias, and leave source packages disabled by default.
+- Updating to v2 discovers a new distribution, component, and architecture,
+  downloads their payloads, preserves a pool file still referenced by another
+  distribution, and removes the obsolete v1 payload.
+- Explicit list selections restrict the mirror and `source: true` downloads
+  source payloads.
+- Tampered signed metadata and denied or incomplete directory listings fail
+  without deleting the existing mirror. An explicit all-only distribution
+  bypasses listing and exercises debmirror's `--arch none` behavior.
 
 The fixture is restored to v1 after each debmirror test, including failures.
 The small `debmirror-test` package also auto-syncs when the shared stack resets

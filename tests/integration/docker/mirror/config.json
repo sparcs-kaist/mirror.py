@@ -105,10 +105,6 @@
         "src": "http://debmirror-fixture:8000/debian",
         "dst": "/srv/publish/debmirror-test",
         "options": {
-          "dist": "bookworm",
-          "section": "main",
-          "arch": "amd64",
-          "source": false,
           "check_gpg": true,
           "keyring": "/etc/mirror/debmirror-test.gpg",
           "rsync_extra": "none",

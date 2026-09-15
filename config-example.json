@@ -154,7 +154,7 @@
                 "dst": "/srv/ftp/debmirror-debian",
                 "options": {
                     "dist": ["bookworm", "bookworm-updates"],
-                    "section": "main,contrib,non-free,non-free-firmware",
+                    "section": ["main", "contrib", "non-free", "non-free-firmware"],
                     "arch": "amd64",
                     "source": false,
                     "check_gpg": true,
@@ -174,9 +174,6 @@
                 "dst": "/srv/ftp/debmirror-debian-security",
                 "options": {
                     "dist": "bookworm-security",
-                    "section": "main,contrib,non-free,non-free-firmware",
-                    "arch": "amd64",
-                    "source": false,
                     "check_gpg": true,
                     "keyring": "/usr/share/keyrings/debian-archive-keyring.gpg",
                     "cleanup": "postcleanup",

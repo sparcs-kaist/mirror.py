@@ -1,0 +1,17 @@
+Package: mirror-source
+Binary: mirror-source
+Version: 2.0
+Maintainer: Integration Test <test@example.com>
+Architecture: any
+Format: 3.0 (native)
+Directory: pool/main/m/mirror-source
+Files:
+ ddd13c224997183d08ce208dd06f7531 15 mirror-source_2.0.dsc
+ 1d7f567626873e57bec994f3d5a0eebd 15 mirror-source_2.0.tar.xz
+Checksums-Sha1:
+ c2a9ddf25d4cb95453ed0b5b1f8b7ffe5bfb7cbc 15 mirror-source_2.0.dsc
+ 38fec26fdf100abde32a79ec74ff8f170702e9af 15 mirror-source_2.0.tar.xz
+Checksums-Sha256:
+ 19dc6698d3ea0c21c02befc3f484a803010c688e7dc0fb92280ba4ac75e68e32 15 mirror-source_2.0.dsc
+ 0f3b31b4e08dd3bf1b74f5c839c6c5f11fcfbce63bbfdf590a6b39deaef76b23 15 mirror-source_2.0.tar.xz
+
