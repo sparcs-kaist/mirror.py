@@ -111,6 +111,20 @@ mirror crontab -u USER -c CONFIG  # Generate crontab entries
 - When modifying the codebase at the user's request, commit directly with `--no-gpg-sign` (interactive GPG signing is unavailable in this environment).
 - By default, create a dedicated branch for any feature or fix request before making changes. Follow the `feat/<name>` or `fix/<name>` naming convention.
 
+### Sync Module Development
+
+- Read the relevant existing modules in `mirror/sync/` before editing. Match their style; use `rsync.py`, `ftpsync.py`, and `lftp.py` as references.
+- Start with imports, not a module-level docstring. Put `mirror` imports before standard-library imports, following the neighboring sync modules.
+- Keep each sync method in `mirror/sync/<method>.py` by default, including method-specific discovery helpers. Avoid extra helper modules, static empty config files, and abstractions used by only one method.
+- Keep constants and data types near the top. Make the `setup` and `execute` flow easy to find, group related helpers, and expose the method through `plugin()` using `mirror.plugin.sync_plugin`.
+- Use short, single-purpose functions with action-based names and annotated signatures. Keep coordinator functions together when that makes the execution order clearer. Prefer explicit steps and descriptive names over nested conditional expressions or dense comprehensions.
+- Keep useful English function docstrings. Document public arguments and return values using the existing `Args:` and `Return:` style. Use comments to explain constraints or non-obvious decisions; avoid decorative headings and comments that repeat the code.
+- Keep command construction separate from execution. A command builder should return arguments and environment settings without network, filesystem, or worker side effects. Validate user-controlled values before passing them to external commands; pass arguments separately instead of interpolating shell commands.
+- Use `execute(package, logger, trigger="auto")` to prepare and delegate jobs through `mirror.socket.worker.execute_command()`. Preserve the package job ID, configured UID/GID, environment, and log path. Report failures before delegation through `mirror.sync.on_sync_done()`; let worker completion drive the normal result lifecycle.
+- Run long-lived sync subprocesses through the worker. Discovery that needs the worker's identity or environment should run there too. Keep credentials out of logs and preserve signature verification, path validation, and metadata size/time limits.
+- Create generated tool configs in a temporary directory with an explicit lifecycle owner. Keep them available until the subprocess finishes, ensure the worker can access them, and clean up on success, failure, and handled termination. Never write runtime changes to the user's `/etc/mirror/config.json`.
+- For behavior changes, cover command building and worker delegation with unit tests, and real sync behavior with the relevant E2E integration tests. For readability-only changes, use existing tests to prove behavior is preserved; do not add tests that merely mirror the refactor. Run unit and integration suites sequentially when they share temporary resources.
+
 ### RC Release Bump
 
 When asked to bump the project to a new release candidate version, perform only the release-version update unless the user explicitly requests more. Unless the user says otherwise, follow this order:

@@ -1,16 +1,8 @@
-"""CLI executor for the Debian `debmirror` tool.
-
-Missing dist, section, or arch selections are resolved from repository metadata
-inside the worker. This module runs debmirror with an isolated temporary config
-and cleans it up when the child exits. Command building stays pure.
-
-Debmirror normally auto-reads /etc/debmirror.conf and ~/.debmirror.conf.
-The worker supplies an empty temporary config file so package settings remain
-authoritative. Other process environment, such as proxy and GNUPGHOME
-variables, is intentionally inherited by the worker.
-"""
-
-from __future__ import annotations
+import mirror
+import mirror.structure
+import mirror.socket.worker
+import mirror.sync
+import mirror.toolbox
 
 import ftplib
 import hashlib
@@ -32,13 +24,6 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-
-import mirror
-import mirror.socket.worker
-import mirror.structure
-import mirror.sync
-import mirror.toolbox
-
 _METHOD_TOKEN_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*$")
 _HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.@:_-]*$")
 _ROOT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/~-]*$")
@@ -53,292 +38,67 @@ _DIFF_MODES = {"use", "mirror", "none"}
 _RSYNC_EXTRA_CHOICES = {"doc", "indices", "tools", "trace", "none"}
 _MALFORMED_PERCENT_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 
+_LOGGER = logging.getLogger(__name__)
+_MAX_METADATA_SIZE = 16 * 1024 * 1024
+_MAX_DISTRIBUTIONS = 1024
+_MAX_LISTING_LINKS = 4096
+_FIELD_RE = re.compile(rb"^([A-Za-z0-9-]+):[ \t]*(.*)$")
+_VALUE_OPTIONS = {
+    "--arch", "--config-file", "--di-arch", "--di-dist", "--diff",
+    "--dist", "--exclude", "--exclude-deb-section", "--host", "--include",
+    "--keyring", "--limit-priority", "--method", "--passwd", "--proxy",
+    "--root", "--rsync-extra", "--rsync-options", "--section", "--timeout",
+    "--user",
+}
+_ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
+
+
+class DiscoveryError(RuntimeError):
+    """Raised when repository metadata cannot be discovered safely."""
+
+
+class ResourceMissing(DiscoveryError):
+    """Raised when a requested remote resource does not exist."""
+
+
+@dataclass(frozen=True)
+class NativeOptions:
+    """Parsed debmirror options needed by discovery."""
+
+    method: str
+    host: str | None
+    root: str
+    dist: str | None
+    section: str | None
+    arch: str | None
+    source: bool
+    check_gpg: bool
+    ignore_release_gpg: bool
+    keyrings: tuple[str, ...]
+    user: str | None
+    password: str | None
+    proxy: str | None
+    passive: bool
+    rsync_options: tuple[str, ...]
+    timeout: int
+    deadline: float
+
+
+@dataclass(frozen=True)
+class ReleaseMetadata:
+    """Validated discovery fields from one Release file."""
+
+    path: str
+    codename: str
+    native_name: str
+    components: tuple[str, ...]
+    architectures: tuple[str, ...]
+    digest: str
+
 
 def setup(path: Path, package: mirror.structure.Package) -> None:
     """Prepare the sync environment (no-op for debmirror)."""
     pass
-
-
-def _no_ctrl(value: str, label: str) -> str:
-    """Reject control characters (newline, carriage return, ord < 32, DEL)."""
-    for ch in value:
-        if ch in ("\n", "\r") or ord(ch) < 32 or ord(ch) == 127:
-            raise ValueError(f"debmirror {label}: must not contain control characters")
-    return value
-
-
-def _validate_token(value: str, label: str, pattern: "re.Pattern[str]") -> str:
-    """Validate a single flag-value token: str, no control chars, non-empty, no leading '-', matches charset."""
-    if not isinstance(value, str):
-        raise ValueError(f"debmirror {label}: must be a string, got {type(value)!r}")
-    value = _no_ctrl(value, label)
-    if not value:
-        raise ValueError(f"debmirror {label}: must not be empty")
-    if value.startswith("-"):
-        raise ValueError(f"debmirror {label}: must not start with '-' (looks like a flag): {value!r}")
-    if not pattern.fullmatch(value):
-        raise ValueError(f"debmirror {label}: contains disallowed characters: {value!r}")
-    return value
-
-
-def _join_multi(value, label: str, pattern: "re.Pattern[str]") -> str:
-    """Validate a str (optionally comma-separated) or list[str] as tokens; return a comma-joined string."""
-    if isinstance(value, str):
-        items = value.split(",")
-    elif isinstance(value, list):
-        items = value
-    else:
-        raise ValueError(f"debmirror {label}: must be a string or list of strings")
-    if not items:
-        raise ValueError(f"debmirror {label}: must not be empty")
-    return ",".join(_validate_token(item, label, pattern) for item in items)
-
-
-def _validate_enum(value: str, allowed: set, label: str) -> str:
-    """Validate that value is a string member of the allowed set."""
-    if not isinstance(value, str) or value not in allowed:
-        raise ValueError(f"debmirror {label}: must be one of {sorted(allowed)}, got {value!r}")
-    return value
-
-
-def _validate_keyring(path: str) -> str:
-    """Validate a keyring path: str, no control chars, absolute.
-
-    Pure: does not touch the filesystem. File existence is checked (and warned
-    about) in execute(), which already performs I/O.
-    """
-    if not isinstance(path, str):
-        raise ValueError(f"debmirror keyring: must be a string, got {type(path)!r}")
-    path = _no_ctrl(path, "keyring")
-    if not path:
-        raise ValueError("debmirror keyring: must not be empty")
-    if not Path(path).is_absolute():
-        raise ValueError(f"debmirror keyring: must be an absolute path, got {path!r}")
-    return path
-
-
-def _validate_dst(dst: str) -> str:
-    """Validate the mirrordir positional: str, no control chars, absolute path."""
-    if not isinstance(dst, str):
-        raise ValueError(f"debmirror dst: must be a string, got {type(dst)!r}")
-    dst = _no_ctrl(dst, "dst")
-    if not dst or not Path(dst).is_absolute():
-        raise ValueError(f"debmirror dst: must be a non-empty absolute path, got {dst!r}")
-    return dst
-
-
-def _extend_filter_args(argv: list, opts: dict, key: str, flag: str) -> None:
-    """Append a repeatable filter flag (exclude/include/etc.) for each item in a list option."""
-    values = opts.get(key)
-    if not values:
-        return
-    if isinstance(values, str):
-        values = [values]
-    if not isinstance(values, list):
-        raise ValueError(f"debmirror {key}: must be a string or list of strings")
-    for item in values:
-        if not isinstance(item, str):
-            raise ValueError(f"debmirror {key}: each item must be a string")
-        argv.extend([flag, _no_ctrl(item, key)])
-
-
-def _validate_file_root(root: str) -> str:
-    """Validate an absolute local archive root for debmirror's file method."""
-    if not isinstance(root, str):
-        raise ValueError(f"debmirror root: must be a string, got {type(root)!r}")
-    root = _no_ctrl(root, "root")
-    if not root or not Path(root).is_absolute():
-        raise ValueError(f"debmirror root: file method requires an absolute path, got {root!r}")
-    return root
-
-
-def _parse_src(src: str, opts: dict) -> tuple[str, str | None, str]:
-    """Resolve (method, host, root) from the package src URL, with per-field option overrides.
-
-    Args:
-        src(str): Package source URL (e.g. "http://deb.debian.org/debian").
-        opts(dict): Package sync options; "method"/"host"/"root" override the
-            corresponding value parsed from src.
-
-    Return:
-        parsed(tuple[str, str | None, str]): Validated (method, host, root).
-
-    Raises:
-        ValueError: A part cannot be resolved from src or options, or fails validation.
-    """
-    parsed = urllib.parse.urlparse(src) if src else None
-
-    method = opts.get("method") or (parsed.scheme if parsed else None)
-    if not method:
-        raise ValueError("debmirror method: could not be resolved from src or options.method")
-    method = _validate_token(method, "method", _METHOD_TOKEN_RE)
-    _validate_enum(method, _METHODS, "method")
-
-    if method == "file":
-        if parsed is None or parsed.scheme != "file":
-            raise ValueError("debmirror src: file method requires a file: URL")
-        if "host" in opts:
-            raise ValueError("debmirror host: options.host is not supported for file method")
-        if parsed.netloc and parsed.netloc.lower() != "localhost":
-            raise ValueError("debmirror host: file URL authority must be empty or localhost")
-        if parsed.query or parsed.fragment:
-            raise ValueError("debmirror src: file URL must not contain a query or fragment")
-        if _MALFORMED_PERCENT_RE.search(parsed.path):
-            raise ValueError("debmirror src: file URL contains malformed percent escape")
-
-        root_opt = opts.get("root")
-        root = root_opt if root_opt is not None else urllib.parse.unquote(parsed.path)
-        return method, None, _validate_file_root(root)
-
-    host = opts.get("host") or (parsed.netloc if parsed else None)
-    if not host:
-        raise ValueError("debmirror host: could not be resolved from src or options.host")
-    host = _validate_token(host, "host", _HOST_RE)
-
-    root = opts.get("root")
-    if root is None and parsed is not None:
-        root = parsed.path.lstrip("/")
-    if not root:
-        raise ValueError("debmirror root: could not be resolved from src or options.root")
-    root = _validate_token(root, "root", _ROOT_RE)
-
-    return method, host, root
-
-
-def build_command(package: mirror.structure.Package) -> tuple[list, dict]:
-    """Build the debmirror argv list and environment dictionary for a package.
-
-    Pure builder: does not touch the network, filesystem, or worker. Omitted
-    selection flags must be resolved by the discovery helper before execution.
-
-    Args:
-        package(mirror.structure.Package): Package to sync.
-
-    Return:
-        result(tuple[list[str], dict[str, str]]): Command argument list (mirrordir last)
-            and environment dict.
-
-    Raises:
-        ValueError: Any option fails validation or a required option is missing.
-    """
-    opts = package.settings.options
-    method, host, root = _parse_src(package.settings.src, opts)
-
-    argv = [
-        "debmirror", "--verbose", "--method", method,
-    ]
-    if host is not None:
-        argv += ["--host", host]
-    argv += ["--root", root]
-
-    for key, pattern in (("dist", _DIST_RE), ("section", _SECTION_RE), ("arch", _DIST_RE)):
-        if key in opts:
-            argv += [f"--{key}", _join_multi(opts[key], key, pattern)]
-
-    argv.append("--source" if opts.get("source") else "--nosource")
-
-    check_gpg = opts.get("check_gpg", True)
-    if check_gpg:
-        argv.append("--check-gpg")
-        keyring_opt = opts.get("keyring")
-        if keyring_opt:
-            keyrings = keyring_opt if isinstance(keyring_opt, list) else [keyring_opt]
-            for keyring in keyrings:
-                argv += ["--keyring", _validate_keyring(keyring)]
-        if opts.get("ignore_release_gpg"):
-            argv.append("--ignore-release-gpg")
-    else:
-        argv.append("--no-check-gpg")
-
-    if opts.get("ignore_missing_release"):
-        argv.append("--ignore-missing-release")
-
-    cleanup = _validate_enum(opts.get("cleanup", "postcleanup"), _CLEANUP_MODES, "cleanup")
-    argv.append(f"--{cleanup}")
-
-    diff_opt = opts.get("diff")
-    if diff_opt:
-        argv += ["--diff", _validate_enum(diff_opt, _DIFF_MODES, "diff")]
-
-    rsync_extra_opt = opts.get("rsync_extra")
-    if rsync_extra_opt:
-        rsync_extra = _join_multi(rsync_extra_opt, "rsync_extra", _RSYNC_EXTRA_TOKEN_RE)
-        for item in rsync_extra.split(","):
-            _validate_enum(item, _RSYNC_EXTRA_CHOICES, "rsync_extra")
-        argv += ["--rsync-extra", rsync_extra]
-
-    if opts.get("i18n"):
-        argv.append("--i18n")
-    if opts.get("getcontents"):
-        argv.append("--getcontents")
-
-    di_dist_opt = opts.get("di_dist")
-    if di_dist_opt:
-        argv += ["--di-dist", _join_multi(di_dist_opt, "di_dist", _DIST_RE)]
-    di_arch_opt = opts.get("di_arch")
-    if di_arch_opt:
-        argv += ["--di-arch", _join_multi(di_arch_opt, "di_arch", _DIST_RE)]
-
-    proxy_opt = opts.get("proxy")
-    if proxy_opt:
-        proxy = _no_ctrl(str(proxy_opt), "proxy")
-        if any(ch.isspace() for ch in proxy):
-            raise ValueError("debmirror proxy: must not contain whitespace")
-        argv += ["--proxy", proxy]
-    if opts.get("passive"):
-        argv.append("--passive")
-
-    env = dict(mirror.sync.get_extra_args(package.pkgid))
-
-    user = opts.get("user")
-    password = opts.get("password")
-    if user:
-        user = _validate_token(str(user), "user", _USER_RE)
-        if method == "ftp":
-            argv += ["--user", user]
-            if password:
-                argv += ["--passwd", _no_ctrl(str(password), "passwd")]
-        elif method == "rsync":
-            env["RSYNC_PASSWORD"] = _no_ctrl(str(password), "password") if password else ""
-            argv[argv.index("--host") + 1] = f"{user}@{host}"
-        # http/https/file have no inline basic auth: the user is validated above
-        # but not emitted here; execute() logs the ignored-credentials warning.
-
-    for key, flag in (
-        ("exclude", "--exclude"),
-        ("include", "--include"),
-        ("exclude_deb_section", "--exclude-deb-section"),
-        ("limit_priority", "--limit-priority"),
-    ):
-        _extend_filter_args(argv, opts, key, flag)
-
-    rsync_options_opt = opts.get("rsync_options")
-    if rsync_options_opt:
-        argv += ["--rsync-options", _no_ctrl(str(rsync_options_opt), "rsync_options")]
-
-    timeout_opt = opts.get("timeout")
-    if timeout_opt is not None:
-        if isinstance(timeout_opt, bool) or not isinstance(timeout_opt, int) or timeout_opt <= 0:
-            raise ValueError(f"debmirror timeout: must be a positive integer, got {timeout_opt!r}")
-        argv += ["--timeout", str(timeout_opt)]
-
-    if opts.get("allow_dist_rename"):
-        argv.append("--allow-dist-rename")
-    if opts.get("omit_suite_symlinks"):
-        argv.append("--omit-suite-symlinks")
-
-    argv.append(_validate_dst(package.settings.dst))
-
-    return argv, env
-
-
-def _redact_command(command: list) -> str:
-    """Return a log-safe, space-joined copy of command with the --passwd value masked."""
-    redacted = list(command)
-    for i, arg in enumerate(redacted):
-        if arg == "--passwd" and i + 1 < len(redacted):
-            redacted[i + 1] = "***"
-    return " ".join(redacted)
 
 
 def execute(package: mirror.structure.Package, logger: logging.Logger, trigger: str = "auto") -> None:
@@ -404,31 +164,290 @@ def execute(package: mirror.structure.Package, logger: logging.Logger, trigger: 
         mirror.sync.on_sync_done(package.pkgid, success=False, returncode=None)
 
 
-def plugin():
-    """Entry-point factory for the debmirror plug-in.
+def _validate_control_characters(value: str, label: str) -> str:
+    """Reject control characters (newline, carriage return, ord < 32, DEL)."""
+    for ch in value:
+        if ch in ("\n", "\r") or ord(ch) < 32 or ord(ch) == 127:
+            raise ValueError(f"debmirror {label}: must not contain control characters")
+    return value
+
+
+def _validate_token(value: str, label: str, pattern: re.Pattern[str]) -> str:
+    """Validate a non-empty option token that cannot be mistaken for a flag."""
+    if not isinstance(value, str):
+        raise ValueError(f"debmirror {label}: must be a string, got {type(value)!r}")
+    value = _validate_control_characters(value, label)
+    if not value:
+        raise ValueError(f"debmirror {label}: must not be empty")
+    if value.startswith("-"):
+        raise ValueError(f"debmirror {label}: must not start with '-' (looks like a flag): {value!r}")
+    if not pattern.fullmatch(value):
+        raise ValueError(f"debmirror {label}: contains disallowed characters: {value!r}")
+    return value
+
+
+def _join_option_values(value: str | list[str], label: str, pattern: re.Pattern[str]) -> str:
+    """Validate string or list selections and join them for a native option."""
+    if isinstance(value, str):
+        items = value.split(",")
+    elif isinstance(value, list):
+        items = value
+    else:
+        raise ValueError(f"debmirror {label}: must be a string or list of strings")
+    if not items:
+        raise ValueError(f"debmirror {label}: must not be empty")
+    return ",".join(_validate_token(item, label, pattern) for item in items)
+
+
+def _validate_enum(value: str, allowed: set[str], label: str) -> str:
+    """Validate that value is a string member of the allowed set."""
+    if not isinstance(value, str) or value not in allowed:
+        raise ValueError(f"debmirror {label}: must be one of {sorted(allowed)}, got {value!r}")
+    return value
+
+
+def _validate_keyring(path: str) -> str:
+    """Validate a keyring path: str, no control chars, absolute.
+
+    Pure: does not touch the filesystem. File existence is checked (and warned
+    about) in execute(), which already performs I/O.
+    """
+    if not isinstance(path, str):
+        raise ValueError(f"debmirror keyring: must be a string, got {type(path)!r}")
+    path = _validate_control_characters(path, "keyring")
+    if not path:
+        raise ValueError("debmirror keyring: must not be empty")
+    if not Path(path).is_absolute():
+        raise ValueError(f"debmirror keyring: must be an absolute path, got {path!r}")
+    return path
+
+
+def _validate_dst(dst: str) -> str:
+    """Validate the mirrordir positional: str, no control chars, absolute path."""
+    if not isinstance(dst, str):
+        raise ValueError(f"debmirror dst: must be a string, got {type(dst)!r}")
+    dst = _validate_control_characters(dst, "dst")
+    if not dst or not Path(dst).is_absolute():
+        raise ValueError(f"debmirror dst: must be a non-empty absolute path, got {dst!r}")
+    return dst
+
+
+def _extend_filter_args(argv: list[str], options: dict, key: str, flag: str) -> None:
+    """Append a repeatable filter flag (exclude/include/etc.) for each item in a list option."""
+    values = options.get(key)
+    if not values:
+        return
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, list):
+        raise ValueError(f"debmirror {key}: must be a string or list of strings")
+    for item in values:
+        if not isinstance(item, str):
+            raise ValueError(f"debmirror {key}: each item must be a string")
+        argv.extend([flag, _validate_control_characters(item, key)])
+
+
+def _validate_file_root(root: str) -> str:
+    """Validate an absolute local archive root for debmirror's file method."""
+    if not isinstance(root, str):
+        raise ValueError(f"debmirror root: must be a string, got {type(root)!r}")
+    root = _validate_control_characters(root, "root")
+    if not root or not Path(root).is_absolute():
+        raise ValueError(f"debmirror root: file method requires an absolute path, got {root!r}")
+    return root
+
+
+def _parse_src(src: str, options: dict) -> tuple[str, str | None, str]:
+    """Resolve (method, host, root) from the package src URL, with per-field option overrides.
+
+    Args:
+        src(str): Package source URL (e.g. "http://deb.debian.org/debian").
+        options(dict): Package sync options; "method"/"host"/"root" override the
+            corresponding value parsed from src.
 
     Return:
-        record(mirror.plugin.PluginRecord): Sync plug-in record exposing execute.
+        parsed(tuple[str, str | None, str]): Validated (method, host, root).
+
+    Raises:
+        ValueError: A part cannot be resolved from src or options, or fails validation.
     """
-    from mirror.plugin import sync_plugin
-    return sync_plugin(name="debmirror", execute=execute)
+    parsed = urllib.parse.urlparse(src) if src else None
+
+    method = options.get("method") or (parsed.scheme if parsed else None)
+    if not method:
+        raise ValueError("debmirror method: could not be resolved from src or options.method")
+    method = _validate_token(method, "method", _METHOD_TOKEN_RE)
+    _validate_enum(method, _METHODS, "method")
+
+    if method == "file":
+        if parsed is None or parsed.scheme != "file":
+            raise ValueError("debmirror src: file method requires a file: URL")
+        if "host" in options:
+            raise ValueError("debmirror host: options.host is not supported for file method")
+        if parsed.netloc and parsed.netloc.lower() != "localhost":
+            raise ValueError("debmirror host: file URL authority must be empty or localhost")
+        if parsed.query or parsed.fragment:
+            raise ValueError("debmirror src: file URL must not contain a query or fragment")
+        if _MALFORMED_PERCENT_RE.search(parsed.path):
+            raise ValueError("debmirror src: file URL contains malformed percent escape")
+
+        root_opt = options.get("root")
+        root = root_opt if root_opt is not None else urllib.parse.unquote(parsed.path)
+        return method, None, _validate_file_root(root)
+
+    host = options.get("host") or (parsed.netloc if parsed else None)
+    if not host:
+        raise ValueError("debmirror host: could not be resolved from src or options.host")
+    host = _validate_token(host, "host", _HOST_RE)
+
+    root = options.get("root")
+    if root is None and parsed is not None:
+        root = parsed.path.lstrip("/")
+    if not root:
+        raise ValueError("debmirror root: could not be resolved from src or options.root")
+    root = _validate_token(root, "root", _ROOT_RE)
+
+    return method, host, root
 
 
-_LOGGER = logging.getLogger(__name__)
-_MAX_METADATA_SIZE = 16 * 1024 * 1024
-_MAX_DISTRIBUTIONS = 1024
-_MAX_LISTING_LINKS = 4096
-_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$")
-_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+/-]*$")
-_FIELD_RE = re.compile(rb"^([A-Za-z0-9-]+):[ \t]*(.*)$")
-_VALUE_OPTIONS = {
-    "--arch", "--config-file", "--di-arch", "--di-dist", "--diff",
-    "--dist", "--exclude", "--exclude-deb-section", "--host", "--include",
-    "--keyring", "--limit-priority", "--method", "--passwd", "--proxy",
-    "--root", "--rsync-extra", "--rsync-options", "--section", "--timeout",
-    "--user",
-}
-_ACTIVE_PROCESS: subprocess.Popen[bytes] | None = None
+def build_command(package: mirror.structure.Package) -> tuple[list[str], dict[str, str]]:
+    """Build the debmirror argv list and environment dictionary for a package.
+
+    Pure builder: does not touch the network, filesystem, or worker. Omitted
+    selection flags must be resolved by the discovery helper before execution.
+
+    Args:
+        package(mirror.structure.Package): Package to sync.
+
+    Return:
+        result(tuple[list[str], dict[str, str]]): Command argument list (mirrordir last)
+            and environment dict.
+
+    Raises:
+        ValueError: Any option fails validation or a required option is missing.
+    """
+    options = package.settings.options
+    method, host, root = _parse_src(package.settings.src, options)
+
+    # Repository location and package selections.
+    argv = [
+        "debmirror", "--verbose", "--method", method,
+    ]
+    if host is not None:
+        argv += ["--host", host]
+    argv += ["--root", root]
+
+    for key, pattern in (("dist", _DIST_RE), ("section", _SECTION_RE), ("arch", _DIST_RE)):
+        if key in options:
+            argv += [f"--{key}", _join_option_values(options[key], key, pattern)]
+
+    argv.append("--source" if options.get("source") else "--nosource")
+
+    # Signature verification and trusted keyrings.
+    check_gpg = options.get("check_gpg", True)
+    if check_gpg:
+        argv.append("--check-gpg")
+        keyring_opt = options.get("keyring")
+        if keyring_opt:
+            keyrings = keyring_opt if isinstance(keyring_opt, list) else [keyring_opt]
+            for keyring in keyrings:
+                argv += ["--keyring", _validate_keyring(keyring)]
+        if options.get("ignore_release_gpg"):
+            argv.append("--ignore-release-gpg")
+    else:
+        argv.append("--no-check-gpg")
+
+    if options.get("ignore_missing_release"):
+        argv.append("--ignore-missing-release")
+
+    # Cleanup and optional repository content.
+    cleanup = _validate_enum(options.get("cleanup", "postcleanup"), _CLEANUP_MODES, "cleanup")
+    argv.append(f"--{cleanup}")
+
+    diff_opt = options.get("diff")
+    if diff_opt:
+        argv += ["--diff", _validate_enum(diff_opt, _DIFF_MODES, "diff")]
+
+    rsync_extra_opt = options.get("rsync_extra")
+    if rsync_extra_opt:
+        rsync_extra = _join_option_values(rsync_extra_opt, "rsync_extra", _RSYNC_EXTRA_TOKEN_RE)
+        for item in rsync_extra.split(","):
+            _validate_enum(item, _RSYNC_EXTRA_CHOICES, "rsync_extra")
+        argv += ["--rsync-extra", rsync_extra]
+
+    if options.get("i18n"):
+        argv.append("--i18n")
+    if options.get("getcontents"):
+        argv.append("--getcontents")
+
+    di_dist_opt = options.get("di_dist")
+    if di_dist_opt:
+        argv += ["--di-dist", _join_option_values(di_dist_opt, "di_dist", _DIST_RE)]
+    di_arch_opt = options.get("di_arch")
+    if di_arch_opt:
+        argv += ["--di-arch", _join_option_values(di_arch_opt, "di_arch", _DIST_RE)]
+
+    # Transport settings and credentials.
+    proxy_opt = options.get("proxy")
+    if proxy_opt:
+        proxy = _validate_control_characters(str(proxy_opt), "proxy")
+        if any(ch.isspace() for ch in proxy):
+            raise ValueError("debmirror proxy: must not contain whitespace")
+        argv += ["--proxy", proxy]
+    if options.get("passive"):
+        argv.append("--passive")
+
+    env = dict(mirror.sync.get_extra_args(package.pkgid))
+
+    user = options.get("user")
+    password = options.get("password")
+    if user:
+        user = _validate_token(str(user), "user", _USER_RE)
+        if method == "ftp":
+            argv += ["--user", user]
+            if password:
+                argv += ["--passwd", _validate_control_characters(str(password), "passwd")]
+        elif method == "rsync":
+            env["RSYNC_PASSWORD"] = _validate_control_characters(str(password), "password") if password else ""
+            argv[argv.index("--host") + 1] = f"{user}@{host}"
+        # http/https/file have no inline basic auth: the user is validated above
+        # but not emitted here; execute() logs the ignored-credentials warning.
+
+    for key, flag in (
+        ("exclude", "--exclude"),
+        ("include", "--include"),
+        ("exclude_deb_section", "--exclude-deb-section"),
+        ("limit_priority", "--limit-priority"),
+    ):
+        _extend_filter_args(argv, options, key, flag)
+
+    rsync_options_opt = options.get("rsync_options")
+    if rsync_options_opt:
+        argv += ["--rsync-options", _validate_control_characters(str(rsync_options_opt), "rsync_options")]
+
+    timeout_opt = options.get("timeout")
+    if timeout_opt is not None:
+        if isinstance(timeout_opt, bool) or not isinstance(timeout_opt, int) or timeout_opt <= 0:
+            raise ValueError(f"debmirror timeout: must be a positive integer, got {timeout_opt!r}")
+        argv += ["--timeout", str(timeout_opt)]
+
+    if options.get("allow_dist_rename"):
+        argv.append("--allow-dist-rename")
+    if options.get("omit_suite_symlinks"):
+        argv.append("--omit-suite-symlinks")
+
+    argv.append(_validate_dst(package.settings.dst))
+
+    return argv, env
+
+
+def _redact_command(command: list[str]) -> str:
+    """Return a log-safe, space-joined copy of command with the --passwd value masked."""
+    redacted = list(command)
+    for i, arg in enumerate(redacted):
+        if arg == "--passwd" and i + 1 < len(redacted):
+            redacted[i + 1] = "***"
+    return " ".join(redacted)
 
 
 def _limit_child_file_size() -> None:
@@ -440,49 +459,6 @@ def _limit_child_file_size() -> None:
     if current_hard != resource.RLIM_INFINITY:
         limit = min(limit, current_hard)
     resource.setrlimit(resource.RLIMIT_FSIZE, (limit, current_hard))
-
-
-class DiscoveryError(RuntimeError):
-    """Raised when repository metadata cannot be discovered safely."""
-
-
-class ResourceMissing(DiscoveryError):
-    """Raised when a requested remote resource does not exist."""
-
-
-@dataclass(frozen=True)
-class NativeOptions:
-    """Parsed debmirror options needed by discovery."""
-
-    method: str
-    host: str | None
-    root: str
-    dist: str | None
-    section: str | None
-    arch: str | None
-    source: bool
-    check_gpg: bool
-    ignore_release_gpg: bool
-    keyrings: tuple[str, ...]
-    user: str | None
-    password: str | None
-    proxy: str | None
-    passive: bool
-    rsync_options: tuple[str, ...]
-    timeout: int
-    deadline: float
-
-
-@dataclass(frozen=True)
-class ReleaseMetadata:
-    """Validated discovery fields from one Release file."""
-
-    path: str
-    codename: str
-    native_name: str
-    components: tuple[str, ...]
-    architectures: tuple[str, ...]
-    digest: str
 
 
 class _LinkParser(html.parser.HTMLParser):
@@ -615,7 +591,7 @@ def _remaining_timeout(options: NativeOptions) -> float:
     return min(options.timeout, remaining)
 
 
-def _validate_name(value: str, label: str, pattern: re.Pattern[str] = _TOKEN_RE) -> str:
+def _validate_name(value: str, label: str, pattern: re.Pattern[str] = _DIST_RE) -> str:
     """Validate a repository path token."""
     segments = value.split("/")
     if (
@@ -626,7 +602,7 @@ def _validate_name(value: str, label: str, pattern: re.Pattern[str] = _TOKEN_RE)
     return value
 
 
-def _split_values(value: str, label: str, pattern: re.Pattern[str] = _TOKEN_RE) -> tuple[str, ...]:
+def _split_values(value: str, label: str, pattern: re.Pattern[str] = _DIST_RE) -> tuple[str, ...]:
     """Split and validate a comma-separated native option."""
     values = tuple(value.split(","))
     if not values:
@@ -634,14 +610,14 @@ def _split_values(value: str, label: str, pattern: re.Pattern[str] = _TOKEN_RE) 
     return tuple(_validate_name(item, label, pattern) for item in values)
 
 
-def _bounded(data: bytes, label: str) -> bytes:
+def _check_metadata_size(data: bytes, label: str) -> bytes:
     """Reject oversized metadata responses."""
     if len(data) > _MAX_METADATA_SIZE:
         raise DiscoveryError(f"repository {label} exceeds the 16 MiB limit")
     return data
 
 
-def _url(options: NativeOptions, relative: str) -> str:
+def _build_repository_url(options: NativeOptions, relative: str) -> str:
     """Build a safely quoted repository URL."""
     root = options.root.strip("/")
     path = posixpath.join(root, relative)
@@ -661,11 +637,11 @@ def _http_open(options: NativeOptions, relative: str) -> bytes:
         handlers.append(urllib.request.ProxyHandler({options.method: options.proxy}))
     opener = urllib.request.build_opener(*handlers)
     try:
-        with opener.open(_url(options, relative), timeout=_remaining_timeout(options)) as response:
+        with opener.open(_build_repository_url(options, relative), timeout=_remaining_timeout(options)) as response:
             length = response.headers.get("Content-Length")
             if length is not None and int(length) > _MAX_METADATA_SIZE:
                 raise DiscoveryError("repository metadata exceeds the 16 MiB limit")
-            return _bounded(response.read(_MAX_METADATA_SIZE + 1), "metadata")
+            return _check_metadata_size(response.read(_MAX_METADATA_SIZE + 1), "metadata")
     except urllib.error.HTTPError as error:
         if error.code in {404, 410}:
             raise ResourceMissing("repository resource is missing") from error
@@ -740,7 +716,7 @@ def _file_fetch(options: NativeOptions, relative: str) -> bytes:
     path = _file_path(options, relative)
     try:
         with path.open("rb") as resource:
-            return _bounded(resource.read(_MAX_METADATA_SIZE + 1), "metadata")
+            return _check_metadata_size(resource.read(_MAX_METADATA_SIZE + 1), "metadata")
     except FileNotFoundError as error:
         raise ResourceMissing("repository resource is missing") from error
     except OSError as error:
@@ -780,7 +756,9 @@ def _run_process(
 
 
 def _terminate_child(signum: int, frame: object) -> None:
-    """Terminate a metadata child before stopping the wrapper process."""
+    """Terminate the active child before stopping the wrapper process."""
+    global _ACTIVE_PROCESS
+
     del frame
     if _ACTIVE_PROCESS is not None:
         _ACTIVE_PROCESS.terminate()
@@ -809,11 +787,11 @@ def _rsync_fetch(options: NativeOptions, relative: str) -> bytes:
     """Fetch one rsync repository resource."""
     parent, _, name = relative.rpartition("/")
     listing = _rsync_listing(options, f"{parent}/")
-    listed_names = {
-        parts[-1]
-        for line in listing.splitlines()
-        if len(parts := line.decode("utf-8", "replace").split(maxsplit=4)) == 5
-    }
+    listed_names = set()
+    for line in listing.splitlines():
+        fields = line.decode("utf-8", "replace").split(maxsplit=4)
+        if len(fields) == 5:
+            listed_names.add(fields[-1])
     if name not in listed_names:
         raise ResourceMissing("repository resource is missing")
     with tempfile.TemporaryDirectory(prefix="mirror-debmirror-discovery-") as directory:
@@ -829,11 +807,16 @@ def _rsync_fetch(options: NativeOptions, relative: str) -> bytes:
             raise DiscoveryError("repository metadata was not downloaded") from error
 
 
+def _uses_url_transport(options: NativeOptions) -> bool:
+    """Use urllib for HTTP(S) and FTP routed through a proxy."""
+    if options.method in {"http", "https"}:
+        return True
+    return options.method == "ftp" and bool(options.proxy or os.environ.get("ftp_proxy"))
+
+
 def _fetch(options: NativeOptions, relative: str) -> bytes:
     """Fetch one resource using the configured debmirror transport."""
-    if options.method in {"http", "https"} or (
-        options.method == "ftp" and (options.proxy or os.environ.get("ftp_proxy"))
-    ):
+    if _uses_url_transport(options):
         return _http_open(options, relative)
     if options.method == "ftp":
         return _ftp_fetch(options, relative)
@@ -851,11 +834,12 @@ def _http_list(options: NativeOptions) -> tuple[str, ...]:
         parser.feed(data.decode("utf-8", "strict"))
     except UnicodeDecodeError as error:
         raise DiscoveryError("repository dists listing is not valid HTML") from error
-    base = urllib.parse.urlsplit(_url(options, relative))
+    listing_url = _build_repository_url(options, relative)
+    base = urllib.parse.urlsplit(listing_url)
     base_path = urllib.parse.unquote(base.path).rstrip("/") + "/"
     names: set[str] = set()
     for href in parser.hrefs:
-        target = urllib.parse.urlsplit(urllib.parse.urljoin(_url(options, relative), href))
+        target = urllib.parse.urlsplit(urllib.parse.urljoin(listing_url, href))
         if (
             target.scheme != base.scheme
             or target.netloc != base.netloc
@@ -867,7 +851,7 @@ def _http_list(options: NativeOptions) -> tuple[str, ...]:
         if not target_path.endswith("/") or not target_path.startswith(base_path):
             continue
         remainder = target_path[len(base_path):].strip("/")
-        if "/" not in remainder and _TOKEN_RE.fullmatch(remainder):
+        if "/" not in remainder and _DIST_RE.fullmatch(remainder):
             names.add(remainder)
     return tuple(sorted(names))
 
@@ -880,7 +864,7 @@ def _ftp_list(options: NativeOptions) -> tuple[str, ...]:
 
     def add_entry(name: str) -> None:
         candidate = posixpath.basename(name.rstrip("/"))
-        if not _TOKEN_RE.fullmatch(candidate):
+        if not _DIST_RE.fullmatch(candidate):
             return
         entries.append(candidate)
         if len(entries) > _MAX_DISTRIBUTIONS:
@@ -915,7 +899,7 @@ def _file_list(options: NativeOptions) -> tuple[str, ...]:
     try:
         names = []
         for entry in dists.iterdir():
-            if not _TOKEN_RE.fullmatch(entry.name) or not entry.is_dir():
+            if not _DIST_RE.fullmatch(entry.name) or not entry.is_dir():
                 continue
             resolved = entry.resolve()
             if resolved.parent == dists.resolve():
@@ -931,8 +915,9 @@ def _file_list(options: NativeOptions) -> tuple[str, ...]:
 
 def _rsync_listing(options: NativeOptions, relative: str) -> bytes:
     """Return a bounded rsync directory listing."""
+    global _ACTIVE_PROCESS
+
     with tempfile.TemporaryFile() as output:
-        global _ACTIVE_PROCESS
         command = [
             "rsync", "--timeout", str(options.timeout), *options.rsync_options,
             "--list-only", _rsync_source(options, relative),
@@ -954,7 +939,7 @@ def _rsync_listing(options: NativeOptions, relative: str) -> bytes:
         finally:
             _ACTIVE_PROCESS = None
         output.seek(0)
-        listing = _bounded(output.read(_MAX_METADATA_SIZE + 1), "dists listing")
+        listing = _check_metadata_size(output.read(_MAX_METADATA_SIZE + 1), "dists listing")
     if returncode != 0:
         raise DiscoveryError("repository rsync listing failed")
     return listing
@@ -971,16 +956,14 @@ def _rsync_list(options: NativeOptions) -> tuple[str, ...]:
         parts = raw_line.decode("utf-8", "replace").split(maxsplit=4)
         if len(parts) == 5 and parts[0].startswith("d"):
             name = parts[-1].rstrip("/")
-            if _TOKEN_RE.fullmatch(name):
+            if _DIST_RE.fullmatch(name):
                 names.add(name)
     return tuple(sorted(names))
 
 
 def _list_distributions(options: NativeOptions) -> tuple[str, ...]:
     """List safe direct children of the repository dists directory."""
-    if options.method in {"http", "https"} or (
-        options.method == "ftp" and (options.proxy or os.environ.get("ftp_proxy"))
-    ):
+    if _uses_url_transport(options):
         values = _http_list(options)
     elif options.method == "ftp":
         values = _ftp_list(options)
@@ -1045,26 +1028,32 @@ def _verify_gpg(options: NativeOptions, signed: bytes, signature: bytes | None =
         return output_path.read_bytes() if output_path is not None else signed
 
 
-def _read_release(options: NativeOptions, dist: str) -> bytes:
-    """Fetch and optionally verify one distribution's Release metadata."""
+def _read_detached_release(options: NativeOptions, dist: str) -> bytes:
+    """Fetch Release and verify its detached signature when required."""
     prefix = f"dists/{dist}"
+    release = _fetch(options, f"{prefix}/Release")
+    if not options.check_gpg:
+        return release
     try:
-        inrelease = _fetch(options, f"{prefix}/InRelease")
-    except ResourceMissing:
-        release = _fetch(options, f"{prefix}/Release")
-        if not options.check_gpg:
+        signature = _fetch(options, f"{prefix}/Release.gpg")
+        return _verify_gpg(options, release, signature)
+    except ResourceMissing as error:
+        if options.ignore_release_gpg:
             return release
-        try:
-            signature = _fetch(options, f"{prefix}/Release.gpg")
-            return _verify_gpg(options, release, signature)
-        except ResourceMissing as error:
-            if options.ignore_release_gpg:
-                return release
-            raise DiscoveryError(f"distribution {dist} has no Release.gpg signature") from error
-        except DiscoveryError:
-            if options.ignore_release_gpg:
-                return release
-            raise
+        raise DiscoveryError(f"distribution {dist} has no Release.gpg signature") from error
+    except DiscoveryError:
+        if options.ignore_release_gpg:
+            return release
+        raise
+
+
+def _read_release(options: NativeOptions, dist: str) -> bytes:
+    """Prefer InRelease; fall back to Release only when InRelease is missing."""
+    try:
+        inrelease = _fetch(options, f"dists/{dist}/InRelease")
+    except ResourceMissing:
+        return _read_detached_release(options, dist)
+
     if not options.check_gpg:
         return _extract_inrelease(inrelease)
     try:
@@ -1104,7 +1093,12 @@ def _parse_fields(data: bytes) -> dict[str, str]:
     return {name: " ".join(parts) for name, parts in fields.items()}
 
 
-def _metadata(dist: str, data: bytes, need_components: bool, need_architectures: bool) -> ReleaseMetadata:
+def _parse_release_metadata(
+    dist: str,
+    data: bytes,
+    need_components: bool,
+    need_architectures: bool,
+) -> ReleaseMetadata:
     """Validate fields used to select automatic debmirror options."""
     fields = _parse_fields(data)
     codename_value = fields.get("Codename")
@@ -1125,14 +1119,18 @@ def _metadata(dist: str, data: bytes, need_components: bool, need_architectures:
     architecture_value = fields.get("Architectures")
     if need_architectures and not architecture_value:
         raise DiscoveryError(f"distribution {dist} Release has no Architectures field")
-    components = tuple(
-        _validate_name(item, "component", _COMPONENT_RE)
-        for item in component_value.split()
-    ) if component_value else ()
-    architectures = tuple(
-        _validate_name(item, "architecture")
-        for item in architecture_value.split()
-    ) if architecture_value else ()
+    components = ()
+    if component_value:
+        components = tuple(
+            _validate_name(component, "component", _SECTION_RE)
+            for component in component_value.split()
+        )
+    architectures = ()
+    if architecture_value:
+        architectures = tuple(
+            _validate_name(architecture, "architecture")
+            for architecture in architecture_value.split()
+        )
     if need_components and not components:
         raise DiscoveryError(f"distribution {dist} Release has no components")
     if need_architectures and not architectures:
@@ -1149,28 +1147,32 @@ def _metadata(dist: str, data: bytes, need_components: bool, need_architectures:
 
 def _select_auto_distributions(metadata: list[ReleaseMetadata]) -> list[ReleaseMetadata]:
     """Deduplicate aliases and reject ambiguous native codenames."""
-    by_codename: dict[str, set[str]] = {}
-    for item in metadata:
-        by_codename.setdefault(item.native_name, set()).add(item.digest)
-    collisions = sorted(name for name, digests in by_codename.items() if len(digests) > 1)
+    digests_by_name: dict[str, set[str]] = {}
+    for release in metadata:
+        digests_by_name.setdefault(release.native_name, set()).add(release.digest)
+    collisions = sorted(name for name, digests in digests_by_name.items() if len(digests) > 1)
     if collisions:
         raise DiscoveryError(f"automatic distribution discovery found conflicting Codename {collisions[0]}")
-    by_digest: dict[str, list[ReleaseMetadata]] = {}
-    for item in metadata:
-        by_digest.setdefault(item.digest, []).append(item)
+    aliases_by_digest: dict[str, list[ReleaseMetadata]] = {}
+    for release in metadata:
+        aliases_by_digest.setdefault(release.digest, []).append(release)
     selected = []
-    for group in by_digest.values():
-        exact = [item for item in group if item.path == item.native_name]
-        selected.append(min(exact or group, key=lambda item: item.path))
-    return sorted(selected, key=lambda item: item.path)
+    for aliases in aliases_by_digest.values():
+        native_paths = [release for release in aliases if release.path == release.native_name]
+        selected.append(min(native_paths or aliases, key=lambda release: release.path))
+    return sorted(selected, key=lambda release: release.path)
 
 
 def _discover_metadata(options: NativeOptions) -> list[ReleaseMetadata]:
     """Fetch metadata for explicit or automatically listed distributions."""
     automatic = options.dist is None
-    dists = _list_distributions(options) if automatic else _split_values(options.dist, "--dist")
-    values = []
-    for dist in dists:
+    if options.dist is None:
+        distributions = _list_distributions(options)
+    else:
+        distributions = _split_values(options.dist, "--dist")
+
+    metadata = []
+    for dist in distributions:
         _remaining_timeout(options)
         try:
             data = _read_release(options, dist)
@@ -1178,23 +1180,32 @@ def _discover_metadata(options: NativeOptions) -> list[ReleaseMetadata]:
             if automatic:
                 continue
             raise DiscoveryError(f"distribution {dist} has no InRelease or Release metadata")
-        values.append(_metadata(dist, data, options.section is None, options.arch is None))
-    if not values:
+        release = _parse_release_metadata(
+            dist,
+            data,
+            need_components=options.section is None,
+            need_architectures=options.arch is None,
+        )
+        metadata.append(release)
+    if not metadata:
         raise DiscoveryError("no distributions with usable Release metadata found; set options.dist explicitly")
-    return _select_auto_distributions(values) if automatic else values
+    if automatic:
+        return _select_auto_distributions(metadata)
+    return metadata
 
 
-def _binary_architectures(metadata: list[ReleaseMetadata], source: bool) -> tuple[str, ...]:
+def _select_binary_architectures(metadata: list[ReleaseMetadata], source: bool) -> tuple[str, ...]:
     """Select binary architectures, handling source-only and all-only archives."""
-    raw = {item for release in metadata for item in release.architectures}
-    if "none" in raw:
+    architectures = {arch for release in metadata for arch in release.architectures}
+    if "none" in architectures:
         raise DiscoveryError("repository Release contains reserved architecture none")
-    binary = tuple(sorted(raw - {"all", "source"}))
+    binary = tuple(sorted(architectures - {"all", "source"}))
     if binary:
         return binary
-    if "all" in raw or ("source" in raw and source):
+    if "all" in architectures or ("source" in architectures and source):
+        # debmirror uses "none" to omit machine-specific binary indexes.
         return ("none",)
-    if "source" in raw:
+    if "source" in architectures:
         raise DiscoveryError("repository contains only source packages; set options.source to true")
     raise DiscoveryError("repository has no usable binary architectures")
 
@@ -1215,7 +1226,7 @@ def _guard_existing_distributions(destination: str, metadata: list[ReleaseMetada
         existing = {
             entry.name
             for entry in dists.iterdir()
-            if entry.is_dir() and not entry.is_symlink() and _TOKEN_RE.fullmatch(entry.name)
+            if entry.is_dir() and not entry.is_symlink() and _DIST_RE.fullmatch(entry.name)
         }
     except OSError as error:
         raise DiscoveryError("existing destination distributions could not be inspected") from error
@@ -1231,10 +1242,10 @@ def resolve_command(argv: list[str]) -> list[str]:
     """Resolve omitted debmirror dimensions and return a native command.
 
     Args:
-        argv: Native debmirror argument vector with its destination last.
+        argv(list[str]): Native debmirror argument vector with its destination last.
 
-    Returns:
-        Native argument vector containing every required selection option.
+    Return:
+        command(list[str]): Native arguments containing every required selection option.
     """
     options = _parse_native_options(argv)
     if options.dist is not None and options.section is not None and options.arch is not None:
@@ -1249,7 +1260,7 @@ def resolve_command(argv: list[str]) -> list[str]:
         sections = sorted({item for release in metadata for item in release.components})
         additions += ["--section", ",".join(sections)]
     if options.arch is None:
-        additions += ["--arch", ",".join(_binary_architectures(metadata, options.source))]
+        additions += ["--arch", ",".join(_select_binary_architectures(metadata, options.source))]
     resolved = _insert_options(argv, additions)
     parsed = _scan_options(resolved)
     _LOGGER.info(
@@ -1267,6 +1278,7 @@ def _run_native(argv: list[str]) -> int:
 
     with tempfile.TemporaryDirectory(prefix="mirror-debmirror-run-") as directory:
         config = Path(directory) / "debmirror.conf"
+        # Override /etc/debmirror.conf and ~/.debmirror.conf with an empty Perl config.
         config.write_text("1;\n", encoding="utf-8")
         command = [*argv[:-1], "--config-file", str(config), argv[-1]]
         try:
@@ -1293,6 +1305,16 @@ def main() -> None:
         _LOGGER.error("debmirror discovery failed: %s", error)
         raise SystemExit(1) from error
     raise SystemExit(returncode if returncode >= 0 else 128 - returncode)
+
+
+def plugin() -> "mirror.plugin.PluginRecord":
+    """Entry-point factory for the debmirror plug-in.
+
+    Return:
+        record(mirror.plugin.PluginRecord): Sync plug-in record exposing execute.
+    """
+    from mirror.plugin import sync_plugin
+    return sync_plugin(name="debmirror", execute=execute)
 
 
 if __name__ == "__main__":
