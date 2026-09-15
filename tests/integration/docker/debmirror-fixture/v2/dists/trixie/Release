@@ -1,0 +1,29 @@
+Origin: mirror.py integration
+Label: mirror.py integration
+Suite: trixie
+Codename: trixie
+Date: Tue, 01 Sep 2026 00:00:00 UTC
+Architectures: amd64
+Components: main
+Description: Signed debmirror discovery fixture
+MD5Sum:
+ 530256164dba151d979deedec5f92485              438 main/binary-amd64/Packages
+ 8c5d3efd8e0dfa5a1e56dfda9e60beb9              326 main/binary-amd64/Packages.gz
+ 77276eb1d2b1f510269351963525b207              111 main/binary-amd64/Release
+ 75efeb91e9cdbe2822d70f00b922193b              112 main/source/Release
+ d41d8cd98f00b204e9800998ecf8427e                0 main/source/Sources
+ fa9ac5a217b5547bc7dd4e6e894fe135               20 main/source/Sources.gz
+SHA1:
+ e5b12211c8f33b3f5dd103c554c16e853c935c78              438 main/binary-amd64/Packages
+ a9a9259be5a07b2c24e98733e0be53b58e8592eb              326 main/binary-amd64/Packages.gz
+ 21b7b95667316a509eb0f4e10db94cb1a1405864              111 main/binary-amd64/Release
+ ade3ca5173cda1f8f97d2aac11cd3704a4e7bf8d              112 main/source/Release
+ da39a3ee5e6b4b0d3255bfef95601890afd80709                0 main/source/Sources
+ 89892054d65b8b0dd6a081b33a97b6f2bd1fa267               20 main/source/Sources.gz
+SHA256:
+ dccbcb16126f9acb738d5072e6e8443f2ef2e5640366f6d0ff0676b5fda9c7ea              438 main/binary-amd64/Packages
+ d7f4156ef4d9619c9c5925a16eea40a8801735d6feaa982f1890318580976284              326 main/binary-amd64/Packages.gz
+ 2299bbcfa28c6b9d79ef70914aa419f84d04bac60cc50d3452943ee6aa811dca              111 main/binary-amd64/Release
+ fccdafa7feca7e33c62b055a876a28b0c5016289213b13e52a65ef4fd065113c              112 main/source/Release
+ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855                0 main/source/Sources
+ 9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64               20 main/source/Sources.gz

@@ -93,6 +93,27 @@
         }
       }
     },
+    "debmirror-test": {
+      "name": "debmirror-test",
+      "id": "debmirror-test",
+      "href": "/debmirror-test",
+      "synctype": "debmirror",
+      "syncrate": "PT1H",
+      "link": [],
+      "settings": {
+        "hidden": false,
+        "src": "http://debmirror-fixture:8000/debian",
+        "dst": "/srv/publish/debmirror-test",
+        "options": {
+          "check_gpg": true,
+          "keyring": "/etc/mirror/debmirror-test.gpg",
+          "rsync_extra": "none",
+          "diff": "none",
+          "cleanup": "postcleanup",
+          "timeout": 10
+        }
+      }
+    },
     "error-test": {
       "name": "error-test",
       "id": "error-test",
