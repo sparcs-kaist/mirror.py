@@ -12,17 +12,20 @@ import asyncio
 import gzip
 import os
 import stat
+import threading
 import time
-from collections import deque
+import zlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.formatted_text import FormattedText, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import (
     ConditionalContainer,
@@ -34,8 +37,9 @@ from prompt_toolkit.layout import (
     Window,
 )
 from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl, UIContent
 from prompt_toolkit.styles import Style
+from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import Frame, TextArea
 
 import mirror.socket.master
@@ -46,6 +50,34 @@ from mirror.structure import Package
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
+
+
+class _WidthAwareFormattedTextControl(FormattedTextControl):
+    """Formatted text control whose content factory receives its render width."""
+
+    def __init__(
+        self,
+        text_factory: Callable[[int], FormattedText],
+        **kwargs,
+    ) -> None:
+        self._render_width = 1
+        super().__init__(text=lambda: text_factory(self._render_width), **kwargs)
+
+    def _get_formatted_text_cached(self) -> FormattedText:
+        from prompt_toolkit.application.current import get_app
+
+        cache_key = (get_app().render_counter, self._render_width)
+        return self._fragment_cache.get(
+            cache_key, lambda: to_formatted_text(self.text, self.style)
+        )
+
+    def preferred_width(self, max_available_width: int) -> int:
+        self._render_width = max(1, max_available_width)
+        return super().preferred_width(max_available_width)
+
+    def create_content(self, width: int, height: Optional[int]) -> UIContent:
+        self._render_width = max(1, width)
+        return super().create_content(width, height)
 
 
 def format_duration(seconds: float) -> str:
@@ -186,11 +218,24 @@ def _fit_field(text: str, width: int) -> str:
     over-long values do not shift later columns and the header / body
     stay byte-for-byte aligned.
     """
-    if len(text) > width:
-        if width >= 3:
-            return text[: width - 2] + ".."
-        return text[:width]
-    return text.ljust(width)
+    if width <= 0:
+        return ""
+
+    display_width = get_cwidth(text)
+    if display_width <= width:
+        return text + (" " * (width - display_width))
+
+    marker = ".." if width >= 3 else ""
+    content_width = width - get_cwidth(marker)
+    chars: list[str] = []
+    used = 0
+    for char in text:
+        char_width = get_cwidth(char)
+        if used + char_width > content_width:
+            break
+        chars.append(char)
+        used += char_width
+    return "".join(chars) + (" " * (content_width - used)) + marker
 
 
 def _col_width(col: str) -> int:
@@ -241,31 +286,59 @@ def _visible_columns(terminal_cols: int) -> tuple[str, ...]:
     """Determine which columns to show based on terminal width.
 
     Args:
-        terminal_cols(int): Terminal width in characters.
+        terminal_cols(int): Available table pane width in terminal cells.
 
     Return:
         visible(tuple[str, ...]): Tuple of column names to render.
     """
-    if terminal_cols >= 140:
-        return _ALL_COLUMNS
-    if terminal_cols >= 110:
-        return ("PACKAGE", "STATUS", "STARTED", "LAST SUCCESS", "AGO")
-    return ("PACKAGE", "STATUS", "LAST SUCCESS", "AGO")
+    visible = list(_ALL_COLUMNS)
+    for column in ("AGO", "ELAPSED", "STARTED", "LAST SUCCESS"):
+        required = 2 + sum(_col_width(col) for col in visible) + len(visible) - 1
+        if required <= terminal_cols:
+            break
+        visible.remove(column)
+    return tuple(visible)
 
 
-def build_table_header(visible: tuple[str, ...] = _ALL_COLUMNS) -> list[tuple[str, str]]:
+def _column_widths(visible: tuple[str, ...], available_width: Optional[int]) -> dict[str, int]:
+    """Return column widths fitted to the available table pane width."""
+    widths = {column: _col_width(column) for column in visible}
+    if available_width is None or tuple(visible) != ("PACKAGE", "STATUS"):
+        return widths
+
+    overflow = 2 + sum(widths.values()) + len(visible) - 1 - available_width
+    if overflow <= 0:
+        return widths
+
+    package_reduction = min(overflow, widths["PACKAGE"] - 8)
+    widths["PACKAGE"] -= package_reduction
+    overflow -= package_reduction
+    status_reduction = min(overflow, widths["STATUS"] - 3)
+    widths["STATUS"] -= status_reduction
+    overflow -= status_reduction
+    if overflow > 0:
+        widths["PACKAGE"] = max(1, widths["PACKAGE"] - overflow)
+    return widths
+
+
+def build_table_header(
+    visible: tuple[str, ...] = _ALL_COLUMNS,
+    available_width: Optional[int] = None,
+) -> list[tuple[str, str]]:
     """Build the column header rows shown above the package table.
 
     Args:
         visible(tuple[str, ...]): Ordered column names to include.
+        available_width(int, optional): Available table pane width in terminal cells.
 
     Return:
         rows(list[tuple[str, str]]): Two (style, text) rows: the label row
             and a separator made of dashes.
     """
-    cells = [(col, _col_width(col)) for col in visible]
+    widths = _column_widths(visible, available_width)
+    cells = [(col, widths[col]) for col in visible]
     label_row = _format_table_row("  ", cells)
-    divider_cells = [("-" * _col_width(col), _col_width(col)) for col in visible]
+    divider_cells = [("-" * widths[col], widths[col]) for col in visible]
     divider_row = _format_table_row("  ", divider_cells)
     return [
         ("class:tableheader", label_row),
@@ -293,6 +366,7 @@ def build_table_rows(
     now: float,
     visible: tuple[str, ...] = _ALL_COLUMNS,
     selected_pkgid: str = "",
+    available_width: Optional[int] = None,
 ) -> list[tuple[str, str]]:
     """Build FormattedText rows for the table control.
 
@@ -302,11 +376,13 @@ def build_table_rows(
         now(float): Current epoch seconds.
         visible(tuple[str, ...]): Ordered column names to include.
         selected_pkgid(str): pkgid of the currently selected package.
+        available_width(int, optional): Available table pane width in terminal cells.
 
     Return:
         rows(list[tuple[str, str]]): List of (style, text) tuples.
     """
     rows: list[tuple[str, str]] = []
+    widths = _column_widths(visible, available_width)
     for idx, pkg in enumerate(packages):
         # Identity-based selection is preferred; fall back to index only when
         # selected_pkgid is not set (empty string means no identity provided).
@@ -327,7 +403,7 @@ def build_table_rows(
             "LAST SUCCESS": format_last_success(pkg),
             "AGO": format_ago(pkg.statusinfo.lastsuccesstime or 0.0, now),
         }
-        cells = [(cell_map[col], _col_width(col)) for col in visible]
+        cells = [(cell_map[col], widths[col]) for col in visible]
         prefix = "> " if is_selected else "  "
         line = _format_table_row(prefix, cells)
 
@@ -423,8 +499,10 @@ def build_help_text() -> FormattedText:
     lines = [
         ("class:tableheader", "  Key        Action\n"),
         ("class:tableheader.divider", "  ---------- ----------------------------------\n"),
-        ("", "  j / k      Move selection down / up\n"),
-        ("", "  g / G      Jump to first / last package\n"),
+        ("", "  j / k      Move in focused pane\n"),
+        ("", "  g / G      First / last package or whole log\n"),
+        ("", "  Home/End   First / last package or whole log\n"),
+        ("", "  PgUp/PgDn  Move through the focused log\n"),
         ("", "  x          Start or stop sync for selection\n"),
         ("", "  r          Refresh display\n"),
         ("", "  l          Toggle log pane\n"),
@@ -568,24 +646,6 @@ def safe_open_log_for_read(path: Path, base: Optional[Path]) -> Optional[int]:
     return fd
 
 
-def _is_rotated(fd: int, path: Path) -> bool:
-    """Return True if path-on-disk has a different inode/device than fd.
-
-    Args:
-        fd(int): Open file descriptor for the current log.
-        path(Path): Filesystem path that should still point to the same file.
-
-    Return:
-        rotated(bool): True when path now refers to a different inode or device.
-    """
-    try:
-        on_disk = path.stat()
-        on_fd = os.fstat(fd)
-    except OSError:
-        return True
-    return on_disk.st_ino != on_fd.st_ino or on_disk.st_dev != on_fd.st_dev
-
-
 def latest_completed_log(pkg: Package) -> Optional[Path]:
     """Return the package's most recent completed (success/error) log path.
 
@@ -616,72 +676,8 @@ LOG_INITIAL_LINES = 1000
 LOG_PAGE_LINES = 1000
 LOG_FOLLOW_MAX_LINES = 5000
 LOG_MAX_LOADED_LINES = 50000
-LOG_GZIP_MAX_LINES = 200000
-
-
-def _start_of_last_n_lines(fd: int, end: int, n: int) -> int:
-    """Return the byte offset where the last n complete lines before end begin.
-
-    Scans backward from byte position end (exclusive) over fd, counting newline
-    separators while ignoring a trailing newline at end-1. Returns 0 when the
-    region holds fewer than n lines. Used for both the initial tail (end=file
-    size) and page-up (end=current window start).
-
-    Args:
-        fd(int): Open, seekable file descriptor.
-        end(int): Exclusive end byte offset (a line boundary or EOF).
-        n(int): Number of trailing lines to retain.
-
-    Return:
-        start(int): Byte offset (line boundary) of the first retained line.
-    """
-    if n <= 0:
-        return end
-    if end <= 0:
-        return 0
-    block = 65536
-    pos = end
-    newlines = 0
-    while pos > 0:
-        size = min(block, pos)
-        pos -= size
-        os.lseek(fd, pos, os.SEEK_SET)
-        chunk = os.read(fd, size)
-        i = len(chunk) - 1
-        while i >= 0:
-            if chunk[i] == 0x0A:
-                abs_i = pos + i
-                if abs_i != end - 1:
-                    newlines += 1
-                    if newlines == n:
-                        return abs_i + 1
-            i -= 1
-    return 0
-
-
-def _read_bytes_range(fd: int, start: int, end: int) -> bytes:
-    """Read bytes [start, end) from fd.
-
-    Args:
-        fd(int): Open, seekable file descriptor.
-        start(int): Inclusive start byte offset.
-        end(int): Exclusive end byte offset.
-
-    Return:
-        data(bytes): The requested byte range (possibly short at EOF).
-    """
-    if end <= start:
-        return b""
-    os.lseek(fd, start, os.SEEK_SET)
-    out = bytearray()
-    remaining = end - start
-    while remaining > 0:
-        chunk = os.read(fd, min(65536, remaining))
-        if not chunk:
-            break
-        out += chunk
-        remaining -= len(chunk)
-    return bytes(out)
+LOG_READ_BLOCK_BYTES = 64 * 1024
+LOG_MAX_LOADED_BYTES = 8 * 1024 * 1024
 
 
 def _front_cut_offset(data: bytes, drop_lines: int) -> int:
@@ -703,30 +699,435 @@ def _front_cut_offset(data: bytes, drop_lines: int) -> int:
     return idx
 
 
-def read_gzip_lines(path: Path, base: Optional[Path], max_lines: int) -> Optional[list[str]]:
-    """Decompress a gzip log into a list of lines, keeping at most the last max_lines.
+class _LogCancelled(Exception):
+    """Raised when a background log read is cancelled."""
 
-    Uses safe_open_log_for_read for identical symlink/regular-file/base-path
-    checks, then streams the decompressed text line by line so peak memory is
-    bounded by max_lines.
 
-    Args:
-        path(Path): Path to the gzip log file.
-        base(Path, optional): Package log base directory for traversal check.
-        max_lines(int): Maximum number of trailing lines to retain.
+@dataclass(frozen=True)
+class _LogSnapshot:
+    """A bounded byte window into a log file."""
 
-    Return:
-        lines(list[str], optional): Trailing lines (keepends), or None on error.
+    data: bytes
+    start: int
+    end: int
+    size: int
+    more_above: bool
+    more_below: bool
+    reset: bool
+    segmented: bool
+
+
+class _LogReader:
+    """Read a bounded, pageable window from plain or gzip log files.
+
+    Instances are deliberately stateful and must be used by one worker thread.
+    Gzip sources are streamed into a private temporary file so paging has the
+    same byte-offset semantics as a plain log without retaining the full log in
+    memory.
     """
-    fd = safe_open_log_for_read(path, base)
-    if fd is None:
-        return None
-    try:
-        with os.fdopen(fd, "rb", closefd=True) as raw:
-            with gzip.open(raw, "rt", encoding="utf-8", errors="replace") as gz:
-                return list(deque(gz, maxlen=max_lines))
-    except (OSError, EOFError):
-        return None
+
+    def __init__(self) -> None:
+        self._path: Optional[Path] = None
+        self._base: Optional[Path] = None
+        self._live = False
+        self._fd: Optional[int] = None
+        self._temporary = None
+        self._source_identity: Optional[tuple[int, int]] = None
+        self._source_size = 0
+        self._data = b""
+        self._start = 0
+        self._end = 0
+        self._segmented = False
+
+    @staticmethod
+    def _cancelled(cancel: "threading.Event") -> None:
+        if cancel.is_set():
+            raise _LogCancelled()
+
+    @staticmethod
+    def _read_range(
+        fd: int, start: int, end: int, cancel: "threading.Event"
+    ) -> bytes:
+        """Read a caller-bounded byte range in fixed-size chunks."""
+        if end <= start:
+            return b""
+        os.lseek(fd, start, os.SEEK_SET)
+        remaining = min(end - start, LOG_MAX_LOADED_BYTES)
+        output = bytearray()
+        while remaining:
+            _LogReader._cancelled(cancel)
+            chunk = os.read(fd, min(LOG_READ_BLOCK_BYTES, remaining))
+            if not chunk:
+                break
+            output.extend(chunk)
+            remaining -= len(chunk)
+        return bytes(output)
+
+    @staticmethod
+    def _align_start(
+        fd: int, start: int, end: int, cancel: "threading.Event"
+    ) -> int:
+        """Advance a byte cap past UTF-8 continuation bytes."""
+        original = start
+        for _ in range(4):
+            if start >= end:
+                return start
+            _LogReader._cancelled(cancel)
+            os.lseek(fd, start, os.SEEK_SET)
+            byte = os.read(fd, 1)
+            if not byte or byte[0] & 0xC0 != 0x80:
+                return start
+            start += 1
+        return original
+
+    @staticmethod
+    def _align_end(
+        fd: int,
+        start: int,
+        end: int,
+        size: int,
+        cancel: "threading.Event",
+    ) -> int:
+        """Retreat a byte cap to a UTF-8 codepoint boundary."""
+        if end >= size:
+            return end
+        original = end
+        for _ in range(4):
+            if end <= start:
+                return end
+            _LogReader._cancelled(cancel)
+            os.lseek(fd, end, os.SEEK_SET)
+            byte = os.read(fd, 1)
+            if not byte or byte[0] & 0xC0 != 0x80:
+                return end
+            end -= 1
+        return original
+
+    @staticmethod
+    def _backward_start(
+        fd: int, end: int, lines: int, cancel: "threading.Event"
+    ) -> tuple[int, bool]:
+        """Find a page start, stopping at the raw-byte window limit."""
+        if end <= 0:
+            return 0, False
+        lower = max(0, end - LOG_MAX_LOADED_BYTES)
+        pos = end
+        newlines = 0
+        while pos > lower:
+            _LogReader._cancelled(cancel)
+            size = min(LOG_READ_BLOCK_BYTES, pos - lower)
+            pos -= size
+            os.lseek(fd, pos, os.SEEK_SET)
+            chunk = os.read(fd, size)
+            for index in range(len(chunk) - 1, -1, -1):
+                absolute = pos + index
+                if chunk[index] == 0x0A and absolute != end - 1:
+                    newlines += 1
+                    if newlines == lines:
+                        return absolute + 1, False
+        aligned = _LogReader._align_start(fd, lower, end, cancel)
+        return aligned, lower > 0
+
+    @staticmethod
+    def _forward_end(
+        fd: int, start: int, size: int, lines: int, cancel: "threading.Event"
+    ) -> tuple[int, bool]:
+        """Find a page end, stopping at the raw-byte window limit."""
+        upper = min(size, start + LOG_MAX_LOADED_BYTES)
+        pos = start
+        newlines = 0
+        while pos < upper:
+            _LogReader._cancelled(cancel)
+            amount = min(LOG_READ_BLOCK_BYTES, upper - pos)
+            os.lseek(fd, pos, os.SEEK_SET)
+            chunk = os.read(fd, amount)
+            if not chunk:
+                return pos, False
+            for index, byte in enumerate(chunk):
+                if byte == 0x0A:
+                    newlines += 1
+                    if newlines == lines:
+                        return pos + index + 1, False
+            pos += len(chunk)
+        aligned = _LogReader._align_end(fd, start, upper, size, cancel)
+        return aligned, upper < size
+
+    @staticmethod
+    def _line_count(data: bytes) -> int:
+        """Count complete lines plus a final unterminated line."""
+        return data.count(b"\n") + int(bool(data) and not data.endswith(b"\n"))
+
+    @staticmethod
+    def _trim_front(
+        data: bytes, start: int, max_lines: int
+    ) -> tuple[bytes, int, bool]:
+        """Apply line and byte caps, discarding from the oldest edge."""
+        segmented = False
+        excess = max(0, _LogReader._line_count(data) - max_lines)
+        cut = _front_cut_offset(data, excess) if excess else 0
+        if len(data) - cut > LOG_MAX_LOADED_BYTES:
+            cut = len(data) - LOG_MAX_LOADED_BYTES
+            original = cut
+            moves = 0
+            while (
+                moves < 3
+                and cut < len(data)
+                and data[cut] & 0xC0 == 0x80
+            ):
+                cut += 1
+                moves += 1
+            if cut < len(data) and data[cut] & 0xC0 == 0x80:
+                cut = original
+            segmented = True
+        return data[cut:], start + cut, segmented
+
+    @staticmethod
+    def _trim_back(
+        data: bytes, start: int, max_lines: int
+    ) -> tuple[bytes, int, bool]:
+        """Apply line and byte caps, discarding from the newest edge."""
+        segmented = False
+        if _LogReader._line_count(data) > max_lines:
+            cursor = 0
+            for _ in range(max_lines):
+                cursor = data.find(b"\n", cursor) + 1
+            data = data[:cursor]
+        if len(data) > LOG_MAX_LOADED_BYTES:
+            cut = LOG_MAX_LOADED_BYTES
+            original = cut
+            moves = 0
+            while moves < 3 and cut > 0 and data[cut] & 0xC0 == 0x80:
+                cut -= 1
+                moves += 1
+            if data[cut] & 0xC0 == 0x80:
+                cut = original
+            data = data[:cut]
+            segmented = True
+        return data, start + len(data), segmented
+
+    def _close_backing(self) -> None:
+        if self._temporary is not None:
+            self._temporary.close()
+        elif self._fd is not None:
+            os.close(self._fd)
+        self._fd = None
+        self._temporary = None
+
+    def close(self) -> None:
+        """Close the current source and discard its paging state."""
+        self._close_backing()
+        self._path = None
+        self._base = None
+        self._source_identity = None
+        self._source_size = 0
+        self._data = b""
+        self._start = 0
+        self._end = 0
+        self._segmented = False
+
+    def _open(
+        self,
+        path: Path,
+        base: Optional[Path],
+        live: bool,
+        cancel: "threading.Event",
+    ) -> None:
+        """Open and validate a source, preparing seekable gzip backing."""
+        import errno
+        import tempfile
+
+        self.close()
+        self._cancelled(cancel)
+        source_fd = safe_open_log_for_read(path, base)
+        if source_fd is None:
+            raise OSError(errno.EACCES, "log file rejected", str(path))
+        try:
+            source_stat = os.fstat(source_fd)
+        except BaseException:
+            os.close(source_fd)
+            raise
+        self._path = path
+        self._base = base
+        self._live = live
+        self._source_identity = (source_stat.st_dev, source_stat.st_ino)
+        self._source_size = source_stat.st_size
+
+        if path.suffix != ".gz":
+            self._fd = source_fd
+            return
+
+        temporary = None
+        try:
+            temporary = tempfile.TemporaryFile(mode="w+b")
+            with os.fdopen(source_fd, "rb", closefd=True) as raw:
+                with gzip.GzipFile(fileobj=raw, mode="rb") as compressed:
+                    while True:
+                        self._cancelled(cancel)
+                        chunk = compressed.read(LOG_READ_BLOCK_BYTES)
+                        if not chunk:
+                            break
+                        temporary.write(chunk)
+            temporary.flush()
+            self._temporary = temporary
+            self._fd = temporary.fileno()
+        except BaseException:
+            if temporary is not None:
+                temporary.close()
+            else:
+                os.close(source_fd)
+            self.close()
+            raise
+
+    def _source_changed(self, path: Path) -> bool:
+        """Return whether the on-disk source must be reopened."""
+        current = path.stat()
+        identity = (current.st_dev, current.st_ino)
+        if identity != self._source_identity:
+            return True
+        if current.st_size < self._source_size:
+            return True
+        if path.suffix == ".gz" and current.st_size != self._source_size:
+            return True
+        self._source_size = current.st_size
+        return False
+
+    def _load_tail(self, size: int, cancel: "threading.Event") -> None:
+        assert self._fd is not None
+        start, segmented = self._backward_start(
+            self._fd, size, LOG_INITIAL_LINES, cancel
+        )
+        self._data = self._read_range(self._fd, start, size, cancel)
+        self._start = start
+        self._end = start + len(self._data)
+        self._segmented = segmented
+
+    def _load_start(self, size: int, cancel: "threading.Event") -> None:
+        assert self._fd is not None
+        end, segmented = self._forward_end(
+            self._fd, 0, size, LOG_INITIAL_LINES, cancel
+        )
+        self._data = self._read_range(self._fd, 0, end, cancel)
+        self._start = 0
+        self._end = len(self._data)
+        self._segmented = segmented
+
+    def _read_unchecked(
+        self,
+        path: Path,
+        base: Optional[Path],
+        live: bool,
+        action: str,
+        cancel: "threading.Event",
+        following: bool = True,
+    ) -> _LogSnapshot:
+        """Read or move the bounded window for ``path``."""
+        if action not in {"tail", "start", "up", "down", "poll"}:
+            raise ValueError(f"unknown log reader action: {action}")
+        self._cancelled(cancel)
+
+        reset = False
+        source_key_changed = (
+            self._fd is None
+            or path != self._path
+            or base != self._base
+            or live != self._live
+        )
+        if source_key_changed:
+            self._open(path, base, live, cancel)
+            reset = True
+        else:
+            if self._source_changed(path):
+                self._open(path, base, live, cancel)
+                reset = True
+
+        assert self._fd is not None
+        size = os.fstat(self._fd).st_size
+        max_lines = (
+            LOG_FOLLOW_MAX_LINES if live and following else LOG_MAX_LOADED_LINES
+        )
+
+        effective_action = action
+        if reset and action in {"up", "down", "poll"}:
+            effective_action = "tail" if live and following else "start"
+
+        if effective_action == "tail":
+            self._load_tail(size, cancel)
+        elif effective_action == "start":
+            self._load_start(size, cancel)
+        elif effective_action == "up" and self._start > 0:
+            page_start, segmented = self._backward_start(
+                self._fd, self._start, LOG_PAGE_LINES, cancel
+            )
+            prefix = self._read_range(self._fd, page_start, self._start, cancel)
+            if len(prefix) != self._start - page_start:
+                raise OSError("log changed during backward read")
+            merged = prefix + self._data
+            merged, new_end, capped = self._trim_back(
+                merged, page_start, max_lines
+            )
+            self._data = merged
+            self._start = page_start
+            self._end = new_end
+            self._segmented = segmented or capped
+        elif effective_action == "down" and self._end < size:
+            old_end = self._end
+            page_end, segmented = self._forward_end(
+                self._fd, old_end, size, LOG_PAGE_LINES, cancel
+            )
+            suffix = self._read_range(self._fd, old_end, page_end, cancel)
+            merged, new_start, capped = self._trim_front(
+                self._data + suffix, self._start, max_lines
+            )
+            self._data = merged
+            self._start = new_start
+            self._end = self._start + len(self._data)
+            self._segmented = segmented or capped
+        elif effective_action == "poll" and live and following and size > self._end:
+            growth = size - self._end
+            if growth > LOG_MAX_LOADED_BYTES:
+                self._load_tail(size, cancel)
+            else:
+                suffix = self._read_range(self._fd, self._end, size, cancel)
+                merged, new_start, capped = self._trim_front(
+                    self._data + suffix, self._start, max_lines
+                )
+                self._data = merged
+                self._start = new_start
+                self._end = self._start + len(self._data)
+                self._segmented = capped
+
+        size = os.fstat(self._fd).st_size
+        if size < self._end:
+            raise OSError("log truncated during read")
+
+        return _LogSnapshot(
+            data=self._data,
+            start=self._start,
+            end=self._end,
+            size=size,
+            more_above=self._start > 0,
+            more_below=self._end < size,
+            reset=reset,
+            segmented=self._segmented,
+        )
+
+    def read(
+        self,
+        path: Path,
+        base: Optional[Path],
+        live: bool,
+        action: str,
+        cancel: "threading.Event",
+        following: bool = True,
+    ) -> _LogSnapshot:
+        """Read a window, closing the source if reading fails or is cancelled."""
+        try:
+            return self._read_unchecked(
+                path, base, live, action, cancel, following
+            )
+        except BaseException:
+            self.close()
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -756,14 +1157,13 @@ class TUIState:
     dialog: Optional[ConfirmDialog] = None
     show_log: bool = True
     log_tail_path: Optional[Path] = None
-    log_tail_offset: int = 0
     # True while live-tailing a running log; False when showing a static last log
     log_tail_live: bool = False
     # Windowed-loading state (see MirrorTUI log paging methods)
-    log_win_start: int = 0       # byte offset of the loaded window start (plain logs)
-    log_gzip_start: int = 0      # line index of the loaded window start (gzip logs)
     log_more_above: bool = False  # True when older lines exist above the window
-    log_was_at_top: bool = False  # previous-tick viewport-at-top flag (rising-edge guard)
+    log_more_below: bool = False
+    log_message: str = ""
+    log_following: bool = True
     # Identity-based selection (replaces index-based selected as source of truth)
     selected_pkgid: str = ""
     sort_mode: str = "default"
@@ -859,7 +1259,7 @@ class TUIState:
             self.log_tail_path = None
             self.log_tail_live = False
             self.log_more_above = False
-            self.log_was_at_top = False
+            self.log_more_below = False
 
     def current_package(self) -> Optional[Package]:
         """Return the currently selected package, or None if list is empty.
@@ -938,9 +1338,17 @@ class MirrorTUI:
         self._localtimezone: str = ""
         self._state = TUIState()
         self._client: Optional[mirror.socket.master.MasterClient] = None
-        self._log_fd: Optional[int] = None
-        self._log_win_bytes: bytes = b""           # loaded window bytes (plain logs)
-        self._log_gzip_lines: Optional[list[str]] = None  # cached lines (gzip logs)
+        self._log_reader = _LogReader()
+        self._log_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="mirror-tui-log"
+        )
+        self._log_cancel = threading.Event()
+        self._log_generation = 0
+        self._log_target: Optional[tuple[str, Path, bool, Optional[Path]]] = None
+        self._log_snapshot: Optional[_LogSnapshot] = None
+        self._log_jump: Optional[str] = None
+        self._log_page_position: Optional[int] = None
+        self._log_area: Optional[TextArea] = None
         self._app: Optional[Application] = None
         self._filter_buffer = Buffer(name="filter_input")
 
@@ -1026,53 +1434,108 @@ class MirrorTUI:
         )
 
         # --- Table ---
-        def get_table() -> FormattedText:
-            now = time.time()
-            # Determine responsive columns
-            try:
-                from prompt_toolkit.application.current import get_app as _get_app
-                terminal_cols = _get_app().output.get_size().columns
-            except Exception:
-                terminal_cols = 160
-
-            vis_cols = _visible_columns(terminal_cols)
-
-            # Toast row
-            toast_rows: list[tuple[str, str]] = []
+        def get_toast() -> FormattedText:
             if state.toast:
                 expires_at, cls, text = state.toast
                 if time.time() < expires_at:
-                    toast_rows = [(cls, text + "\n")]
-                else:
-                    state.toast = None
+                    return FormattedText([(cls, text)])
+                state.toast = None
+            return FormattedText([])
 
-            header_rows = build_table_header(vis_cols)
+        def toast_visible() -> bool:
+            if state.toast is None:
+                return False
+            if time.time() >= state.toast[0]:
+                state.toast = None
+                return False
+            return True
+
+        toast_win = ConditionalContainer(
+            content=Window(content=FormattedTextControl(get_toast), height=1),
+            filter=Condition(toast_visible),
+        )
+
+        def get_table_header(width: int) -> FormattedText:
+            return FormattedText(
+                build_table_header(_visible_columns(width), width)
+            )
+
+        table_header_control = _WidthAwareFormattedTextControl(get_table_header)
+        table_header_win = Window(
+            content=table_header_control,
+            height=2,
+            wrap_lines=False,
+        )
+
+        def get_table_body(width: int) -> FormattedText:
+            now = time.time()
+            vis_cols = _visible_columns(width)
             vis_pkgs = visible_packages(state)
             if not vis_pkgs:
-                body: list[tuple[str, str]] = [
-                    ("class:status.unknown", "  (no packages)\n")
-                ]
-            else:
-                body = build_table_rows(
-                    vis_pkgs, state.selected, now, vis_cols, state.selected_pkgid
+                return FormattedText(
+                    [("class:status.unknown", "  (no packages)\n")]
                 )
+            return FormattedText(
+                build_table_rows(
+                    vis_pkgs,
+                    state.selected,
+                    now,
+                    vis_cols,
+                    state.selected_pkgid,
+                    width,
+                )
+            )
 
-            return FormattedText(toast_rows + header_rows + body)
+        def get_table_cursor_position() -> Point:
+            packages = visible_packages(state)
+            index = next(
+                (
+                    index
+                    for index, package in enumerate(packages)
+                    if package.pkgid == state.selected_pkgid
+                ),
+                0,
+            )
+            return Point(x=0, y=index)
 
+        table_control = _WidthAwareFormattedTextControl(
+            get_table_body,
+            focusable=True,
+            get_cursor_position=get_table_cursor_position,
+        )
         table_win = Window(
-            content=FormattedTextControl(get_table),
+            content=table_control,
             wrap_lines=False,
             width=Dimension(weight=1, preferred=1),
+            always_hide_cursor=True,
         )
-        table_container = Frame(body=table_win, title="Packages")
+        table_container = Frame(
+            body=HSplit([toast_win, table_header_win, table_win]),
+            title="Packages",
+        )
 
         # --- Filter input bar (shown when filter_input_active) ---
-        def get_filter_prompt() -> FormattedText:
-            return FormattedText([("class:statusbar", f" Filter: {self._filter_buffer.text}_")])
+        def filter_changed(_buffer: Buffer) -> None:
+            old_pkgid = state.selected_pkgid
+            state.filter_text = self._filter_buffer.text
+            state.fix_selection()
+            if state.selected_pkgid != old_pkgid:
+                self._on_selection_change()
+
+        self._filter_buffer.on_text_changed += filter_changed
+        filter_control = BufferControl(buffer=self._filter_buffer, focusable=True)
 
         filter_win = ConditionalContainer(
-            content=Window(
-                content=FormattedTextControl(get_filter_prompt),
+            content=VSplit(
+                [
+                    Window(
+                        content=FormattedTextControl(
+                            FormattedText([("class:statusbar", " Filter: ")])
+                        ),
+                        width=9,
+                    ),
+                    Window(content=filter_control, height=1),
+                ],
                 height=1,
             ),
             filter=Condition(lambda: state.filter_input_active),
@@ -1092,14 +1555,19 @@ class MirrorTUI:
             pkg = state.current_package()
             if pkg is None:
                 return FormattedText([("class:header", " (no package selected) ")])
-            more = " +more" if state.log_more_above else ""
+            message = state.log_message
+            above = " ↑more" if state.log_more_above else ""
+            below = " ↓more" if state.log_more_below else ""
+            more = above + below
+            if message:
+                return FormattedText(
+                    [("class:header", f" {pkg.pkgid}  {message}{more} ")]
+                )
             if state.log_tail_path is None:
                 return FormattedText([("class:header", f" {pkg.pkgid}  (idle) ")])
             if not state.log_tail_live:
                 return FormattedText([("class:header", f" {pkg.pkgid}  (last log){more} ")])
-            buf = log_area.buffer
-            following = buf.cursor_position >= len(buf.text)
-            follow = "on" if following else "off"
+            follow = "on" if state.log_following else "off"
             return FormattedText(
                 [("class:header", f" {pkg.pkgid}  Follow: {follow}{more} ")]
             )
@@ -1182,7 +1650,12 @@ class MirrorTUI:
             ],
         )
 
-        return Layout(root), log_area
+        self._table_window = table_win
+        self._table_control = table_control
+        self._table_header_control = table_header_control
+        self._filter_control = filter_control
+        self._log_area = log_area
+        return Layout(root, focused_element=table_control), log_area
 
     def _build_keybindings(self, log_area: TextArea) -> KeyBindings:
         """Build keybindings for the application.
@@ -1193,163 +1666,245 @@ class MirrorTUI:
         Return:
             kb(KeyBindings): Configured key bindings.
         """
+        from prompt_toolkit.document import Document
+        from prompt_toolkit.filters import has_focus
+        from prompt_toolkit.key_binding.bindings.scroll import (
+            scroll_page_down,
+            scroll_page_up,
+        )
+
         kb = KeyBindings()
         state = self._state
+        no_modal = Condition(lambda: not _modal_active(state))
+        dialog_active = Condition(lambda: state.dialog is not None)
+        help_active = Condition(lambda: state.show_help)
+        filter_active = Condition(lambda: state.filter_input_active)
+        overlay_active = dialog_active | help_active
+        table_focused = has_focus(self._table_control)
+        log_focused = has_focus(log_area)
 
-        @kb.add("q")
-        @kb.add("c-c")
-        def _quit(event) -> None:
-            if _modal_active(state):
+        def change_selection(offset: int) -> None:
+            packages = visible_packages(state)
+            if not packages:
                 return
+            ids = [package.pkgid for package in packages]
+            try:
+                old_index = ids.index(state.selected_pkgid)
+            except ValueError:
+                old_index = 0
+            new_index = min(max(old_index + offset, 0), len(ids) - 1)
+            new_pkgid = ids[new_index]
+            if new_pkgid != state.selected_pkgid:
+                state.selected_pkgid = new_pkgid
+                self._on_selection_change()
+
+        def restore_filter_focus(event) -> None:
+            control = getattr(self, "_focus_before_filter", self._table_control)
+            try:
+                event.app.layout.focus(control)
+            except ValueError:
+                event.app.layout.focus(self._table_control)
+
+        def _guard_overlay_navigation(event) -> None:
+            pass
+
+        for key in (
+            "up",
+            "down",
+            "left",
+            "right",
+            "pageup",
+            "pagedown",
+            "home",
+            "end",
+            "tab",
+            "j",
+            "k",
+            "g",
+            "G",
+        ):
+            kb.add(key, filter=overlay_active, eager=True)(
+                _guard_overlay_navigation
+            )
+
+        @kb.add("q", filter=no_modal)
+        @kb.add("c-c", filter=no_modal)
+        def _quit(event) -> None:
             event.app.exit()
 
-        @kb.add("j")
-        @kb.add("down")
+        @kb.add("j", filter=no_modal & table_focused)
+        @kb.add("down", filter=no_modal & table_focused)
         def _down(event) -> None:
-            if _modal_active(state):
-                return
-            visible = visible_packages(state)
-            if not visible:
-                return
-            ids = [p.pkgid for p in visible]
-            try:
-                idx = ids.index(state.selected_pkgid)
-            except ValueError:
-                idx = 0
-            state.selected_pkgid = ids[min(idx + 1, len(ids) - 1)]
-            self._on_selection_change()
+            change_selection(1)
 
-        @kb.add("k")
-        @kb.add("up")
+        @kb.add("k", filter=no_modal & table_focused)
+        @kb.add("up", filter=no_modal & table_focused)
         def _up(event) -> None:
-            if _modal_active(state):
-                return
-            visible = visible_packages(state)
-            if not visible:
-                return
-            ids = [p.pkgid for p in visible]
-            try:
-                idx = ids.index(state.selected_pkgid)
-            except ValueError:
-                idx = 0
-            state.selected_pkgid = ids[max(idx - 1, 0)]
-            self._on_selection_change()
+            change_selection(-1)
 
-        @kb.add("g")
-        @kb.add("home")
+        @kb.add("j", filter=no_modal & log_focused)
+        @kb.add("down", filter=no_modal & log_focused)
+        def _log_down(event) -> None:
+            document = log_area.buffer.document
+            if (
+                document.cursor_position_row >= document.line_count - 1
+                and state.log_more_below
+            ):
+                self._request_log_page("down")
+            else:
+                log_area.buffer.cursor_down(count=1)
+
+        @kb.add("k", filter=no_modal & log_focused)
+        @kb.add("up", filter=no_modal & log_focused)
+        def _log_up(event) -> None:
+            if (
+                log_area.buffer.document.cursor_position_row == 0
+                and state.log_more_above
+            ):
+                self._request_log_page("up")
+            else:
+                log_area.buffer.cursor_up(count=1)
+
+        @kb.add("pageup", filter=no_modal & log_focused)
+        def _log_page_up(event) -> None:
+            render_info = log_area.window.render_info
+            if (
+                state.log_more_above
+                and render_info is not None
+                and render_info.first_visible_line() == 0
+            ):
+                self._request_log_page("up")
+            else:
+                scroll_page_up(event)
+
+        @kb.add("pagedown", filter=no_modal & log_focused)
+        def _log_page_down(event) -> None:
+            render_info = log_area.window.render_info
+            if (
+                state.log_more_below
+                and render_info is not None
+                and render_info.last_visible_line()
+                >= log_area.buffer.document.line_count - 1
+            ):
+                self._request_log_page("down")
+            else:
+                scroll_page_down(event)
+
+        @kb.add("g", filter=no_modal & table_focused)
+        @kb.add("home", filter=no_modal & table_focused)
         def _first(event) -> None:
-            if _modal_active(state):
-                return
-            visible = visible_packages(state)
-            if visible:
-                state.selected_pkgid = visible[0].pkgid
+            packages = visible_packages(state)
+            if packages and packages[0].pkgid != state.selected_pkgid:
+                state.selected_pkgid = packages[0].pkgid
                 self._on_selection_change()
 
-        @kb.add("G")
-        @kb.add("end")
+        @kb.add("G", filter=no_modal & table_focused)
+        @kb.add("end", filter=no_modal & table_focused)
         def _last(event) -> None:
-            if _modal_active(state):
-                return
-            visible = visible_packages(state)
-            if visible:
-                state.selected_pkgid = visible[-1].pkgid
+            packages = visible_packages(state)
+            if packages and packages[-1].pkgid != state.selected_pkgid:
+                state.selected_pkgid = packages[-1].pkgid
                 self._on_selection_change()
-            # Re-enable follow in log pane
-            self._reset_log_follow(log_area)
 
-        @kb.add("r")
+        @kb.add("g", filter=no_modal & log_focused)
+        @kb.add("home", filter=no_modal & log_focused)
+        def _log_first(event) -> None:
+            self._request_log_jump("start")
+
+        @kb.add("G", filter=no_modal & log_focused)
+        @kb.add("end", filter=no_modal & log_focused)
+        def _log_last(event) -> None:
+            self._request_log_jump("end")
+
+        @kb.add("r", filter=no_modal)
         def _refresh(event) -> None:
-            if _modal_active(state):
-                return
-            # The poller will pick this up on next tick; just invalidate
             event.app.invalidate()
 
-        @kb.add("l")
+        @kb.add("l", filter=no_modal)
         def _toggle_log(event) -> None:
-            if _modal_active(state):
-                return
             state.toggle_log()
+            self._on_selection_change()
+            if not state.show_log:
+                event.app.layout.focus(self._table_control)
 
-        @kb.add("tab")
+        @kb.add("tab", filter=no_modal)
         def _tab_focus(event) -> None:
-            if _modal_active(state):
-                return
-            if state.show_log:
-                event.app.layout.focus_next()
+            if not state.show_log:
+                event.app.layout.focus(self._table_control)
+            elif event.app.layout.has_focus(log_area):
+                event.app.layout.focus(self._table_control)
+            else:
+                event.app.layout.focus(log_area)
 
-        @kb.add("s")
+        @kb.add("s", filter=no_modal)
         def _sort(event) -> None:
-            if _modal_active(state):
-                return
+            old_pkgid = state.selected_pkgid
             idx = _SORT_CYCLE.index(state.sort_mode)
             state.sort_mode = _SORT_CYCLE[(idx + 1) % len(_SORT_CYCLE)]
             state.fix_selection()
+            if state.selected_pkgid != old_pkgid:
+                self._on_selection_change()
 
-        @kb.add("/")
+        @kb.add("/", filter=no_modal)
         def _filter_enter(event) -> None:
-            if _modal_active(state):
-                return
+            self._focus_before_filter = event.app.layout.current_control
             state.filter_input_active = True
             self._filter_buffer.set_document(
-                self._filter_buffer.document.__class__(""), bypass_readonly=False
+                Document(state.filter_text, cursor_position=len(state.filter_text)),
+                bypass_readonly=False,
             )
+            event.app.layout.focus(self._filter_control)
 
-        @kb.add("p")
+        @kb.add("p", filter=no_modal)
         def _pause(event) -> None:
-            if _modal_active(state):
-                return
             state.paused = not state.paused
 
-        @kb.add("?")
+        @kb.add("?", filter=~dialog_active & ~filter_active)
         def _help(event) -> None:
-            if state.dialog is not None or state.filter_input_active:
-                return
             state.show_help = not state.show_help
 
-        @kb.add("escape")
-        def _escape(event) -> None:
-            if state.filter_input_active:
-                state.filter_input_active = False
-                return
-            if state.show_help:
-                state.show_help = False
-                return
+        @kb.add("escape", filter=filter_active, eager=True)
+        def _filter_escape(event) -> None:
+            state.filter_input_active = False
+            restore_filter_focus(event)
+
+        @kb.add("enter", filter=filter_active)
+        def _filter_accept(event) -> None:
+            state.filter_input_active = False
+            restore_filter_focus(event)
+
+        @kb.add("escape", filter=help_active, eager=True)
+        def _help_escape(event) -> None:
+            state.show_help = False
+
+        @kb.add("escape", filter=dialog_active, eager=True)
+        def _dialog_escape(event) -> None:
             state.cancel_dialog()
 
-        @kb.add("enter")
-        def _enter(event) -> None:
-            if state.filter_input_active:
-                state.filter_text = self._filter_buffer.text
-                state.filter_input_active = False
-                state.fix_selection()
+        @kb.add("enter", filter=dialog_active)
+        def _dialog_enter(event) -> None:
+            if state.dialog is None:
                 return
-            if state.dialog is not None:
-                if state.dialog.selected == 0:
-                    # Yes — schedule the RPC as a task to avoid blocking the loop
-                    if self._client is not None:
-                        asyncio.ensure_future(
-                            state.confirm_dialog_async(self._client, event.app)
-                        )
-                    else:
-                        state.cancel_dialog()
+            if state.dialog.selected == 0:
+                if self._client is not None:
+                    event.app.create_background_task(
+                        state.confirm_dialog_async(self._client, event.app)
+                    )
                 else:
                     state.cancel_dialog()
-                return
+            else:
+                state.cancel_dialog()
 
-        @kb.add("left")
+        @kb.add("left", filter=dialog_active)
         def _dialog_left(event) -> None:
-            if state.dialog is not None:
-                state.dialog.selected = 0
+            state.dialog.selected = 0
 
-        @kb.add("right")
+        @kb.add("right", filter=dialog_active)
         def _dialog_right(event) -> None:
-            if state.dialog is not None:
-                state.dialog.selected = 1
+            state.dialog.selected = 1
 
-        @kb.add("x")
+        @kb.add("x", filter=no_modal)
         def _trigger(event) -> None:
-            if _modal_active(state):
-                return
             pkg = state.current_package()
             if pkg is None:
                 return
@@ -1359,438 +1914,288 @@ class MirrorTUI:
             action = "stop" if pkg.status == "SYNC" else "start"
             state.open_dialog(action, pkg.pkgid)
 
-        # --- Filter input: route printable keys to the buffer ---
-        @kb.add("<any>")
-        def _filter_keypress(event) -> None:
-            if not state.filter_input_active:
-                return
-            key = event.key_sequence[0].key
-            # Ignore special keys
-            if len(key) != 1:
-                return
-            self._filter_buffer.insert_text(key)
-            # Update filter in real time
-            state.filter_text = self._filter_buffer.text
-            state.fix_selection()
-
-        @kb.add("backspace")
-        def _filter_backspace(event) -> None:
-            if not state.filter_input_active:
-                return
-            self._filter_buffer.delete_before_cursor(1)
-            state.filter_text = self._filter_buffer.text
-            state.fix_selection()
-
         return kb
 
     def _on_selection_change(self) -> None:
-        """Handle package selection change: reset log window and tail state."""
-        self._reset_log_window()
-        self._state.log_tail_path = None
-        self._state.log_tail_live = False
+        """Cancel obsolete reads and immediately remove the previous log."""
+        self._log_cancel.set()
+        self._log_cancel = threading.Event()
+        self._log_generation += 1
+        self._log_target = None
+        self._log_snapshot = None
+        self._log_jump = None
+        self._log_page_position = None
+        state = self._state
+        state.log_tail_path = None
+        state.log_tail_live = False
+        state.log_more_above = False
+        state.log_more_below = False
+        state.log_following = False
+        state.log_message = ""
+        if self._log_area is not None:
+            self._set_log_text(self._log_area, "", 0)
+            self._log_area.window.vertical_scroll = 0
 
-    def _reset_log_window(self) -> None:
-        """Clear the loaded log window and release the tail file descriptor."""
-        st = self._state
-        st.log_tail_offset = 0
-        st.log_win_start = 0
-        st.log_gzip_start = 0
-        st.log_more_above = False
-        st.log_was_at_top = False
-        self._log_win_bytes = b""
-        self._log_gzip_lines = None
-        if self._log_fd is not None:
-            os.close(self._log_fd)
-            self._log_fd = None
+    def _request_log_jump(self, destination: str) -> None:
+        """Request a jump to the physical start or end of the log."""
+        self._log_jump = "tail" if destination == "end" else "start"
+        self._state.log_following = destination == "end"
+        if self._app is not None:
+            self._app.invalidate()
 
-    def _reset_log_follow(self, log_area: TextArea) -> None:
-        """Move log area cursor to end to re-enable auto-follow.
+    def _request_log_page(self, direction: str) -> None:
+        """Load an adjacent disk window after navigation reaches a buffer edge."""
+        self._log_jump = direction
+        self._state.log_following = False
+        if self._app is not None:
+            self._app.invalidate()
 
-        Args:
-            log_area(TextArea): The log pane text area.
-        """
-        buf = log_area.buffer
-        buf.cursor_position = len(buf.text)
-
-    def _connect_client(self) -> bool:
-        """Connect or reconnect the master client.
-
-        Return:
-            ok(bool): True if connected successfully.
-        """
-        if self._client is not None:
-            try:
-                self._client.disconnect()
-            except Exception:
-                pass
-            self._client = None
+    async def _connect_client(self) -> bool:
+        """Connect off the UI thread and clean up an unclaimed connection."""
+        client = mirror.socket.master.MasterClient(socket_path=self._socket_path)
+        pending = asyncio.create_task(asyncio.to_thread(client.connect))
         try:
-            client = mirror.socket.master.MasterClient(socket_path=self._socket_path)
-            client.connect()
-            self._client = client
-            return True
+            await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            # Let the bounded handshake finish before releasing its socket.
+            try:
+                await pending
+            except Exception:
+                pass  # Cancellation owns cleanup regardless of handshake outcome.
+            finally:
+                await asyncio.to_thread(client.disconnect)
+            raise
         except Exception as exc:
             self._state.last_poll_error = str(exc)
+            await asyncio.to_thread(client.disconnect)
             return False
+        self._client = client
+        return True
 
     async def _poll_once(self, app: Application, was_connected: bool) -> bool:
-        """Run one polling iteration. Returns the new was_connected value.
-
-        Args:
-            app(Application): Running application (for invalidate calls).
-            was_connected(bool): Connection state at entry to this tick.
-
-        Return:
-            was_connected(bool): True if list_packages succeeded this tick,
-                False otherwise.
-        """
+        """Poll package state without blocking the terminal event loop."""
         state = self._state
-
-        # Short-circuit when paused; clock still ticks via app.invalidate in caller
         if state.paused:
             return was_connected
-
+        client = self._client
         try:
-            if self._client is None:
-                if not self._connect_client():
+            if client is None:
+                if not await self._connect_client():
                     state.connected = False
                     await asyncio.sleep(2.0)
                     return False
-
-            payload = await asyncio.to_thread(self._client.list_packages)
-            new_packages = packages_from_rpc(payload)
-            state.packages = new_packages
-
-            # Fix up selected_pkgid if the package disappeared
-            new_ids = {p.pkgid for p in new_packages}
-            if state.selected_pkgid and state.selected_pkgid not in new_ids:
-                state.fix_selection()
-            elif not state.selected_pkgid and new_packages:
-                visible = visible_packages(state)
-                if visible:
-                    state.selected_pkgid = visible[0].pkgid
-
-            # Keep legacy selected index in sync (back-compat)
+                client = self._client
+            payload = await asyncio.to_thread(client.list_packages)
+            state.packages = packages_from_rpc(payload)
+            old_selection = state.selected_pkgid
+            state.fix_selection()
+            if old_selection != state.selected_pkgid:
+                self._on_selection_change()
+            # A path or live/static transition also invalidates old content.
+            if self._log_target is not None and self._current_log_target() != self._log_target:
+                self._on_selection_change()
             state.selected = max(0, min(state.selected, len(state.packages) - 1))
             state.connected = True
             state.last_poll_error = None
-
-            # Fetch runtime info when not yet populated, or on reconnect
-            needs_runtime = (
-                self._mirrorname == "" and self._log_base is None
-            ) or (not was_connected)
-            if needs_runtime:
+            if (not self._mirrorname and self._log_base is None) or not was_connected:
                 try:
-                    info = await asyncio.to_thread(self._client.get_runtime_info)
+                    info = await asyncio.to_thread(client.get_runtime_info)
                     self._apply_runtime_info(info)
-                except Exception:
-                    pass
-
+                except Exception as exc:
+                    state._set_toast("class:warning", f"Runtime info unavailable: {exc}")
             return True
         except Exception as exc:
             state.connected = False
             state.last_poll_error = str(exc)
-            try:
-                self._client.disconnect()
-            except Exception:
-                pass
-            self._client = None
+            if client is not None:
+                await asyncio.to_thread(client.disconnect)
+            if self._client is client:
+                self._client = None
             return False
 
     async def _status_poller(self, app: Application) -> None:
-        """Background task: poll daemon every 1.0s and update state.
-
-        Args:
-            app(Application): Running application (for invalidate calls).
-        """
+        """Refresh daemon state once per second."""
         was_connected = False
         while True:
             was_connected = await self._poll_once(app, was_connected)
             app.invalidate()
             await asyncio.sleep(1.0)
 
-    async def _log_tailer(self, app: Application, log_area: TextArea) -> None:
-        """Background task: maintain the selected package's log pane at 0.5s.
-
-        Dispatches to the live tail (running log) or the static latest-log
-        view, then evaluates the scroll-to-top backward-paging trigger.
-
-        Args:
-            app(Application): Running application (for invalidate calls).
-            log_area(TextArea): Log pane text area to write content to.
-        """
-        state = self._state
-        while True:
-            await asyncio.sleep(0.5)
-
-            if not state.show_log:
-                continue
-
-            pkg = state.current_package()
-            if pkg is None:
-                continue
-
-            runninglog = pkg.statusinfo.runninglog
-            if runninglog:
-                self._tail_live(app, log_area, Path(runninglog))
-            else:
-                self._show_latest_log(app, log_area, pkg)
-
-            self._maybe_load_more_above(app, log_area)
+    def _current_log_target(self) -> Optional[tuple[str, Path, bool, Optional[Path]]]:
+        """Identify the package and physical log currently requested by the UI."""
+        if not self._state.show_log:
+            return None
+        pkg = self._state.current_package()
+        if pkg is None:
+            return None
+        running = pkg.statusinfo.runninglog
+        path = Path(running) if running else latest_completed_log(pkg)
+        if path is None:
+            return None
+        return pkg.pkgid, path, bool(running), self._log_base
 
     def _set_log_text(self, log_area: TextArea, text: str, cursor: int) -> None:
-        """Replace the log pane text, placing the cursor at the given offset.
+        """Replace log text on the UI thread with a bounded cursor position."""
+        from prompt_toolkit.document import Document
 
-        Args:
-            log_area(TextArea): The log pane text area.
-            text(str): Full text to display.
-            cursor(int): Cursor position (len(text) keeps follow active).
-        """
-        buf = log_area.buffer
-        buf.set_document(
-            buf.document.__class__(text, cursor_position=cursor),
+        log_area.buffer.set_document(
+            Document(text, cursor_position=max(0, min(cursor, len(text)))),
             bypass_readonly=True,
         )
 
-    def _trim_front(self, max_lines: int) -> int:
-        """Drop leading lines so the plain window holds at most max_lines lines.
-
-        Cuts only at newline boundaries, so a multibyte UTF-8 sequence is never
-        split. Advances log_win_start by the dropped byte count.
-
-        Args:
-            max_lines(int): Maximum number of lines to retain.
-
-        Return:
-            dropped_chars(int): Number of characters removed from the front
-                (for cursor adjustment), 0 if nothing was dropped.
-        """
-        wb = self._log_win_bytes
-        lines = wb.count(b"\n")
-        if lines <= max_lines:
-            return 0
-        cut = _front_cut_offset(wb, lines - max_lines)
-        dropped = wb[:cut]
-        self._log_win_bytes = wb[cut:]
-        self._state.log_win_start += cut
-        # Trimmed-away lines remain on disk above the window: enable page-up.
-        self._state.log_more_above = self._state.log_win_start > 0
-        return len(dropped.decode("utf-8", errors="replace"))
-
-    def _tail_live(self, app: Application, log_area: TextArea, new_path: Path) -> None:
-        """Live-tail a running log with windowed initial load and follow.
-
-        Args:
-            app(Application): Running application (for invalidate calls).
-            log_area(TextArea): Log pane text area to write content to.
-            new_path(Path): Path to the running log file.
-        """
-        state = self._state
-
-        if new_path != state.log_tail_path or not state.log_tail_live:
-            self._reset_log_window()
-            state.log_tail_path = new_path
-            state.log_tail_live = True
-
-        # Open and load the initial tail window.
-        if self._log_fd is None:
-            fd = safe_open_log_for_read(new_path, self._log_base)
-            if fd is None:
-                return
-            try:
-                size = os.fstat(fd).st_size
-            except OSError:
-                os.close(fd)
-                return
-            self._log_fd = fd
-            start = _start_of_last_n_lines(fd, size, LOG_INITIAL_LINES)
-            self._log_win_bytes = _read_bytes_range(fd, start, size)
-            state.log_win_start = start
-            state.log_more_above = start > 0
-            text = self._log_win_bytes.decode("utf-8", errors="replace")
-            self._set_log_text(log_area, text, len(text))
-            app.invalidate()
-            return
-
-        try:
-            st = os.fstat(self._log_fd)
-        except OSError:
-            self._reset_log_window()
-            return
-
-        eof = state.log_win_start + len(self._log_win_bytes)
-        if _is_rotated(self._log_fd, new_path) or st.st_size < eof:
-            # Rotated or truncated: drop the window and reload next tick.
-            self._reset_log_window()
-            self._set_log_text(log_area, "", 0)
-            app.invalidate()
-            return
-
-        if st.st_size <= eof:
-            return  # No new data.
-
-        chunk = _read_bytes_range(self._log_fd, eof, st.st_size)
-        if not chunk:
-            return
-
+    def _log_action(self, log_area: TextArea) -> tuple[str, bool]:
+        """Choose paging from the current viewport and the physical file edges."""
+        snapshot = self._log_snapshot
+        if self._log_jump is not None:
+            action, self._log_jump = self._log_jump, None
+            return action, action == "tail"
+        if snapshot is None:
+            return "tail", True
         buf = log_area.buffer
-        old_cursor = buf.cursor_position
-        following = old_cursor >= len(buf.text)
-        self._log_win_bytes += chunk
-
-        dropped = 0
-        if following:
-            dropped = self._trim_front(LOG_FOLLOW_MAX_LINES)
-        else:
-            dropped = self._trim_front(LOG_MAX_LOADED_LINES)
-
-        text = self._log_win_bytes.decode("utf-8", errors="replace")
-        cursor = len(text) if following else max(0, old_cursor - dropped)
-        self._set_log_text(log_area, text, cursor)
-        app.invalidate()
-
-    def _load_more_above(self, log_area: TextArea) -> bool:
-        """Load the previous page of lines and prepend them, preserving the view.
-
-        Args:
-            log_area(TextArea): The log pane text area.
-
-        Return:
-            loaded(bool): True if older lines were prepended.
-        """
-        state = self._state
-        if not state.log_more_above:
-            return False
-
-        if self._log_gzip_lines is not None:
-            old_start = state.log_gzip_start
-            new_start = max(0, old_start - LOG_PAGE_LINES)
-            if new_start >= old_start:
-                state.log_more_above = old_start > 0
-                return False
-            prepend = "".join(self._log_gzip_lines[new_start:old_start])
-            state.log_gzip_start = new_start
-            state.log_more_above = new_start > 0
-            text = "".join(self._log_gzip_lines[new_start:])
-        else:
-            if self._log_fd is None or state.log_win_start <= 0:
-                state.log_more_above = state.log_win_start > 0
-                return False
-            new_start = _start_of_last_n_lines(
-                self._log_fd, state.log_win_start, LOG_PAGE_LINES
-            )
-            prepend_bytes = _read_bytes_range(self._log_fd, new_start, state.log_win_start)
-            if not prepend_bytes:
-                state.log_more_above = False
-                return False
-            self._log_win_bytes = prepend_bytes + self._log_win_bytes
-            state.log_win_start = new_start
-            state.log_more_above = new_start > 0
-            prepend = prepend_bytes.decode("utf-8", errors="replace")
-            text = self._log_win_bytes.decode("utf-8", errors="replace")
-
-        # Keep the previously-first line in view: cursor at its start, viewport
-        # scrolled down by the number of prepended lines (best-effort).
-        self._set_log_text(log_area, text, len(prepend))
-        try:
-            log_area.window.vertical_scroll = prepend.count("\n")
-        except Exception:
-            pass
-        return True
-
-    def _maybe_load_more_above(self, app: Application, log_area: TextArea) -> None:
-        """Load older lines once when the viewport newly reaches the top.
-
-        Uses a rising-edge guard so paging happens at most once per arrival at
-        the top, regardless of whether the viewport-scroll reset takes effect.
-
-        Args:
-            app(Application): Running application (for focus/invalidate).
-            log_area(TextArea): The log pane text area.
-        """
-        state = self._state
-        ri = getattr(log_area.window, "render_info", None)
-        at_top = (
-            state.show_log
-            and app.layout.has_focus(log_area)
-            and ri is not None
-            and ri.vertical_scroll == 0
+        at_end = buf.cursor_position == len(buf.text)
+        following = at_end and (
+            self._state.log_following or not snapshot.more_below
         )
-        if at_top and not state.log_was_at_top and state.log_more_above:
-            if self._load_more_above(log_area):
-                app.invalidate()
-        state.log_was_at_top = at_top
+        self._state.log_following = following and self._state.log_tail_live
+        position = buf.cursor_position
+        if position == self._log_page_position:
+            return "poll", following
+        self._log_page_position = None
+        if self._app is not None and self._app.layout.has_focus(log_area):
+            ri = log_area.window.render_info
+            if (
+                snapshot.more_above and not following and ri is not None
+                and ri.vertical_scroll == 0
+                and (not snapshot.segmented or buf.cursor_position == 0)
+            ):
+                return "up", False
+            if snapshot.more_below and not following and ri is not None:
+                last_line = max(ri.displayed_lines, default=-1)
+                if (
+                    last_line >= buf.document.line_count - 1
+                    and (not snapshot.segmented or at_end)
+                ):
+                    return "down", False
+        return "poll", following
 
-    def _show_latest_log(self, app: Application, log_area: TextArea, pkg: Package) -> None:
-        """Display the package's latest completed log statically (windowed).
+    def _apply_log_snapshot(
+        self, log_area: TextArea, snapshot: "_LogSnapshot", action: str
+    ) -> None:
+        """Install a read result while retaining absolute cursor and viewport anchors."""
+        import re
 
-        Loads the most recent success/error log (gzip-aware) with only the last
-        LOG_INITIAL_LINES lines shown; older lines load on scroll-to-top. Shows
-        a blank pane when the package has no completed log recorded.
-
-        Args:
-            app(Application): Running application (for invalidate calls).
-            log_area(TextArea): Log pane text area to write content to.
-            pkg(Package): Currently selected package.
-        """
+        previous = self._log_snapshot
+        buf = log_area.buffer
+        cursor_byte = view_byte = snapshot.start
+        was_at_end = buf.cursor_position == len(buf.text)
+        if previous is not None:
+            decoded = previous.data.decode("utf-8", errors="surrogateescape")
+            cursor_byte = previous.start + len(
+                decoded[:buf.cursor_position].encode("utf-8", errors="surrogateescape")
+            )
+            view_char = buf.document.translate_row_col_to_index(
+                log_area.window.vertical_scroll, 0
+            )
+            view_byte = previous.start + len(
+                decoded[:view_char].encode("utf-8", errors="surrogateescape")
+            )
+        decoded = snapshot.data.decode("utf-8", errors="surrogateescape")
+        text = re.sub(r"[\udc80-\udcff]", "\ufffd", decoded)
+        jump_end = action == "tail" or (snapshot.reset and action != "start")
+        keep_end = (
+            action == "poll" and was_at_end and previous is not None
+            and (self._state.log_following or not previous.more_below)
+        )
+        if jump_end or keep_end:
+            cursor = len(text)
+        elif action == "start":
+            cursor = 0
+        else:
+            offset = max(0, min(cursor_byte - snapshot.start, len(snapshot.data)))
+            cursor = len(snapshot.data[:offset].decode("utf-8", errors="surrogateescape"))
+        self._set_log_text(log_area, text, cursor)
+        if action == "start":
+            log_area.window.vertical_scroll = 0
+        elif not jump_end and not keep_end:
+            offset = max(0, min(view_byte - snapshot.start, len(snapshot.data)))
+            log_area.window.vertical_scroll = snapshot.data[:offset].count(b"\n")
+        self._log_snapshot = snapshot
         state = self._state
-        latest = latest_completed_log(pkg)
+        state.log_more_above = snapshot.more_above
+        state.log_more_below = snapshot.more_below
+        state.log_following = (
+            state.log_tail_live and cursor == len(text)
+            and (jump_end or keep_end or not snapshot.more_below)
+        )
+        state.log_message = "partial line segment" if snapshot.segmented else ""
+        if action in {"up", "down"}:
+            self._log_page_position = buf.cursor_position
 
-        # Transition from a live tail to the static view: drop the live window.
-        if state.log_tail_live:
-            self._reset_log_window()
-            state.log_tail_live = False
-            state.log_tail_path = None
-
-        if latest is None:
-            # No completed log: blank the pane if anything is still shown
-            # (e.g. the previously selected package's log).
-            if state.log_tail_path is not None or log_area.buffer.text:
-                self._reset_log_window()
-                state.log_tail_path = None
+    async def _poll_log_once(self, app: Application, log_area: TextArea) -> None:
+        """Perform at most one serialized disk operation and reject obsolete results."""
+        self._log_area = log_area
+        target = self._current_log_target()
+        if target != self._log_target:
+            pending_jump = self._log_jump
+            self._on_selection_change()
+            self._log_target = target
+            self._log_jump = pending_jump
+        loop = asyncio.get_running_loop()
+        if target is None:
+            self._log_jump = None
+            if self._log_snapshot is not None or log_area.text:
+                self._on_selection_change()
+            await loop.run_in_executor(self._log_executor, self._log_reader.close)
+            self._state.log_message = "no log"
+            return
+        generation = self._log_generation
+        cancel = self._log_cancel
+        _, path, live, base = target
+        action, following = self._log_action(log_area)
+        self._state.log_tail_path = path
+        self._state.log_tail_live = live
+        if self._log_snapshot is None:
+            self._state.log_message = "loading"
+            app.invalidate()
+        try:
+            snapshot = await loop.run_in_executor(
+                self._log_executor, self._log_reader.read,
+                path, base, live, action, cancel, following,
+            )
+        except _LogCancelled:
+            return
+        except (OSError, EOFError, zlib.error) as exc:
+            await loop.run_in_executor(self._log_executor, self._log_reader.close)
+            if generation == self._log_generation and target == self._current_log_target():
+                self._log_snapshot = None
                 self._set_log_text(log_area, "", 0)
+                self._state.log_following = False
+                self._state.log_more_above = False
+                self._state.log_more_below = False
+                self._state.log_message = f"unable to read log: {exc}"
                 app.invalidate()
             return
-
-        # Already showing this exact log statically: nothing to refresh.
-        if latest == state.log_tail_path:
+        if (
+            generation != self._log_generation
+            or target != self._current_log_target()
+        ):
             return
-
-        if latest.suffix == ".gz":
-            lines = read_gzip_lines(latest, self._log_base, LOG_GZIP_MAX_LINES)
-            if lines is None:
-                # Transient read failure: do not pin the path; retry next tick.
-                return
-            self._reset_log_window()
-            self._log_gzip_lines = lines
-            start = max(0, len(lines) - LOG_INITIAL_LINES)
-            state.log_gzip_start = start
-            state.log_more_above = start > 0
-            state.log_tail_path = latest
-            text = "".join(lines[start:])
-            self._set_log_text(log_area, text, len(text))
-            app.invalidate()
-            return
-
-        # Plain completed log: tail-load the last LOG_INITIAL_LINES lines.
-        fd = safe_open_log_for_read(latest, self._log_base)
-        if fd is None:
-            return
-        try:
-            size = os.fstat(fd).st_size
-        except OSError:
-            os.close(fd)
-            return
-        self._reset_log_window()
-        self._log_fd = fd
-        start = _start_of_last_n_lines(fd, size, LOG_INITIAL_LINES)
-        self._log_win_bytes = _read_bytes_range(fd, start, size)
-        state.log_win_start = start
-        state.log_more_above = start > 0
-        state.log_tail_path = latest
-        text = self._log_win_bytes.decode("utf-8", errors="replace")
-        self._set_log_text(log_area, text, len(text))
+        self._apply_log_snapshot(log_area, snapshot, action)
         app.invalidate()
+
+    async def _log_tailer(self, app: Application, log_area: TextArea) -> None:
+        """Read logs in a single worker while the terminal remains responsive."""
+        while True:
+            await self._poll_log_once(app, log_area)
+            if self._log_jump is None:
+                await asyncio.sleep(0.5)
+
+    async def _close_log_reader(self) -> None:
+        """Cancel pending reads and close worker-owned resources in order."""
+        self._log_cancel.set()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._log_executor, self._log_reader.close)
+        await asyncio.to_thread(self._log_executor.shutdown, wait=True)
 
     async def _run_async(self) -> None:
         """Build and run the prompt_toolkit application asynchronously.
@@ -1811,23 +2216,20 @@ class MirrorTUI:
         )
         self._app = app
 
-        poller = asyncio.create_task(self._status_poller(app))
-        tailer = asyncio.create_task(self._log_tailer(app, log_area))
+        poller = app.create_background_task(self._status_poller(app))
+        tailer = app.create_background_task(self._log_tailer(app, log_area))
         try:
             await app.run_async()
         finally:
             for t in (poller, tailer):
                 t.cancel()
-            await asyncio.gather(poller, tailer, return_exceptions=True)
-
-        # Cleanup
-        if self._log_fd is not None:
-            os.close(self._log_fd)
-        if self._client is not None:
             try:
-                self._client.disconnect()
-            except Exception:
-                pass
+                if self._client is not None:
+                    await asyncio.to_thread(self._client.disconnect)
+            finally:
+                await asyncio.gather(poller, tailer, return_exceptions=True)
+                await self._close_log_reader()
+                self._client = None
 
     def run(self) -> None:
         """Build and run the prompt_toolkit application."""
@@ -1842,31 +2244,13 @@ class MirrorTUI:
 def tui(socket_path: Optional[str]) -> None:
     """Run the real-time mirror status TUI.
 
-    Resolves the master socket path, fetches runtime info from the daemon
-    best-effort, then opens the full-screen application.
+    Resolves the master socket path and opens the full-screen application.
+    Runtime information is fetched by the background status poller.
 
     Args:
         socket_path(str, optional): Explicit master socket path override.
     """
     sock = _resolve_master_socket(socket_path)
 
-    mirrorname = ""
-    log_base: Optional[Path] = None
-    try:
-        info = mirror.socket.master.get_runtime_info(socket_path=sock)
-        mirrorname = info.get("mirrorname", "") or ""
-        lb = info.get("log_base")
-        if lb:
-            log_base = Path(lb)
-    except Exception:
-        # Daemon offline at startup; the TUI still opens and the poller will
-        # reconnect. The header simply omits the name and the log helper
-        # falls back to symlink/regular-file checks without containment.
-        pass
-
-    tui_app = MirrorTUI(
-        socket_path=sock,
-        mirrorname=mirrorname,
-        log_base=log_base,
-    )
+    tui_app = MirrorTUI(socket_path=sock)
     tui_app.run()
