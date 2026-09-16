@@ -1,0 +1,29 @@
+Origin: mirror.py integration
+Label: mirror.py integration
+Suite: bullseye
+Codename: bullseye
+Date: Tue, 01 Sep 2026 00:00:00 UTC
+Architectures: amd64
+Components: main
+Description: Signed debmirror discovery fixture
+MD5Sum:
+ 2b4b9c31016bc98af1ab5dadbc231151              440 main/binary-amd64/Packages
+ 358db10bbed3130334d4e8262fe3d88b              325 main/binary-amd64/Packages.gz
+ f37c954fe7112a5f06aa7ae77e645c38              113 main/binary-amd64/Release
+ efd2679405bf24641b407fa5faa60f22              114 main/source/Release
+ d41d8cd98f00b204e9800998ecf8427e                0 main/source/Sources
+ fa9ac5a217b5547bc7dd4e6e894fe135               20 main/source/Sources.gz
+SHA1:
+ 6df88aea9e7c264974fb65409bf21ec06458e7bb              440 main/binary-amd64/Packages
+ d8a10df7ca7b3e4794f1e9c3ccd1c5b7c6739652              325 main/binary-amd64/Packages.gz
+ ec738261747b38c63e23091a3c903e298b0021dd              113 main/binary-amd64/Release
+ fb15335e8f05a2333a96ac7ff71013fe21d2ee52              114 main/source/Release
+ da39a3ee5e6b4b0d3255bfef95601890afd80709                0 main/source/Sources
+ 89892054d65b8b0dd6a081b33a97b6f2bd1fa267               20 main/source/Sources.gz
+SHA256:
+ 1b08ca47b6645fe6e1aa6dd29b04766e1d9d0cd3bce93ec8dc98d220ed54f1ec              440 main/binary-amd64/Packages
+ 253c512ada590c7480e9f284f04f2028e5e53c8c1b5ecb7094896e685e92c166              325 main/binary-amd64/Packages.gz
+ e86f062453c1bfeb8aafe19781c336ffe36d3de66079b96fa6e45f1035040e5d              113 main/binary-amd64/Release
+ c11712109d5bcfce52dffaf77ac46c21b4cc021c33a800c4ee96b8339697c4b7              114 main/source/Release
+ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855                0 main/source/Sources
+ 9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64               20 main/source/Sources.gz

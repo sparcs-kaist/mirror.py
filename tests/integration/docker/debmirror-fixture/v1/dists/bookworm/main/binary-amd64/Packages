@@ -1,0 +1,28 @@
+Package: mirror-test
+Version: 1.0
+Architecture: amd64
+Maintainer: Integration Test <test@example.com>
+Installed-Size: 1
+Filename: pool/main/m/mirror-test/mirror-test_1.0_amd64.deb
+Size: 590
+MD5sum: 19dcb150a7002bf2f028c780ff153af2
+SHA1: 1682d65019ce419346d08fca1af34e53b70d7ebf
+SHA256: 7e7b643d788b5c86a4eebc8bedb5e2bc9a1c0789a4429d8acf0a53b52025709c
+Section: misc
+Priority: optional
+Description: mirror.py debmirror integration fixture
+
+Package: mirror-common
+Version: 1.0
+Architecture: all
+Maintainer: Integration Test <test@example.com>
+Installed-Size: 1
+Filename: pool/main/m/mirror-common/mirror-common_1.0_all.deb
+Size: 590
+MD5sum: 19dcb150a7002bf2f028c780ff153af2
+SHA1: 1682d65019ce419346d08fca1af34e53b70d7ebf
+SHA256: 7e7b643d788b5c86a4eebc8bedb5e2bc9a1c0789a4429d8acf0a53b52025709c
+Section: misc
+Priority: optional
+Description: mirror.py debmirror integration fixture
+

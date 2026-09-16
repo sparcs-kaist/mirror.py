@@ -1,0 +1,79 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+Origin: mirror.py integration
+Label: mirror.py integration
+Suite: bookworm
+Codename: bookworm
+Date: Tue, 01 Sep 2026 00:00:00 UTC
+Architectures: amd64 arm64
+Components: main extras
+Description: Signed debmirror discovery fixture
+MD5Sum:
+ 8822e6721c482f7e4ea6e3a2aa9a88ab              437 extras/binary-amd64/Packages
+ 3ce3d2c15403d7252a6528fe77730791              327 extras/binary-amd64/Packages.gz
+ 464fe78861683f4f94a47fec11a02cb7              115 extras/binary-amd64/Release
+ d41d8cd98f00b204e9800998ecf8427e                0 extras/binary-arm64/Packages
+ fa9ac5a217b5547bc7dd4e6e894fe135               20 extras/binary-arm64/Packages.gz
+ baa446e96d0395a3c182a0b47c451dba              115 extras/binary-arm64/Release
+ 170bb7a88faf347ce224690bfe0fcea5              116 extras/source/Release
+ d41d8cd98f00b204e9800998ecf8427e                0 extras/source/Sources
+ fa9ac5a217b5547bc7dd4e6e894fe135               20 extras/source/Sources.gz
+ c78ef29aeee528ebe391c795676537eb              878 main/binary-amd64/Packages
+ 943404832659ac0a15f8d929da7c8512              359 main/binary-amd64/Packages.gz
+ 95cb0da937a9f21e3ba89d0aad8d97fd              113 main/binary-amd64/Release
+ 58ab47d2732c1e69f509cb3a46d8e733              878 main/binary-arm64/Packages
+ 08a68522b9f2b77db97384b010465bfa              359 main/binary-arm64/Packages.gz
+ d2adaea023e36c04b45decd835c95f8e              113 main/binary-arm64/Release
+ efdcce3463759888969b0dbe8e9aed16              114 main/source/Release
+ a6c9061d06da51131091ba099a17f4a4              667 main/source/Sources
+ a00c21a7962358f6703cf58545e30ef1              393 main/source/Sources.gz
+SHA1:
+ 62161dcaf98b440eac11e62dbe5b7f88bc63169b              437 extras/binary-amd64/Packages
+ 86af15a436ea3b6176607a746b8551b78e3e4bc7              327 extras/binary-amd64/Packages.gz
+ 8326eaefbfb28a0fb8e3ec6b32b846d573f2ae04              115 extras/binary-amd64/Release
+ da39a3ee5e6b4b0d3255bfef95601890afd80709                0 extras/binary-arm64/Packages
+ 89892054d65b8b0dd6a081b33a97b6f2bd1fa267               20 extras/binary-arm64/Packages.gz
+ 4e98f7cb649be2980d6f8456fde8f96f5f17ad58              115 extras/binary-arm64/Release
+ fe6287e5883e02844597e31890f4ceb1b97876ae              116 extras/source/Release
+ da39a3ee5e6b4b0d3255bfef95601890afd80709                0 extras/source/Sources
+ 89892054d65b8b0dd6a081b33a97b6f2bd1fa267               20 extras/source/Sources.gz
+ 26e62e2272cf0d593d805a45925ff04be357c1b4              878 main/binary-amd64/Packages
+ be03e9658412090e5058cab42ec1036107f6dd93              359 main/binary-amd64/Packages.gz
+ 62814941b9032ac7f324b75e1e3c09d2163e7393              113 main/binary-amd64/Release
+ d1544ac4f9596319f0fc8279d41074b230b5c57a              878 main/binary-arm64/Packages
+ 1445ca849bc91e758288550e666d6fe395da577c              359 main/binary-arm64/Packages.gz
+ 1bc8b87bc9d9804b296be722d7bbb82d5ffcf862              113 main/binary-arm64/Release
+ 8d3f0ae9bf45d557ed9cd25ff4a8e23665685361              114 main/source/Release
+ 68d34112eb5746e49d263db7549ded9ba3ff1e63              667 main/source/Sources
+ be0c6e41fd44e95be93a497cab6861d99589d238              393 main/source/Sources.gz
+SHA256:
+ 6cceae78443075d5196d7b566cb64a3bdbcfa7c79be23c5fee3ebe4d57d539ca              437 extras/binary-amd64/Packages
+ e15727220d2d477c0bfc5a67e8b4c990d4a74b351645ef71a8d406dea69770f0              327 extras/binary-amd64/Packages.gz
+ 1570c27ddeef703a58657acf5f8c85a9e06e5a9dddeef6c90130cb8a89332999              115 extras/binary-amd64/Release
+ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855                0 extras/binary-arm64/Packages
+ 9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64               20 extras/binary-arm64/Packages.gz
+ 8911f8a5cf4c12555e762ac1d12a4c1d155f4edf30a6d31dd8f8a903d381b776              115 extras/binary-arm64/Release
+ 6a1b261b2c72d59a4e91fb72a5e6bc134776d5bf3f938fd843c9e781948573a2              116 extras/source/Release
+ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855                0 extras/source/Sources
+ 9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64               20 extras/source/Sources.gz
+ ec76371068536dc660ebba37e9109ce21bcce02e678ab77141423f7fbec8c45d              878 main/binary-amd64/Packages
+ 40de66b0975c511f933977d607033cdd9e16d33caaec7a69157985d6c3bdd61b              359 main/binary-amd64/Packages.gz
+ f0834b5c1d0c8f513fede02f3c4eaafac6be0748added393521cbf27c8894449              113 main/binary-amd64/Release
+ d6205e9727f24a60e5a46e25c8980ac48cb0d3679da1553e5bb911341e58d093              878 main/binary-arm64/Packages
+ 424a3f120f4404b5559084c9175863457c369a7fa09d8f9cf56a840977cdf121              359 main/binary-arm64/Packages.gz
+ c4940fc74b6b28c15f78d1f7096a81446fe514c1a2b41cb6ff03c94eec57e235              113 main/binary-arm64/Release
+ 1d959ff83de094a09f914d56cfc69209ef2c0597e06e2393d9454338b0856f2a              114 main/source/Release
+ 24c8c304a1c64ab0a6879bb8fff3e398a9fa3a6279805103c2c3dcdf613c0ba8              667 main/source/Sources
+ 58826fe69647f5da800addff08ada2bd390a4c5e8d2b8c65c196b5d25bbfa598              393 main/source/Sources.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQEzBAEBCAAdFiEEHNIJ04ZChro6s+F+mCoOPgHxeeQFAmqot14ACgkQmCoOPgHx
+eeTdqggAiqOEXCwMzwnARyOE1cVRqLwZzia+xkLDJzQMsO7L320PMerLCLYuWLY0
+YegsU6MXTf0pdFDgKxgqQyLZk2drAqyXUl97m6TyZ7TYZTuXD2OcGu3iB31w6o/S
+UZudbYo7gxeMGlzPA7R71cvJSizLx06cJVejpGJHbWtLjfHuhTW6TgZO/pACnwAS
+OXC8fNXW8kwTUc9riqosibWOKLD3wcsWGdIZWVhBM9YW6SVOqDKyWhiAo1oVJrIf
+9Trkysa2Ev/y6GifM16Krl+pAgGTQPyKYb+OmWS8LnBHtuS6dI96p34ktIvMpXfc
+IM+KHCIlKeB+zlM8tSBWm5FC6Vskkw==
+=oMNl
+-----END PGP SIGNATURE-----

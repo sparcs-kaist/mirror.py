@@ -1,0 +1,29 @@
+Origin: mirror.py integration
+Label: mirror.py integration
+Suite: allonly
+Codename: allonly
+Date: Tue, 01 Sep 2026 00:00:00 UTC
+Architectures: all
+Components: main
+Description: Signed debmirror discovery fixture
+MD5Sum:
+ 5e1edbf94e655c34c969160afcb59ab7              437 main/binary-all/Packages
+ 359e170247fcdff5d4c9aa7d7eb16b35              323 main/binary-all/Packages.gz
+ 336411a62e149aa8e5ba8a4b7114f8eb              110 main/binary-all/Release
+ 43ccccee681c3a170baa2ffe9d7167f2              113 main/source/Release
+ d41d8cd98f00b204e9800998ecf8427e                0 main/source/Sources
+ fa9ac5a217b5547bc7dd4e6e894fe135               20 main/source/Sources.gz
+SHA1:
+ 59adaba5d5ecc859c28ca31373ffee005d79506d              437 main/binary-all/Packages
+ 6f81e9ef5ce16ad52571403fc88cab0bd67cbc0b              323 main/binary-all/Packages.gz
+ 5bff8381a6e2b27b341d6aa58350216b0c43a351              110 main/binary-all/Release
+ b5b58f6097a92a00d90de6d402a2671df3f6060c              113 main/source/Release
+ da39a3ee5e6b4b0d3255bfef95601890afd80709                0 main/source/Sources
+ 89892054d65b8b0dd6a081b33a97b6f2bd1fa267               20 main/source/Sources.gz
+SHA256:
+ be8810d89eb663af4b1d95f0560b645bd97f92002dc173fca990ec0172c75f9d              437 main/binary-all/Packages
+ 1d0b142d2e21c2c920b855d5a587b0a0132631fccf3fc25475001f276c8786c7              323 main/binary-all/Packages.gz
+ 20430939a36a03fd37e02ec90e002b16bba4de8bd2b2b607b17c8ba439e7873a              110 main/binary-all/Release
+ 7a392fc1b6d8fd7c6412f2a06f93ba43e015da8e285cc279fe16b719fd8248d8              113 main/source/Release
+ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855                0 main/source/Sources
+ 9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64               20 main/source/Sources.gz
