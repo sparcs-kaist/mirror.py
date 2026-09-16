@@ -1,0 +1,8 @@
+Origin: mirror.py apt-mirror2 fixture
+Label: apt-mirror2 fixture
+Suite: bookworm
+Codename: bookworm
+Components: main
+Architectures: amd64
+SHA256:
+ 6116306c4fca4b8c59fd5e0231c1691c575e59d5c05fcf904faa9945ef2d1c7b 202 main/binary-amd64/Packages

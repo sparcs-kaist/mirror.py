@@ -114,6 +114,35 @@
         }
       }
     },
+    "apt-mirror2-test": {
+      "name": "apt-mirror2-test",
+      "id": "apt-mirror2-test",
+      "href": "/apt-mirror2-test",
+      "synctype": "apt-mirror2",
+      "syncrate": "PT1H",
+      "link": [],
+      "settings": {
+        "hidden": false,
+        "src": "http://apt-mirror2-fixture:8001/",
+        "dst": "/srv/publish/apt-mirror2-test",
+        "options": {
+          "source": false,
+          "nthreads": 4,
+          "config": [
+            {
+              "src": "http://apt-mirror2-fixture:8001/ubuntu2404/",
+              "dst": "ubuntu2404/x86_64",
+              "keyring": ["/etc/mirror/apt-mirror2-ubuntu2404.gpg"]
+            },
+            {
+              "src": "http://apt-mirror2-fixture:8001/ubuntu2604/",
+              "dst": "ubuntu2604/x86_64",
+              "keyring": ["/etc/mirror/apt-mirror2-ubuntu2604.gpg"]
+            }
+          ]
+        }
+      }
+    },
     "error-test": {
       "name": "error-test",
       "id": "error-test",

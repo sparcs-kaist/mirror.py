@@ -52,6 +52,20 @@ services:
       retries: 10
       start_period: 3s
 
+  apt-mirror2-fixture:
+    container_name: apt-mirror2-fixture
+    build:
+      context: docker/apt-mirror2-fixture
+    expose:
+      - "8001"
+      - "2121"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import ftplib, urllib.request; urllib.request.urlopen('http://localhost:8001/ubuntu2404/Release', timeout=3).read(); ftp = ftplib.FTP(); ftp.connect('localhost', 2121, timeout=3); ftp.login(); list(ftp.mlsd('/')); ftp.quit()"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+
   mirror:
     container_name: mirror
     build:
@@ -70,10 +84,14 @@ services:
         condition: service_healthy
       debmirror-fixture:
         condition: service_healthy
+      apt-mirror2-fixture:
+        condition: service_healthy
     volumes:
       - "${INTEGRATION_TMP}/publish:/srv/publish"
       - "${INTEGRATION_TMP}/state:/var/lib/mirror"
       - "${INTEGRATION_TMP}/log:/var/log/mirror"
       - "./docker/debmirror-fixture/keyring.gpg:/etc/mirror/debmirror-test.gpg:ro"
+      - "./docker/apt-mirror2-fixture/key-ubuntu2404.gpg:/etc/mirror/apt-mirror2-ubuntu2404.gpg:ro"
+      - "./docker/apt-mirror2-fixture/key-ubuntu2604.gpg:/etc/mirror/apt-mirror2-ubuntu2604.gpg:ro"
     environment:
       - PYTHONUNBUFFERED=1

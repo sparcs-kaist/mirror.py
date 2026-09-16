@@ -66,7 +66,7 @@ def mock_dependencies():
         class MockSync: pass
         mirror.sync = MockSync()
 
-    mirror.sync.methods = ['rsync', 'ftpsync', 'lftp', 'local', 'ubuntu', 'jigdo', 'debmirror']
+    mirror.sync.methods = ['rsync', 'ftpsync', 'lftp', 'local', 'ubuntu', 'jigdo', 'debmirror', 'apt-mirror2']
 
     yield
 

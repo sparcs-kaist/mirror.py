@@ -144,6 +144,35 @@
                 "options": {}
             }
         },
+        "cuda": {
+            "name": "CUDA", "id": "cuda",
+            "href": "/cuda", "synctype": "apt-mirror2", "syncrate": "PT6H",
+            "link": [{ "rel": "HOME", "href": "https://developer.nvidia.com/cuda-toolkit" }],
+            "settings": {
+                "hidden": false,
+                "src": "https://developer.download.nvidia.com/compute/cuda/repos/",
+                "dst": "/srv/ftp/cuda",
+                "options": {
+                    "source": false,
+                    "nthreads": 8,
+                    "limit_rate": "20m",
+                    "config": [
+                        {
+                            "src": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/",
+                            "dst": "ubuntu2404/x86_64/",
+                            "dist": ["./"],
+                            "keyring": ["/usr/share/keyrings/cuda-ubuntu2404.gpg"]
+                        },
+                        {
+                            "src": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2604/x86_64/",
+                            "dst": "ubuntu2604/x86_64/",
+                            "dist": ["./"],
+                            "keyring": ["/usr/share/keyrings/cuda-ubuntu2604.gpg"]
+                        }
+                    ]
+                }
+            }
+        },
         "debmirror-debian": {
             "name": "Debian (debmirror)", "id": "debmirror-debian",
             "href": "/debmirror/debian", "synctype": "debmirror", "syncrate": "PT6H",
