@@ -1,8 +1,5 @@
 """
-Tests for mirror.command.tui helpers and state logic.
-
-All tests operate on pure functions or isolated state; no prompt_toolkit
-Application is started. The plan specifies 12 test groups.
+Tests for TUI helpers, terminal interaction, and background log reading.
 """
 
 import asyncio
@@ -12,6 +9,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
 import pytest
+from prompt_toolkit import Application
+from prompt_toolkit.data_structures import Size
+from prompt_toolkit.input.defaults import create_pipe_input
+from prompt_toolkit.key_binding.key_processor import KeyPress
+from prompt_toolkit.keys import Keys
+from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.utils import get_cwidth
 
 import mirror.structure
 from mirror.command.tui import (
@@ -20,11 +24,9 @@ from mirror.command.tui import (
     LOG_PAGE_LINES,
     MirrorTUI,
     TUIState,
+    _fit_field,
     _fallback_package_from_dict,
-    _is_rotated,
     _modal_active,
-    _read_bytes_range,
-    _start_of_last_n_lines,
     _visible_columns,
     apply_filter,
     apply_sort,
@@ -40,7 +42,6 @@ from mirror.command.tui import (
     format_started,
     latest_completed_log,
     packages_from_rpc,
-    read_gzip_lines,
     safe_open_log_for_read,
     status_style,
     visible_packages,
@@ -329,32 +330,52 @@ class TestBuildTableHeader:
         assert rows[1][0] == "class:tableheader.divider"
 
     def test_responsive_wide_all_columns(self):
-        vis = _visible_columns(160)
+        vis = _visible_columns(101)
         rows = build_table_header(vis)
         label = rows[0][1]
         assert "ELAPSED" in label
         assert "STARTED" in label
 
-    def test_responsive_medium_no_elapsed(self):
-        vis = _visible_columns(120)
+    def test_responsive_drops_columns_in_priority_order(self):
+        vis = _visible_columns(100)
+        rows = build_table_header(vis)
+        label = rows[0][1]
+        assert "AGO" not in label
+        assert "ELAPSED" in label
+        assert "STARTED" in label
+
+        vis = _visible_columns(80)
         rows = build_table_header(vis)
         label = rows[0][1]
         assert "ELAPSED" not in label
         assert "STARTED" in label
 
-    def test_responsive_narrow_no_elapsed_no_started(self):
-        vis = _visible_columns(100)
-        rows = build_table_header(vis)
-        label = rows[0][1]
-        assert "ELAPSED" not in label
+        vis = _visible_columns(70)
+        label = build_table_header(vis)[0][1]
         assert "STARTED" not in label
+        assert "LAST SUCCESS" in label
+
+        vis = _visible_columns(50)
+        label = build_table_header(vis)[0][1]
+        assert "LAST SUCCESS" not in label
 
     def test_responsive_narrow_header_body_aligned(self):
-        vis = _visible_columns(100)
+        vis = _visible_columns(50)
         pkgs = [_make_package("debian")]
-        header_rows = build_table_header(vis)
-        body_rows = build_table_rows(pkgs, selected=0, now=time.time(), visible=vis)
+        header_rows = build_table_header(vis, available_width=50)
+        body_rows = build_table_rows(
+            pkgs, selected=0, now=time.time(), visible=vis, available_width=50
+        )
         assert len(header_rows[0][1]) == len(body_rows[0][1])
+
+    def test_narrow_columns_fit_available_width(self):
+        vis = _visible_columns(24)
+        header = build_table_header(vis, available_width=24)[0][1]
+        assert get_cwidth(header.rstrip("\n")) == 24
+
+    def test_fit_field_uses_terminal_cell_width(self):
+        field = _fit_field("한글-package", 10)
+        assert get_cwidth(field) == 10
 
 
 # ---------------------------------------------------------------------------
@@ -529,419 +550,574 @@ class TestLatestCompletedLog:
         assert latest_completed_log(pkg) == Path(pkg.statusinfo.lastsuccesslog)
 
 
-class TestShowLatestLog:
-    def _make_tui(self, base):
+class TestTuiLogReading:
+    def _make_tui(self, base, pkg):
         from prompt_toolkit.widgets import TextArea
 
-        tui = MirrorTUI(socket_path="/tmp/none.sock", log_base=base)
-        log_area = TextArea(text="", read_only=True)
-        return tui, log_area
+        tui = MirrorTUI('/tmp/no-master.sock', log_base=base)
+        tui._state.packages = [pkg]
+        tui._state.selected_pkgid = pkg.pkgid
+        log = TextArea(read_only=True)
+        tui._log_area = log
+        return tui, log
 
-    def test_displays_latest_gzipped_success_log(self, tmp_path):
+    def test_latest_gzip_and_no_log_clear(self, tmp_path):
         import gzip
 
-        base = tmp_path / "logs"
-        base.mkdir()
-        log_file = base / "success.log.gz"
-        with gzip.open(log_file, "wt", encoding="utf-8") as fh:
-            fh.write("sync complete\nall good\n")
+        path = tmp_path / 'done.gz'
+        with gzip.open(path, 'wb') as output:
+            output.write(b'completed\n')
+        pkg = _make_package(status='ACTIVE', lastsuccesstime=10)
+        pkg.statusinfo.lastsuccesslog = str(path)
+        tui, log = self._make_tui(tmp_path, pkg)
 
-        pkg = _make_package(status="ACTIVE", lastsuccesstime=100.0)
-        pkg.statusinfo.lastsuccesslog = str(log_file)
+        async def scenario():
+            try:
+                await tui._poll_log_once(MagicMock(), log)
+                assert log.text == 'completed\n'
+                assert not tui._state.log_tail_live
+                pkg.statusinfo.lastsuccesslog = ''
+                await tui._poll_log_once(MagicMock(), log)
+                assert log.text == ''
+                assert tui._state.log_tail_path is None
+            finally:
+                await tui._close_log_reader()
+        asyncio.run(scenario())
 
-        tui, log_area = self._make_tui(base)
-        tui._show_latest_log(MagicMock(), log_area, pkg)
+    def test_missing_other_package_never_keeps_old_content_and_recovers(self, tmp_path):
+        path = tmp_path / 'a.log'
+        path.write_text('package A\n')
+        pkg = _make_package(pkgid='a', runninglog=str(path))
+        tui, log = self._make_tui(tmp_path, pkg)
+        other_path = tmp_path / 'b.log'
+        other = _make_package(pkgid='b', runninglog=str(other_path))
 
-        assert log_area.text == "sync complete\nall good\n"
-        assert tui._state.log_tail_live is False
-        assert tui._state.log_tail_path == log_file
+        async def scenario():
+            try:
+                await tui._poll_log_once(MagicMock(), log)
+                tui._state.packages.append(other)
+                tui._state.selected_pkgid = 'b'
+                tui._on_selection_change()
+                assert log.text == ''
+                await tui._poll_log_once(MagicMock(), log)
+                assert log.text == ''
+                assert 'unable to read' in tui._state.log_message
+                other_path.write_text('package B\n')
+                await tui._poll_log_once(MagicMock(), log)
+                assert log.text == 'package B\n'
+                tui._state.filter_text = 'no match'
+                tui._state.fix_selection()
+                await tui._poll_log_once(MagicMock(), log)
+                assert log.text == ''
+            finally:
+                await tui._close_log_reader()
+        asyncio.run(scenario())
 
-    def test_blank_pane_when_no_completed_log(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        pkg = _make_package(status="ACTIVE")
+    def test_slow_obsolete_read_is_discarded(self, tmp_path):
+        import threading
 
-        tui, log_area = self._make_tui(base)
-        tui._show_latest_log(MagicMock(), log_area, pkg)
+        path = tmp_path / 'a.log'
+        path.write_text('old package\n')
+        pkg = _make_package(pkgid='a', runninglog=str(path))
+        tui, log = self._make_tui(tmp_path, pkg)
+        entered, release = threading.Event(), threading.Event()
+        original = tui._log_reader.read
 
-        assert log_area.text == ""
-        assert tui._state.log_tail_path is None
+        def delayed(*args):
+            result = original(*args)
+            entered.set()
+            assert release.wait(5)
+            return result
 
-    def test_picks_newer_error_log_over_older_success(self, tmp_path):
-        import gzip
+        tui._log_reader.read = delayed
 
-        base = tmp_path / "logs"
-        base.mkdir()
-        success = base / "success.log.gz"
-        with gzip.open(success, "wt", encoding="utf-8") as fh:
-            fh.write("old success\n")
-        error = base / "error.log.gz"
-        with gzip.open(error, "wt", encoding="utf-8") as fh:
-            fh.write("recent error\n")
+        async def scenario():
+            pending = asyncio.create_task(tui._poll_log_once(MagicMock(), log))
+            try:
+                for _ in range(200):
+                    if entered.is_set():
+                        break
+                    await asyncio.sleep(.005)
+                assert entered.is_set()
+                # This executes while the worker is still blocked.
+                tui._state.packages = []
+                tui._on_selection_change()
+                assert not pending.done()
+                release.set()
+                await asyncio.wait_for(pending, 5)
+                assert log.text == ''
+                assert tui._log_snapshot is None
+            finally:
+                release.set()
+                await pending
+                await tui._close_log_reader()
+        asyncio.run(scenario())
 
-        pkg = _make_package(status="ERROR", lastsuccesstime=100.0, lasterrortime=200.0)
-        pkg.statusinfo.lastsuccesslog = str(success)
-        pkg.statusinfo.lasterrorlog = str(error)
+    def test_io_failure_does_not_prevent_next_read(self, tmp_path):
+        path = tmp_path / 'live.log'
+        path.write_text('recovered\n')
+        pkg = _make_package(runninglog=str(path))
+        tui, log = self._make_tui(tmp_path, pkg)
 
-        tui, log_area = self._make_tui(base)
-        tui._show_latest_log(MagicMock(), log_area, pkg)
+        async def scenario():
+            try:
+                with patch.object(tui._log_reader, 'read', side_effect=OSError('disk error')):
+                    await tui._poll_log_once(MagicMock(), log)
+                assert 'disk error' in tui._state.log_message
+                await tui._poll_log_once(MagicMock(), log)
+                assert log.text == 'recovered\n'
+            finally:
+                await tui._close_log_reader()
+        asyncio.run(scenario())
 
-        assert log_area.text == "recent error\n"
+    def test_history_preserves_anchor_and_end_returns_to_physical_eof(self, tmp_path):
+        path = tmp_path / 'history.log'
+        path.write_text(''.join(f'line{i}\n' for i in range(6000)))
+        pkg = _make_package(runninglog=str(path))
+        tui, log = self._make_tui(tmp_path, pkg)
 
-    def test_read_failure_does_not_pin_path(self, tmp_path):
-        # A latest log that fails the safety check (outside base) must not
-        # pin log_tail_path, so the next tick can retry.
-        base = tmp_path / "logs"
-        base.mkdir()
-        outside = tmp_path / "outside.log"
-        outside.write_text("evil\n")
+        async def scenario():
+            try:
+                app = MagicMock()
+                await tui._poll_log_once(app, log)
+                tui._request_log_jump('start')
+                await tui._poll_log_once(app, log)
+                assert log.text.startswith('line0\n')
+                assert tui._state.log_more_below
+                assert not tui._state.log_following
+                log.buffer.cursor_position = 30
+                before = log.buffer.document.current_line
+                with path.open('a') as output:
+                    output.write('new ending\n')
+                await tui._poll_log_once(app, log)
+                assert log.buffer.document.current_line == before
+                assert 'new ending' not in log.text
+                tui._request_log_jump('end')
+                await tui._poll_log_once(app, log)
+                assert log.text.endswith('new ending\n')
+                assert tui._state.log_following
+            finally:
+                await tui._close_log_reader()
+        asyncio.run(scenario())
 
-        pkg = _make_package(status="ACTIVE", lastsuccesstime=100.0)
-        pkg.statusinfo.lastsuccesslog = str(outside)
+    def test_cancelled_gzip_preparation_cleans_worker(self, tmp_path):
+        import threading
+        from mirror.command.tui import _LogCancelled
 
-        tui, log_area = self._make_tui(base)
-        tui._show_latest_log(MagicMock(), log_area, pkg)
+        pkg = _make_package(runninglog=str(tmp_path / 'log'))
+        tui, log = self._make_tui(tmp_path, pkg)
+        entered = threading.Event()
 
-        assert log_area.text == ""
-        assert tui._state.log_tail_path is None
+        def pending_read(path, base, live, action, cancel, following):
+            entered.set()
+            assert cancel.wait(5)
+            raise _LogCancelled()
 
-    def test_closes_live_tail_fd_on_static(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        running = base / "running.log"
-        running.write_text("live\n")
+        tui._log_reader.read = pending_read
 
-        pkg = _make_package(status="ACTIVE")
-        tui, log_area = self._make_tui(base)
-        # Simulate a leftover live tail (fd + live flag + path).
-        tui._log_fd = safe_open_log_for_read(running, base)
-        tui._state.log_tail_live = True
-        tui._state.log_tail_path = running
-        assert tui._log_fd is not None
-
-        tui._show_latest_log(MagicMock(), log_area, pkg)
-
-        assert tui._log_fd is None
-        assert tui._state.log_tail_live is False
-
-
-class TestStartOfLastNLines:
-    def _fd(self, tmp_path, data: bytes) -> int:
-        p = tmp_path / "f"
-        p.write_bytes(data)
-        return os.open(str(p), os.O_RDONLY)
-
-    def test_exact_offsets_with_trailing_newline(self, tmp_path):
-        fd = self._fd(tmp_path, b"a\nb\nc\n")  # size 6
-        try:
-            assert _start_of_last_n_lines(fd, 6, 1) == 4
-            assert _start_of_last_n_lines(fd, 6, 2) == 2
-            assert _start_of_last_n_lines(fd, 6, 3) == 0
-            assert _start_of_last_n_lines(fd, 6, 5) == 0
-        finally:
-            os.close(fd)
-
-    def test_no_trailing_newline(self, tmp_path):
-        fd = self._fd(tmp_path, b"a\nb\nc")  # size 5
-        try:
-            assert _start_of_last_n_lines(fd, 5, 1) == 4
-            assert _start_of_last_n_lines(fd, 5, 2) == 2
-            assert _start_of_last_n_lines(fd, 5, 3) == 0
-        finally:
-            os.close(fd)
-
-    def test_empty(self, tmp_path):
-        fd = self._fd(tmp_path, b"")
-        try:
-            assert _start_of_last_n_lines(fd, 0, 5) == 0
-        finally:
-            os.close(fd)
-
-    def test_n_zero_returns_end(self, tmp_path):
-        fd = self._fd(tmp_path, b"a\nb\n")
-        try:
-            assert _start_of_last_n_lines(fd, 4, 0) == 4
-        finally:
-            os.close(fd)
-
-    def test_page_up_offsets(self, tmp_path):
-        data = b"l0\nl1\nl2\nl3\nl4\n"  # 5 lines, 3 bytes each, size 15
-        fd = self._fd(tmp_path, data)
-        try:
-            assert _start_of_last_n_lines(fd, 15, 2) == 9  # last 2 lines: l3,l4
-            assert _start_of_last_n_lines(fd, 9, 2) == 3   # previous 2: l1,l2
-        finally:
-            os.close(fd)
-
-
-class TestReadBytesRange:
-    def test_reads_subrange(self, tmp_path):
-        p = tmp_path / "f"
-        p.write_bytes(b"0123456789")
-        fd = os.open(str(p), os.O_RDONLY)
-        try:
-            assert _read_bytes_range(fd, 2, 5) == b"234"
-            assert _read_bytes_range(fd, 0, 10) == b"0123456789"
-            assert _read_bytes_range(fd, 5, 5) == b""
-        finally:
-            os.close(fd)
-
-
-class TestReadGzipLines:
-    def test_reads_all_lines(self, tmp_path):
-        import gzip
-
-        base = tmp_path / "logs"
-        base.mkdir()
-        p = base / "a.log.gz"
-        with gzip.open(p, "wt", encoding="utf-8") as fh:
-            fh.write("l0\nl1\nl2\n")
-        assert read_gzip_lines(p, base, 1000) == ["l0\n", "l1\n", "l2\n"]
-
-    def test_caps_to_last_max_lines(self, tmp_path):
-        import gzip
-
-        base = tmp_path / "logs"
-        base.mkdir()
-        p = base / "a.log.gz"
-        with gzip.open(p, "wt", encoding="utf-8") as fh:
-            fh.write("".join(f"l{i}\n" for i in range(100)))
-        out = read_gzip_lines(p, base, 10)
-        assert len(out) == 10
-        assert out[0] == "l90\n"
-        assert out[-1] == "l99\n"
-
-    def test_outside_base_rejected(self, tmp_path):
-        import gzip
-
-        base = tmp_path / "logs"
-        base.mkdir()
-        p = tmp_path / "out.log.gz"
-        with gzip.open(p, "wt", encoding="utf-8") as fh:
-            fh.write("x\n")
-        assert read_gzip_lines(p, base, 10) is None
+        async def scenario():
+            pending = asyncio.create_task(tui._poll_log_once(MagicMock(), log))
+            for _ in range(200):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(.005)
+            assert entered.is_set()
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+            await asyncio.wait_for(tui._close_log_reader(), 5)
+        asyncio.run(scenario())
 
 
-class TestLogPaging:
-    def _make_tui(self, base):
-        from prompt_toolkit.widgets import TextArea
+class TestBoundedLogReader:
+    """Backend coverage for disk-backed plain and gzip log paging."""
 
-        tui = MirrorTUI(socket_path="/tmp/none.sock", log_base=base)
-        log_area = TextArea(text="", read_only=True)
-        return tui, log_area
+    @staticmethod
+    def _reader_api():
+        import importlib
 
-    def _write_lines(self, path, n):
-        path.write_text("".join(f"line{i}\n" for i in range(n)))
+        tui_module = importlib.import_module("mirror.command.tui")
+        return tui_module, tui_module._LogReader()
 
-    def test_live_initial_loads_last_n_lines(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        running = base / "running.log"
-        self._write_lines(running, 3000)
-        tui, log_area = self._make_tui(base)
-        try:
-            tui._tail_live(MagicMock(), log_area, running)
-            text = log_area.buffer.text
-            assert text.count("\n") == LOG_INITIAL_LINES
-            assert text.startswith("line2000\n")
-            assert text.endswith("line2999\n")
-            assert tui._state.log_more_above is True
-            assert tui._state.log_win_start > 0
-        finally:
-            if tui._log_fd is not None:
-                os.close(tui._log_fd)
+    def test_tail_and_bidirectional_paging_stay_bounded(self, tmp_path):
+        import threading
 
-    def test_live_page_up_prepends_previous_lines(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        running = base / "running.log"
-        self._write_lines(running, 3000)
-        tui, log_area = self._make_tui(base)
-        try:
-            tui._tail_live(MagicMock(), log_area, running)
-            assert tui._load_more_above(log_area) is True
-            text = log_area.buffer.text
-            assert text.count("\n") == 2 * LOG_PAGE_LINES
-            assert text.startswith("line1000\n")
-            assert text.endswith("line2999\n")
-            prepend = "".join(f"line{i}\n" for i in range(1000, 2000))
-            assert log_area.buffer.cursor_position == len(prepend)
-            assert tui._state.log_more_above is True
-        finally:
-            if tui._log_fd is not None:
-                os.close(tui._log_fd)
+        tui_module, reader = self._reader_api()
+        path = tmp_path / "large.log"
+        lines = [f"line-{index:06d}\n".encode() for index in range(205_000)]
+        expected = b"".join(lines)
+        path.write_bytes(expected)
+        cancel = threading.Event()
 
-    def test_live_page_up_reaches_top(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        running = base / "running.log"
-        self._write_lines(running, 1500)
-        tui, log_area = self._make_tui(base)
-        try:
-            tui._tail_live(MagicMock(), log_area, running)
-            assert tui._state.log_more_above is True
-            tui._load_more_above(log_area)
-            text = log_area.buffer.text
-            assert text.count("\n") == 1500
-            assert text.startswith("line0\n")
-            assert tui._state.log_more_above is False
-        finally:
-            if tui._log_fd is not None:
-                os.close(tui._log_fd)
+        snapshot = reader.read(path, tmp_path, False, "tail", cancel)
+        assert snapshot.reset is True
+        assert snapshot.data == b"".join(lines[-tui_module.LOG_INITIAL_LINES :])
 
-    def test_live_append_while_following_trims_front(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        running = base / "running.log"
-        self._write_lines(running, 100)
-        tui, log_area = self._make_tui(base)
-        try:
-            tui._tail_live(MagicMock(), log_area, running)
-            with open(running, "a") as f:
-                f.write("".join(f"extra{i}\n" for i in range(LOG_FOLLOW_MAX_LINES + 200)))
-            tui._tail_live(MagicMock(), log_area, running)
-            text = log_area.buffer.text
-            assert text.count("\n") <= LOG_FOLLOW_MAX_LINES
-            assert text.endswith(f"extra{LOG_FOLLOW_MAX_LINES + 199}\n")
-        finally:
-            if tui._log_fd is not None:
-                os.close(tui._log_fd)
+        while snapshot.more_above:
+            previous_start = snapshot.start
+            snapshot = reader.read(path, tmp_path, False, "up", cancel)
+            assert snapshot.start < previous_start
+            assert snapshot.data.count(b"\n") <= tui_module.LOG_MAX_LOADED_LINES
+            assert len(snapshot.data) <= tui_module.LOG_MAX_LOADED_BYTES
+            assert snapshot.data == expected[snapshot.start : snapshot.end]
+        assert snapshot.start == 0
 
-    def test_live_append_while_scrolled_up_preserves_top(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        running = base / "running.log"
-        self._write_lines(running, 2000)
-        tui, log_area = self._make_tui(base)
-        try:
-            tui._tail_live(MagicMock(), log_area, running)
-            first_line = log_area.buffer.text.split("\n", 1)[0]
-            log_area.buffer.cursor_position = 0  # scrolled up, not following
-            with open(running, "a") as f:
-                f.write("new0\nnew1\n")
-            tui._tail_live(MagicMock(), log_area, running)
-            text = log_area.buffer.text
-            assert text.startswith(first_line + "\n")
-            assert text.endswith("new1\n")
-        finally:
-            if tui._log_fd is not None:
-                os.close(tui._log_fd)
+        while snapshot.more_below:
+            previous_end = snapshot.end
+            snapshot = reader.read(path, tmp_path, False, "down", cancel)
+            assert snapshot.end > previous_end
+            assert snapshot.data.count(b"\n") <= tui_module.LOG_MAX_LOADED_LINES
+            assert len(snapshot.data) <= tui_module.LOG_MAX_LOADED_BYTES
+        assert snapshot.end == snapshot.size == path.stat().st_size
+        reader.close()
 
-    def test_static_gzip_initial_and_page_up(self, tmp_path):
-        import gzip
+    def test_poll_only_appends_while_live_following(self, tmp_path):
+        import threading
 
-        base = tmp_path / "logs"
-        base.mkdir()
-        gz = base / "s.log.gz"
-        with gzip.open(gz, "wt", encoding="utf-8") as fh:
-            fh.write("".join(f"g{i}\n" for i in range(2500)))
-        pkg = _make_package(status="ACTIVE", lastsuccesstime=100.0)
-        pkg.statusinfo.lastsuccesslog = str(gz)
-        tui, log_area = self._make_tui(base)
-        tui._show_latest_log(MagicMock(), log_area, pkg)
-        text = log_area.buffer.text
-        assert text.count("\n") == LOG_INITIAL_LINES
-        assert text.startswith("g1500\n")
-        assert text.endswith("g2499\n")
-        assert tui._state.log_more_above is True
+        tui_module, reader = self._reader_api()
+        path = tmp_path / "live.log"
+        path.write_bytes(b"initial\n")
+        cancel = threading.Event()
+        initial = reader.read(path, tmp_path, True, "tail", cancel)
 
-        tui._load_more_above(log_area)
-        text = log_area.buffer.text
-        assert text.count("\n") == 2 * LOG_PAGE_LINES
-        assert text.startswith("g500\n")
+        with path.open("ab") as stream:
+            for index in range(tui_module.LOG_FOLLOW_MAX_LINES + 100):
+                stream.write(f"new-{index}\n".encode())
 
-    def test_maybe_load_more_above_rising_edge(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        tui, log_area = self._make_tui(base)
-        tui._state.log_more_above = True
-        calls = []
-        tui._load_more_above = lambda la: (calls.append(1) or True)
-        app = MagicMock()
-        app.layout.has_focus.return_value = True
-
-        class RI:
-            vertical_scroll = 0
-
-        log_area.window.render_info = RI()
-
-        tui._maybe_load_more_above(app, log_area)  # at top -> load
-        assert len(calls) == 1
-        assert tui._state.log_was_at_top is True
-
-        tui._maybe_load_more_above(app, log_area)  # still at top -> no rising edge
-        assert len(calls) == 1
-
-        RI.vertical_scroll = 5  # scrolled away
-        tui._maybe_load_more_above(app, log_area)
-        assert tui._state.log_was_at_top is False
-
-        RI.vertical_scroll = 0  # back to top -> rising edge -> load again
-        tui._maybe_load_more_above(app, log_area)
-        assert len(calls) == 2
-
-    def test_following_trim_enables_page_up(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        running = base / "running.log"
-        self._write_lines(running, 100)  # fits entirely, nothing above yet
-        tui, log_area = self._make_tui(base)
-        try:
-            tui._tail_live(MagicMock(), log_area, running)
-            assert tui._state.log_win_start == 0
-            assert tui._state.log_more_above is False
-            # Append past the follow cap so the front gets trimmed.
-            with open(running, "a") as f:
-                f.write("".join(f"x{i}\n" for i in range(LOG_FOLLOW_MAX_LINES + 100)))
-            tui._tail_live(MagicMock(), log_area, running)
-            assert tui._state.log_win_start > 0
-            assert tui._state.log_more_above is True
-        finally:
-            if tui._log_fd is not None:
-                os.close(tui._log_fd)
-
-    def test_no_completed_log_clears_stale_text(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        tui, log_area = self._make_tui(base)
-        # Leftover text from a previously shown package; selection change has
-        # already nulled log_tail_path.
-        log_area.buffer.set_document(
-            log_area.buffer.document.__class__("old package log\n"),
-            bypass_readonly=True,
+        historical = reader.read(
+            path, tmp_path, True, "poll", cancel, following=False
         )
-        tui._state.log_tail_path = None
-        pkg = _make_package(status="ACTIVE")  # no completed log
-        tui._show_latest_log(MagicMock(), log_area, pkg)
-        assert log_area.buffer.text == ""
+        assert historical.data == initial.data
+        assert historical.end == initial.end
+        assert historical.size == path.stat().st_size
+        assert historical.more_below is True
 
-    def test_static_plain_completed_log_and_page_up(self, tmp_path):
-        base = tmp_path / "logs"
-        base.mkdir()
-        plain = base / "done.log"
-        self._write_lines(plain, 1500)
-        pkg = _make_package(status="ERROR", lasterrortime=100.0)
-        pkg.statusinfo.lasterrorlog = str(plain)
-        tui, log_area = self._make_tui(base)
+        following = reader.read(path, tmp_path, True, "poll", cancel)
+        assert following.end == following.size
+        assert following.data.count(b"\n") <= tui_module.LOG_FOLLOW_MAX_LINES
+        assert following.data.endswith(
+            f"new-{tui_module.LOG_FOLLOW_MAX_LINES + 99}\n".encode()
+        )
+        reader.close()
+
+    def test_rotation_and_truncation_reset_source(self, tmp_path):
+        import threading
+
+        _, reader = self._reader_api()
+        path = tmp_path / "live.log"
+        path.write_bytes(b"old\n")
+        cancel = threading.Event()
+        reader.read(path, tmp_path, True, "tail", cancel)
+
+        rotated = tmp_path / "rotated.log"
+        path.rename(rotated)
+        path.write_bytes(b"replacement\n")
+        snapshot = reader.read(path, tmp_path, True, "poll", cancel)
+        assert snapshot.reset is True
+        assert snapshot.data == b"replacement\n"
+
+        path.write_bytes(b"x\n")
+        snapshot = reader.read(path, tmp_path, True, "poll", cancel)
+        assert snapshot.reset is True
+        assert snapshot.data == b"x\n"
+        reader.close()
+
+    def test_gzip_pages_without_historical_line_cutoff(self, tmp_path):
+        import gzip
+        import threading
+
+        _, reader = self._reader_api()
+        path = tmp_path / "archive.log.gz"
+        expected = b"".join(f"line-{index}\n".encode() for index in range(200_100))
+        with gzip.open(path, "wb") as stream:
+            stream.write(expected)
+
+        cancel = threading.Event()
+        snapshot = reader.read(path, tmp_path, False, "tail", cancel)
+        temporary = reader._temporary
+        assert snapshot.size == len(expected)
+        assert snapshot.data.endswith(b"line-200099\n")
+
+        snapshot = reader.read(path, tmp_path, False, "start", cancel)
+        assert snapshot.start == 0
+        assert snapshot.data.startswith(b"line-0\n")
+        assert snapshot.more_below is True
+        reader.close()
+        assert temporary.closed is True
+
+    def test_cancellation_closes_plain_and_partial_gzip_backing(self, tmp_path):
+        import gzip
+        import threading
+
+        tui_module, reader = self._reader_api()
+        plain = tmp_path / "plain.log"
+        plain.write_bytes(b"data\n")
+        cancel = threading.Event()
+        reader.read(plain, tmp_path, False, "tail", cancel)
+        cancel.set()
+        with pytest.raises(tui_module._LogCancelled):
+            reader.read(plain, tmp_path, False, "poll", cancel)
+        assert reader._fd is None
+
+        compressed = tmp_path / "large.log.gz"
+        with gzip.open(compressed, "wb") as stream:
+            stream.write(b"x" * (4 * tui_module.LOG_READ_BLOCK_BYTES))
+
+        class CancelAfterChunks:
+            def __init__(self):
+                self.calls = 0
+
+            def is_set(self):
+                self.calls += 1
+                return self.calls >= 3
+
+        with pytest.raises(tui_module._LogCancelled):
+            reader.read(
+                compressed, tmp_path, False, "tail", CancelAfterChunks()
+            )
+        assert reader._fd is None
+        assert reader._temporary is None
+
+    def test_corrupt_gzip_and_enospc_close_partial_backing(self, tmp_path):
+        import errno
+        import gzip
+        import threading
+
+        tui_module, reader = self._reader_api()
+        corrupt = tmp_path / "corrupt.log.gz"
+        corrupt.write_bytes(b"not a gzip stream")
+        with pytest.raises(OSError):
+            reader.read(corrupt, tmp_path, False, "tail", threading.Event())
+        assert reader._fd is None
+        assert reader._temporary is None
+
+        compressed = tmp_path / "valid.log.gz"
+        with gzip.open(compressed, "wb") as stream:
+            stream.write(b"content\n")
+        temporary = MagicMock()
+        temporary.write.side_effect = OSError(errno.ENOSPC, "no space")
+        with patch("tempfile.TemporaryFile", return_value=temporary):
+            with pytest.raises(OSError) as error:
+                reader.read(
+                    compressed, tmp_path, False, "tail", threading.Event()
+                )
+        assert error.value.errno == errno.ENOSPC
+        temporary.close.assert_called_once()
+        assert reader._fd is None
+        assert reader._temporary is None
+
+    def test_fstat_failure_closes_new_source_fd(self, tmp_path):
+        import errno
+        import threading
+
+        tui_module, reader = self._reader_api()
+        path = tmp_path / "plain.log"
+        path.write_bytes(b"content\n")
+        source_fd = os.open(path, os.O_RDONLY)
+
         try:
-            tui._show_latest_log(MagicMock(), log_area, pkg)
-            text = log_area.buffer.text
-            assert text.count("\n") == LOG_INITIAL_LINES
-            assert text.startswith("line500\n")
-            assert text.endswith("line1499\n")
-            assert tui._state.log_more_above is True
+            with patch.object(
+                tui_module, "safe_open_log_for_read", return_value=source_fd
+            ), patch.object(tui_module.os, "fstat", side_effect=OSError("stat failed")):
+                with pytest.raises(OSError, match="stat failed"):
+                    reader.read(path, tmp_path, False, "tail", threading.Event())
 
-            tui._load_more_above(log_area)
-            assert log_area.buffer.text.startswith("line0\n")
-            assert tui._state.log_more_above is False
+            with pytest.raises(OSError) as error:
+                os.fstat(source_fd)
+            assert error.value.errno == errno.EBADF
+            assert reader._fd is None
         finally:
-            if tui._log_fd is not None:
-                os.close(tui._log_fd)
+            try:
+                os.close(source_fd)
+            except OSError as exc:
+                # The reader is expected to have closed this descriptor already.
+                if exc.errno != errno.EBADF:
+                    raise
 
+    def test_gzip_bidirectional_paging_evicts_opposite_edge(self, tmp_path):
+        import gzip
+        import threading
 
-# ---------------------------------------------------------------------------
-# 10. State transitions (dialog open/confirm/failure)
-# ---------------------------------------------------------------------------
+        tui_module, reader = self._reader_api()
+        path = tmp_path / "archive.log.gz"
+        expected = b"".join(f"line-{index}\n".encode() for index in range(12))
+        with gzip.open(path, "wb") as stream:
+            stream.write(expected)
+
+        cancel = threading.Event()
+        with patch.object(tui_module, "LOG_INITIAL_LINES", 2), patch.object(
+            tui_module, "LOG_PAGE_LINES", 2
+        ), patch.object(tui_module, "LOG_MAX_LOADED_LINES", 3):
+            snapshot = reader.read(path, tmp_path, False, "tail", cancel)
+            while snapshot.more_above:
+                old_start = snapshot.start
+                snapshot = reader.read(path, tmp_path, False, "up", cancel)
+                assert snapshot.start < old_start
+                assert tui_module._LogReader._line_count(snapshot.data) <= 3
+                assert snapshot.data == expected[snapshot.start : snapshot.end]
+            assert snapshot.start == 0
+
+            while snapshot.more_below:
+                old_end = snapshot.end
+                snapshot = reader.read(path, tmp_path, False, "down", cancel)
+                assert snapshot.end > old_end
+                assert tui_module._LogReader._line_count(snapshot.data) <= 3
+                assert snapshot.data == expected[snapshot.start : snapshot.end]
+            assert snapshot.end == len(expected)
+        reader.close()
+
+    def test_long_utf8_line_segments_preserve_all_bytes(self, tmp_path):
+        import importlib
+        import threading
+
+        tui_module = importlib.import_module("mirror.command.tui")
+
+        path = tmp_path / "utf8.log"
+        expected = ("€" * 31).encode()
+        path.write_bytes(expected)
+        reader = tui_module._LogReader()
+        cancel = threading.Event()
+
+        with patch.object(tui_module, "LOG_MAX_LOADED_BYTES", 17):
+            snapshot = reader.read(path, tmp_path, False, "start", cancel)
+            assert snapshot.segmented is True
+            assert snapshot.data == expected[snapshot.start : snapshot.end]
+            assert snapshot.data.decode("utf-8")
+
+            ranges = [(snapshot.start, snapshot.end)]
+            while snapshot.more_below:
+                snapshot = reader.read(path, tmp_path, False, "down", cancel)
+                assert snapshot.data == expected[snapshot.start : snapshot.end]
+                assert snapshot.data.decode("utf-8")
+                ranges.append((snapshot.start, snapshot.end))
+            assert ranges[0][0] == 0
+            assert ranges[-1][1] == len(expected)
+            assert all(left[1] >= right[0] for left, right in zip(ranges, ranges[1:]))
+
+            snapshot = reader.read(path, tmp_path, False, "tail", cancel)
+            assert snapshot.data.decode("utf-8")
+            ranges = [(snapshot.start, snapshot.end)]
+            while snapshot.more_above:
+                snapshot = reader.read(path, tmp_path, False, "up", cancel)
+                assert snapshot.data == expected[snapshot.start : snapshot.end]
+                assert snapshot.data.decode("utf-8")
+                ranges.append((snapshot.start, snapshot.end))
+            assert ranges[0][1] == len(expected)
+            assert ranges[-1][0] == 0
+            assert all(left[0] <= right[1] for left, right in zip(ranges, ranges[1:]))
+        reader.close()
+
+    def test_line_cap_counts_unterminated_final_line(self):
+        tui_module, _ = self._reader_api()
+        data = b"zero\none\ntwo\nthree\npartial"
+
+        front, _, _ = tui_module._LogReader._trim_front(data, 0, 4)
+        back, _, _ = tui_module._LogReader._trim_back(data, 0, 4)
+
+        assert front == b"one\ntwo\nthree\npartial"
+        assert back == b"zero\none\ntwo\nthree\n"
+        assert tui_module._LogReader._line_count(front) == 4
+        assert tui_module._LogReader._line_count(back) == 4
+
+    def test_short_down_read_uses_actual_end_without_skipping(self, tmp_path):
+        import threading
+
+        tui_module, reader = self._reader_api()
+        path = tmp_path / "history.log"
+        expected = b"".join(f"line-{index}\n".encode() for index in range(8))
+        path.write_bytes(expected)
+        cancel = threading.Event()
+
+        with patch.object(tui_module, "LOG_INITIAL_LINES", 2), patch.object(
+            tui_module, "LOG_PAGE_LINES", 2
+        ):
+            reader.read(path, tmp_path, False, "start", cancel)
+            original_read = reader._read_range
+            shortened = False
+
+            def short_once(fd, start, end, event):
+                nonlocal shortened
+                data = original_read(fd, start, end, event)
+                if not shortened:
+                    shortened = True
+                    return data[: max(1, len(data) // 2)]
+                return data
+
+            with patch.object(reader, "_read_range", side_effect=short_once):
+                snapshot = reader.read(path, tmp_path, False, "down", cancel)
+                first_short_end = snapshot.end
+                assert snapshot.data == expected[snapshot.start : snapshot.end]
+                assert snapshot.end < path.stat().st_size
+
+                snapshot = reader.read(path, tmp_path, False, "down", cancel)
+                assert snapshot.end > first_short_end
+                assert snapshot.data == expected[snapshot.start : snapshot.end]
+        reader.close()
+
+    def test_short_poll_read_retries_from_actual_end(self, tmp_path):
+        import threading
+
+        _, reader = self._reader_api()
+        path = tmp_path / "live.log"
+        expected = b"initial\n"
+        path.write_bytes(expected)
+        cancel = threading.Event()
+        reader.read(path, tmp_path, True, "tail", cancel)
+
+        addition = b"one\ntwo\nthree\n"
+        expected += addition
+        with path.open("ab") as stream:
+            stream.write(addition)
+        original_read = reader._read_range
+        shortened = False
+
+        def short_once(fd, start, end, event):
+            nonlocal shortened
+            data = original_read(fd, start, end, event)
+            if not shortened:
+                shortened = True
+                return data[: max(1, len(data) // 2)]
+            return data
+
+        with patch.object(reader, "_read_range", side_effect=short_once):
+            snapshot = reader.read(path, tmp_path, True, "poll", cancel)
+            short_end = snapshot.end
+            assert snapshot.data == expected[snapshot.start : snapshot.end]
+            assert snapshot.more_below is True
+
+            snapshot = reader.read(path, tmp_path, True, "poll", cancel)
+            assert snapshot.end > short_end
+            assert snapshot.end == snapshot.size == len(expected)
+            assert snapshot.data == expected[snapshot.start : snapshot.end]
+        reader.close()
+
+    def test_short_up_read_invalidates_reader_then_recovers(self, tmp_path):
+        import threading
+
+        tui_module, reader = self._reader_api()
+        path = tmp_path / "history.log"
+        expected = b"".join(f"line-{index}\n".encode() for index in range(8))
+        path.write_bytes(expected)
+        cancel = threading.Event()
+
+        with patch.object(tui_module, "LOG_INITIAL_LINES", 2), patch.object(
+            tui_module, "LOG_PAGE_LINES", 2
+        ):
+            reader.read(path, tmp_path, False, "tail", cancel)
+            original_read = reader._read_range
+
+            def short_prefix(fd, start, end, event):
+                data = original_read(fd, start, end, event)
+                return data[:-1]
+
+            with patch.object(reader, "_read_range", side_effect=short_prefix):
+                with pytest.raises(OSError, match="changed during backward"):
+                    reader.read(path, tmp_path, False, "up", cancel)
+            assert reader._fd is None
+
+            recovered = reader.read(path, tmp_path, False, "tail", cancel)
+            assert recovered.reset is True
+            assert recovered.data == expected[recovered.start : recovered.end]
+        reader.close()
 
 
 class TestStateTransitions:
@@ -1061,32 +1237,6 @@ class TestShowLogToggle:
 
 
 # ---------------------------------------------------------------------------
-# _is_rotated
-# ---------------------------------------------------------------------------
-
-
-def test_log_tailer_detects_rotation_by_inode(tmp_path):
-    base = tmp_path / "logs"
-    base.mkdir()
-    log_file = base / "running.log"
-    log_file.write_bytes(b"x" * 20)
-
-    fd_a = safe_open_log_for_read(log_file, base)
-    assert fd_a is not None
-
-    # No rotation yet: same inode
-    assert _is_rotated(fd_a, log_file) is False
-
-    # Simulate log rotation: unlink and recreate (new inode)
-    os.unlink(log_file)
-    log_file.write_text("new content after rotation")
-
-    assert _is_rotated(fd_a, log_file) is True
-
-    os.close(fd_a)
-
-
-# ---------------------------------------------------------------------------
 # Addendum: get_runtime_info RPC tests
 # ---------------------------------------------------------------------------
 
@@ -1105,78 +1255,17 @@ _RUNTIME_INFO = {
 }
 
 
-class TestTuiForwardsGetRuntimeInfo:
-    """(i) tui() calls get_runtime_info and passes mirrorname/log_base to MirrorTUI."""
-
-    def test_forwards_runtime_info(self, monkeypatch):
-        import mirror.socket.master
-        import sys
-        tui_module = sys.modules["mirror.command.tui"]
-
-        monkeypatch.setattr(
-            mirror.socket.master, "get_runtime_info", lambda socket_path=None: _RUNTIME_INFO
-        )
-
-        captured = {}
-
-        class CaptureMirrorTUI:
-            def __init__(self, socket_path, mirrorname="", log_base=None):
-                captured["mirrorname"] = mirrorname
-                captured["log_base"] = log_base
-
-            def run(self):
-                pass
-
-        monkeypatch.setattr(tui_module, "MirrorTUI", CaptureMirrorTUI)
-
-        from mirror.command.tui import tui
-        tui(socket_path=None)
-
-        assert captured["mirrorname"] == "testmirror"
-        assert captured["log_base"] == Path("/var/log/mirror/packages")
-
-
-class TestTuiStartupRpcRaises:
-    """(ii) When get_runtime_info raises at startup, TUI opens with empty values;
-    _apply_runtime_info setter then populates them."""
-
-    def test_startup_rpc_raises_then_setter_populates(self, monkeypatch):
-        import mirror.socket.master
-        import sys
-        tui_module = sys.modules["mirror.command.tui"]
-
-        def _raise(socket_path=None):
-            raise RuntimeError("daemon offline")
-
-        monkeypatch.setattr(mirror.socket.master, "get_runtime_info", _raise)
-
-        captured_tui = {}
-
-        class CaptureMirrorTUI:
-            def __init__(self, socket_path, mirrorname="", log_base=None):
-                self._mirrorname = mirrorname
-                self._log_base = log_base
-                captured_tui["instance"] = self
-
-            def run(self):
-                pass
-
-            # Delegate to real implementation via composition
-            _apply_runtime_info = MirrorTUI._apply_runtime_info
-
-        monkeypatch.setattr(tui_module, "MirrorTUI", CaptureMirrorTUI)
-
-        from mirror.command.tui import tui
-        tui(socket_path=None)
-
-        instance = captured_tui["instance"]
-        assert instance._mirrorname == ""
-        assert instance._log_base is None
-
-        # Now apply runtime info via the setter (call unbound to avoid double-self)
-        MirrorTUI._apply_runtime_info(instance, {"mirrorname": "m", "log_base": "/x"})
-        assert instance._mirrorname == "m"
-        assert instance._log_base == Path("/x")
+class TestTuiStartup:
+    def test_opens_without_blocking_runtime_rpc(self, monkeypatch):
+        import importlib
+        module = importlib.import_module("mirror.command.tui")
+        constructor = MagicMock()
+        monkeypatch.setattr(module, "MirrorTUI", constructor)
+        with patch.object(mirror.socket.master, "get_runtime_info") as rpc:
+            module.tui("/tmp/explicit.sock")
+        constructor.assert_called_once_with(socket_path="/tmp/explicit.sock")
+        constructor.return_value.run.assert_called_once()
+        rpc.assert_not_called()
 
 
 class TestStatusPollerFetchesRuntimeInfoAfterStartupFailure:
@@ -1518,3 +1607,533 @@ class TestBuildHelpText:
         assert "j / k" in text
         assert "?" in text
         assert "quit" in text.lower()
+
+
+class _SizedDummyOutput(DummyOutput):
+    def __init__(self, columns: int = 80, rows: int = 24) -> None:
+        self._size = Size(rows=rows, columns=columns)
+
+    def get_size(self) -> Size:
+        return self._size
+
+
+def _run_tui_keys(
+    tui: MirrorTUI,
+    keys: str,
+    *,
+    columns: int = 80,
+    rows: int = 24,
+) -> Application:
+    """Run keys through prompt_toolkit's real input and key processor."""
+    layout, log_area = tui._build_layout()
+    bindings = tui._build_keybindings(log_area)
+
+    async def run() -> Application:
+        with create_pipe_input() as pipe_input:
+            app = Application(
+                layout=layout,
+                key_bindings=bindings,
+                input=pipe_input,
+                output=_SizedDummyOutput(columns, rows),
+                full_screen=True,
+            )
+            app.ttimeoutlen = 0.01
+            task = asyncio.create_task(app.run_async())
+            await asyncio.sleep(0.02)
+            if keys.endswith("\x1b"):
+                pipe_input.send_text(keys[:-1])
+                await asyncio.sleep(0.03)
+                app.key_processor.feed(KeyPress(Keys.Escape))
+                app.key_processor.process_keys()
+                await asyncio.sleep(0.03)
+            else:
+                pipe_input.send_text(keys)
+                await asyncio.sleep(0.08)
+            if not task.done():
+                app.exit()
+            await task
+            return app
+
+    return asyncio.run(run())
+
+
+class TestTUIApplicationBehavior:
+    @pytest.mark.parametrize("columns", [40, 80, 120, 160])
+    @pytest.mark.parametrize("show_log", [False, True])
+    def test_rendered_table_fits_actual_pane_width(self, columns, show_log):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.show_log = show_log
+        tui._state.packages = [
+            _make_package("한글-package-with-a-long-name", status="ERROR")
+        ]
+        tui._state.selected_pkgid = tui._state.packages[0].pkgid
+
+        _run_tui_keys(tui, "", columns=columns)
+
+        pane_width = tui._table_window.render_info.window_width
+        header = "".join(fragment[1] for fragment in tui._table_header_control.text())
+        body = "".join(fragment[1] for fragment in tui._table_control.text())
+        assert all(get_cwidth(line) <= pane_width for line in header.splitlines())
+        assert all(get_cwidth(line) <= pane_width for line in body.splitlines())
+
+    def test_selected_row_scrolls_with_table_cursor(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package(f"pkg-{index:03d}") for index in range(60)]
+        tui._state.selected_pkgid = "pkg-000"
+
+        _run_tui_keys(tui, "\x1b[B" * 35, rows=12)
+
+        assert tui._state.selected_pkgid == "pkg-035"
+        render_info = tui._table_window.render_info
+        assert render_info.vertical_scroll > 0
+        assert render_info.vertical_scroll <= 35
+        assert 35 < render_info.vertical_scroll + render_info.window_height
+
+    def test_boundary_navigation_does_not_reload_selection(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package("only")]
+        tui._state.selected_pkgid = "only"
+        tui._on_selection_change = MagicMock()
+
+        _run_tui_keys(tui, "\x1b[B\x1b[A\x1b[H\x1b[F")
+
+        tui._on_selection_change.assert_not_called()
+
+    def test_tab_switches_focus_and_log_keys_do_not_change_package(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package("a"), _make_package("b")]
+        tui._state.selected_pkgid = "a"
+        tui._request_log_jump = MagicMock()
+        layout, log_area = tui._build_layout()
+        log_area.text = "one\ntwo\nthree\n"
+        log_area.buffer.cursor_position = 0
+        bindings = tui._build_keybindings(log_area)
+
+        async def run() -> Application:
+            with create_pipe_input() as pipe_input:
+                app = Application(
+                    layout=layout,
+                    key_bindings=bindings,
+                    input=pipe_input,
+                    output=_SizedDummyOutput(),
+                    full_screen=True,
+                )
+                app.ttimeoutlen = 0.01
+                task = asyncio.create_task(app.run_async())
+                await asyncio.sleep(0.02)
+                pipe_input.send_text("\t\x1b[C\x1b[B\x1b[DjkgG")
+                await asyncio.sleep(0.08)
+                app.exit()
+                await task
+                return app
+
+        app = asyncio.run(run())
+        assert tui._state.selected_pkgid == "a"
+        assert log_area.buffer.cursor_position == 4
+        assert tui._request_log_jump.call_args_list == [call("start"), call("end")]
+        assert app.layout.has_focus(log_area)
+
+    def test_log_edges_request_adjacent_disk_pages(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package("a")]
+        tui._state.selected_pkgid = "a"
+        tui._state.log_more_above = True
+        tui._request_log_page = MagicMock()
+        layout, log_area = tui._build_layout()
+        log_area.text = "one\ntwo\nthree"
+        log_area.buffer.cursor_position = 0
+        bindings = tui._build_keybindings(log_area)
+
+        async def run() -> None:
+            with create_pipe_input() as pipe_input:
+                app = Application(
+                    layout=layout,
+                    key_bindings=bindings,
+                    input=pipe_input,
+                    output=_SizedDummyOutput(),
+                    full_screen=True,
+                )
+                task = asyncio.create_task(app.run_async())
+                await asyncio.sleep(0.02)
+                pipe_input.send_text("\t\x1b[A\x1b[5~")
+                await asyncio.sleep(0.05)
+                tui._state.log_more_above = False
+                tui._state.log_more_below = True
+                log_area.buffer.cursor_position = len(log_area.text)
+                pipe_input.send_text("\x1b[B\x1b[6~")
+                await asyncio.sleep(0.05)
+                app.exit()
+                await task
+
+        asyncio.run(run())
+        assert tui._request_log_page.call_args_list == [
+            call("up"),
+            call("up"),
+            call("down"),
+            call("down"),
+        ]
+
+    def test_hiding_log_returns_focus_to_table(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package("a")]
+        tui._state.selected_pkgid = "a"
+
+        app = _run_tui_keys(tui, "\tl")
+
+        assert tui._state.show_log is False
+        assert app.layout.has_focus(tui._table_control)
+
+    def test_help_overlay_blocks_native_log_navigation(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package("a")]
+        tui._state.selected_pkgid = "a"
+        layout, log_area = tui._build_layout()
+        log_area.text = "one\ntwo\nthree\n"
+        log_area.buffer.cursor_position = 0
+        bindings = tui._build_keybindings(log_area)
+
+        async def run() -> None:
+            with create_pipe_input() as pipe_input:
+                app = Application(
+                    layout=layout,
+                    key_bindings=bindings,
+                    input=pipe_input,
+                    output=_SizedDummyOutput(),
+                    full_screen=True,
+                )
+                task = asyncio.create_task(app.run_async())
+                await asyncio.sleep(0.02)
+                pipe_input.send_text("\t?\x1b[C\x1b[BjkG")
+                await asyncio.sleep(0.08)
+                app.exit()
+                await task
+
+        asyncio.run(run())
+        assert tui._state.show_help is True
+        assert log_area.buffer.cursor_position == 0
+
+    def test_filter_is_prefilled_and_accepts_reserved_printable_keys(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        reserved = "qjkxrlsp?Gg/[]{}!@#$%^&*()"
+        pasted = "PASTE/q?"
+        expected = f"debian{reserved}{pasted}"
+        tui._state.packages = [_make_package(expected), _make_package("ubuntu")]
+        tui._state.selected_pkgid = expected
+        tui._state.filter_text = "debian"
+
+        keys = f"/{reserved}\x1b[200~{pasted}\x1b[201~\r"
+        app = _run_tui_keys(tui, keys)
+
+        assert tui._state.filter_text == expected
+        assert tui._filter_buffer.text == expected
+        assert tui._state.filter_input_active is False
+        assert app.layout.has_focus(tui._table_control)
+
+    def test_filter_escape_retains_live_filter(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package("debian"), _make_package("ubuntu")]
+        tui._state.selected_pkgid = "debian"
+
+        _run_tui_keys(tui, "/deb\x1b")
+
+        assert tui._state.filter_text == "deb"
+        assert tui._state.filter_input_active is False
+
+    def test_resize_sort_and_filter_keep_selected_row_visible(self):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package(f"pkg-{index:03d}") for index in range(200)]
+        tui._state.selected_pkgid = "pkg-150"
+        layout, log_area = tui._build_layout()
+        output = _SizedDummyOutput(columns=160, rows=20)
+        bindings = tui._build_keybindings(log_area)
+
+        async def run() -> None:
+            with create_pipe_input() as pipe_input:
+                app = Application(
+                    layout=layout,
+                    key_bindings=bindings,
+                    input=pipe_input,
+                    output=output,
+                    full_screen=True,
+                )
+                task = asyncio.create_task(app.run_async())
+                await asyncio.sleep(0.03)
+                pipe_input.send_text("s/pkg-1\r")
+                await asyncio.sleep(0.08)
+                output._size = Size(rows=10, columns=40)
+                app.invalidate()
+                await asyncio.sleep(0.08)
+                app.exit()
+                await task
+
+        asyncio.run(run())
+        assert tui._state.selected_pkgid == "pkg-150"
+        selected_index = [
+            package.pkgid for package in visible_packages(tui._state)
+        ].index("pkg-150")
+        render_info = tui._table_window.render_info
+        assert tui._table_control._render_width == render_info.window_width
+        assert tui._table_header_control._render_width == render_info.window_width
+        assert render_info.vertical_scroll <= selected_index
+        assert selected_index < render_info.vertical_scroll + render_info.window_height
+
+
+class TestTuiConnectionLifecycle:
+    def test_slow_connect_does_not_block_event_loop(self):
+        import threading
+
+        entered, release = threading.Event(), threading.Event()
+        client = MagicMock()
+        client.list_packages.return_value = {'packages': []}
+        client.get_runtime_info.return_value = {'mirrorname': 'test'}
+
+        def connect():
+            entered.set()
+            assert release.wait(5)
+
+        client.connect.side_effect = connect
+        tui = MirrorTUI('/tmp/no-master.sock')
+
+        async def scenario():
+            pending = asyncio.create_task(tui._poll_once(MagicMock(), False))
+            try:
+                for _ in range(200):
+                    if entered.is_set():
+                        break
+                    await asyncio.sleep(.005)
+                assert entered.is_set()
+                assert not pending.done()
+                tui._state.show_help = True
+                release.set()
+                assert await asyncio.wait_for(pending, 5)
+                assert tui._state.show_help
+                assert tui._client is client
+            finally:
+                release.set()
+                await pending
+                await tui._close_log_reader()
+        with patch.object(mirror.socket.master, 'MasterClient', return_value=client):
+            asyncio.run(scenario())
+
+    def test_cancelled_connect_disconnects_unclaimed_client(self):
+        import threading
+
+        entered, release = threading.Event(), threading.Event()
+        client = MagicMock()
+
+        def connect():
+            entered.set()
+            assert release.wait(5)
+
+        client.connect.side_effect = connect
+        tui = MirrorTUI('/tmp/no-master.sock')
+
+        async def scenario():
+            pending = asyncio.create_task(tui._connect_client())
+            try:
+                for _ in range(200):
+                    if entered.is_set():
+                        break
+                    await asyncio.sleep(.005)
+                assert entered.is_set()
+                pending.cancel()
+                await asyncio.sleep(0)
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(pending, 5)
+                assert tui._client is None
+                client.disconnect.assert_called_once()
+            finally:
+                release.set()
+                await tui._close_log_reader()
+        with patch.object(mirror.socket.master, 'MasterClient', return_value=client):
+            asyncio.run(scenario())
+
+
+class TestTuiDiskPageIntegration:
+    _make_tui = TestTuiLogReading._make_tui
+    def test_prepend_preserves_visible_line(self, tmp_path):
+        from types import SimpleNamespace
+
+        path = tmp_path / 'pages.log'
+        path.write_text(''.join(f'line{i}\n' for i in range(3000)))
+        tui, log = self._make_tui(tmp_path, _make_package(runninglog=str(path)))
+        app = MagicMock()
+        app.layout.has_focus.return_value = True
+        tui._app = app
+
+        async def scenario():
+            try:
+                await tui._poll_log_once(app, log)
+                log.buffer.cursor_position = 0
+                log.window.vertical_scroll = 0
+                log.window.render_info = SimpleNamespace(vertical_scroll=0, displayed_lines=[0, 1])
+                before = log.buffer.document.current_line
+                await tui._poll_log_once(app, log)
+                assert log.buffer.document.current_line == before
+                assert log.window.vertical_scroll == LOG_PAGE_LINES
+                assert tui._log_snapshot.start > 0
+            finally:
+                await tui._close_log_reader()
+        asyncio.run(scenario())
+
+    def test_segment_page_does_not_automatically_reverse_direction(self, tmp_path):
+        import importlib
+        from types import SimpleNamespace
+
+        module = importlib.import_module('mirror.command.tui')
+        path = tmp_path / 'single-line.log'
+        path.write_text('abcdefghijklmnopqrstuvxyz' * 5)
+        tui, log = self._make_tui(tmp_path, _make_package(runninglog=str(path)))
+        app = MagicMock()
+        app.layout.has_focus.return_value = True
+        tui._app = app
+
+        async def scenario():
+            try:
+                tui._request_log_jump('start')
+                await tui._poll_log_once(app, log)
+                assert tui._log_snapshot.start == 0
+                log.window.render_info = SimpleNamespace(vertical_scroll=0, displayed_lines=[0])
+                log.buffer.cursor_position = len(log.text)
+                tui._request_log_page('down')
+                await tui._poll_log_once(app, log)
+                start = tui._log_snapshot.start
+                assert start > 0
+                await tui._poll_log_once(app, log)
+                assert tui._log_snapshot.start == start
+                tui._request_log_page('up')
+                await tui._poll_log_once(app, log)
+                assert tui._log_snapshot.start < start
+            finally:
+                await tui._close_log_reader()
+        with patch.object(module, 'LOG_MAX_LOADED_BYTES', 17):
+            asyncio.run(scenario())
+
+
+def test_tui_shutdown_wakes_pending_rpc_and_closes_reader():
+    import importlib
+    import threading
+    from prompt_toolkit.application import Application as RealApplication
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    module = importlib.import_module('mirror.command.tui')
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    client = MagicMock()
+
+    def pending_rpc():
+        entered.set()
+        assert release.wait(5)
+        finished.set()
+        return {'packages': [_make_package('late-result').to_dict()]}
+
+    client.list_packages.side_effect = pending_rpc
+    client.disconnect.side_effect = release.set
+    tui = MirrorTUI('/tmp/no-master.sock')
+    tui._client = client
+
+    async def scenario():
+        with create_pipe_input() as pipe:
+            def make_app(**kwargs):
+                return RealApplication(input=pipe, output=DummyOutput(), **kwargs)
+
+            with patch.object(module, 'Application', side_effect=make_app):
+                task = asyncio.create_task(tui._run_async())
+                try:
+                    for _ in range(200):
+                        if entered.is_set():
+                            break
+                        await asyncio.sleep(.005)
+                    assert entered.is_set()
+                    pipe.send_text('q')
+                    await asyncio.wait_for(task, 5)
+                    assert finished.is_set()
+                    assert tui._client is None
+                    assert tui._state.packages == []
+                    assert not any(thread.is_alive() for thread in tui._log_executor._threads)
+                    client.disconnect.assert_called_once()
+                finally:
+                    release.set()
+                    if not task.done():
+                        task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(scenario())
+
+
+def test_opposite_page_queued_during_read_keeps_reader_and_display_in_sync(tmp_path):
+    import importlib
+    import threading
+
+    module = importlib.import_module('mirror.command.tui')
+    path = tmp_path / 'segments.log'
+    path.write_bytes(b'abcdefghijklmnopqrstuvwxyz' * 10)
+    tui, log = TestTuiLogReading()._make_tui(tmp_path, _make_package(runninglog=str(path)))
+    entered, release = threading.Event(), threading.Event()
+    original = tui._log_reader.read
+
+    def delayed(*args):
+        snapshot = original(*args)
+        entered.set()
+        assert release.wait(5)
+        return snapshot
+
+    async def scenario():
+        app = MagicMock()
+        try:
+            await tui._poll_log_once(app, log)
+            original_start = tui._log_snapshot.start
+            tui._log_reader.read = delayed
+            tui._request_log_page('up')
+            pending = asyncio.create_task(tui._poll_log_once(app, log))
+            for _ in range(200):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(.005)
+            assert entered.is_set()
+            tui._request_log_page('down')
+            release.set()
+            await asyncio.wait_for(pending, 5)
+            assert tui._log_snapshot.start == tui._log_reader._start
+            assert tui._log_snapshot.start < original_start
+            assert tui._log_jump == 'down'
+            tui._log_reader.read = original
+            await tui._poll_log_once(app, log)
+            assert tui._log_snapshot.start == original_start
+            assert tui._log_snapshot.start == tui._log_reader._start
+        finally:
+            release.set()
+            await tui._close_log_reader()
+    with patch.object(module, 'LOG_MAX_LOADED_BYTES', 17):
+        asyncio.run(scenario())
+
+
+def test_live_follow_survives_growth_between_read_and_eof_stat(tmp_path):
+    path = tmp_path / 'growing.log'
+    path.write_text('first\n')
+    tui, log = TestTuiLogReading()._make_tui(tmp_path, _make_package(runninglog=str(path)))
+    original = tui._log_reader._read_range
+    grew = False
+
+    def read_and_append(*args):
+        nonlocal grew
+        result = original(*args)
+        if not grew:
+            grew = True
+            with path.open('a') as stream:
+                stream.write('appended during read\n')
+        return result
+
+    tui._log_reader._read_range = read_and_append
+
+    async def scenario():
+        try:
+            await tui._poll_log_once(MagicMock(), log)
+            assert tui._log_snapshot.more_below
+            assert tui._state.log_following
+            await tui._poll_log_once(MagicMock(), log)
+            assert log.text.endswith('appended during read\n')
+            assert tui._state.log_following
+        finally:
+            await tui._close_log_reader()
+    asyncio.run(scenario())
