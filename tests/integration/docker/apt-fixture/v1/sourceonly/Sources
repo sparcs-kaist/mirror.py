@@ -1,0 +1,6 @@
+Package: source-only
+Version: 1.0
+Section: devel
+Directory: pool
+Checksums-Sha256:
+ a201b4af266f4405a1d9446f92cc0daa20e14bbf1bbad40db07109ce99ad3fcb 20 source-only_1.0.tar.xz

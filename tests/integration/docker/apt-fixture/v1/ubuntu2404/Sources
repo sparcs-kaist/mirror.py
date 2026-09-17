@@ -1,0 +1,6 @@
+Package: ubuntu2404-source
+Version: 1.0
+Section: devel
+Directory: pool
+Checksums-Sha256:
+ f1b95c8e939f21bd27183d594ca79e0820ed2013e4b459a2e4bfb254a375f8c2 30 ubuntu2404-source_1.0.tar.xz

@@ -1,6 +1,6 @@
 # Integration Tests
 
-End-to-end tests for `mirror.py` running against real rsync, ftpsync (archvsync), lftp, and debmirror upstream fixtures in Docker. Verifies that the master-worker daemon pair correctly performs syncs, recovers from process restarts, and persists state — none of which is provable with the in-process unit suite under `tests/`.
+End-to-end tests for `mirror.py` running against real rsync, ftpsync (archvsync), lftp, debmirror, and apt-mirror2 upstream fixtures in Docker. Verifies that the master-worker daemon pair correctly performs syncs, recovers from process restarts, and persists state — none of which is provable with the in-process unit suite under `tests/`.
 
 These tests are **deselected by default** (`pyproject.toml` sets `addopts = -m 'not integration'`). Run them explicitly:
 
@@ -21,9 +21,9 @@ runs reuse both the wheel and cached images.
 ## Container topology
 
 Five containers share the default bridge network defined in `docker-compose.yml`:
-`mirror`, `rsync-fixture`, `ftpsync-fixture`, `lftp-fixture`, and
-`debmirror-fixture`. The diagram below shows the original rsync/ftpsync paths;
-debmirror uses HTTP port 8000 on the same network.
+`mirror`, `rsync-fixture`, `ftpsync-fixture`, `lftp-fixture`, and `apt-fixture`.
+The diagram below shows the original rsync/ftpsync paths; the shared APT fixture
+serves both debmirror and apt-mirror2 over HTTP port 8000 and FTP port 2121.
 
 ```
 ┌────────────────────┐    ┌────────────────────┐
@@ -110,6 +110,7 @@ Worker stays up across tests by design: tests that need worker restart explicitl
 | `test_preflight.py` | Runs archvsync's `bin/ftpsync sync:all` directly inside the mirror container against the fixture tree, isolating fixture-layout validation from mirror.py orchestration |
 | `test_e2e_rsync.py` | Basic rsync; FFTS short-circuit when upstream unchanged; full sync when FFTS file changed |
 | `test_e2e_debmirror.py` | Signed HTTP option discovery, explicit subsets, updates and cleanup, and failure recovery |
+| `test_e2e_apt_mirror2.py` | Multiple signed flat repositories, source indexes, automatic cleanup, hash and key failures, and FTP discovery |
 | `test_e2e_ftpsync.py` | Basic ftpsync; offline fallback exercises the embedded base64 archvsync (`mirror/sync/_ftpsync_script.py`) by disconnecting mirror from the docker network |
 | `test_master_restart.py` | Master restart during a 200MB sync does not kill worker subprocess (PID stable); master reconnects and sync completes |
 | `test_worker_restart.py` | Worker restart recovery; master gracefully handles worker unavailability |
@@ -120,17 +121,21 @@ Worker stays up across tests by design: tests that need worker restart explicitl
 
 ## Fixtures
 
-### debmirror-fixture (`docker/debmirror-fixture/`)
+### apt-fixture (`docker/apt-fixture/`)
 
-A Python HTTP server exposes a tiny signed Debian archive at
-`http://debmirror-fixture:8000/debian`. Static `v1/` and `v2/` trees contain
+One Python HTTP/FTP server exposes a shared signed Debian archive at
+`http://apt-fixture:8000/debian` and `ftp://apt-fixture:2121/debian`.
+Static `v1/debian/` and `v2/debian/` trees contain
 multiple distributions, components, and architectures, plus binary and source
 indexes and signed `InRelease` and `Release` metadata. The `allonly`
 distribution intentionally has no `InRelease`, exercising the signed
 `Release.gpg` fallback. The `stable` alias duplicates `bookworm` metadata.
-Only the test public keyring is stored; its private key is not included.
-Compose mounts the keyring read-only at `/etc/mirror/debmirror-test.gpg`.
-The mirror image installs debmirror to execute the real subprocess.
+Only public keyrings are stored; private keys are not included.
+Compose mounts the Debian keyring read-only at `/etc/mirror/debmirror-test.gpg`.
+The flat repositories retain their separate keys, mounted at
+`/etc/mirror/apt-mirror2-ubuntu2404.gpg` and
+`/etc/mirror/apt-mirror2-ubuntu2604.gpg`. Both tools use the same Debian tree;
+the mirror image installs debmirror and apt-mirror2 for real subprocess tests.
 
 `test_e2e_debmirror.py` exercises master socket requests, worker subprocess
 execution, completion notifications, persisted status and package logs:
@@ -146,7 +151,8 @@ execution, completion notifications, persisted status and package logs:
   without deleting the existing mirror. An explicit all-only distribution
   bypasses listing and exercises debmirror's `--arch none` behavior.
 
-The fixture is restored to v1 after each debmirror test, including failures.
+Only `/debian` and its listing controls are restored after each debmirror test,
+including failures. Flat repository contents are left intact.
 The small `debmirror-test` package also auto-syncs when the shared stack resets
 for other integration tests. Its hourly schedule avoids background updates
 during the explicitly triggered debmirror scenarios.
@@ -158,6 +164,17 @@ uv run pytest -m integration tests/integration/test_e2e_debmirror.py -v
 ```
 
 They are also included in the full `uv run pytest -m integration -v` suite.
+
+The same fixture also serves `/ubuntu2404/`, `/ubuntu2604/`, and `/sourceonly/`.
+The two CUDA-shaped flat repositories use different keys. Their static v1 and
+v2 trees cover updates, retained files, automatic cleanup, source indexes, and
+a source-only repository. apt-mirror2 tests reset only these three directories;
+they never replace the shared data root or Debian archive. Its FTP test uses
+the shared Debian tree, including `allonly` for signed `Release.gpg` fallback.
+
+`test_e2e_apt_mirror2.py` runs the real apt-mirror2 v16 process through the
+master and worker. It also verifies repository-specific key isolation, package
+hash failures, cleanup suppression after errors, and recovery.
 
 ### rsync-fixture (`docker/rsync-fixture/data/`)
 Minimal tree exposed via rsyncd's `[data]` module:
@@ -182,14 +199,15 @@ The test restores tree v1 in a `finally` block to keep later tests deterministic
 
 ## Configuration (`docker/mirror/config.json`)
 
-Five packages baked into the image:
+Six packages baked into the image:
 
 | Package | synctype | src | syncrate | Purpose |
 |---|---|---|---|---|
 | `rsync-test` | rsync | `rsync://rsync-fixture/data` | `PT5S` | Auto-syncing rsync target with FFTS enabled |
 | `ftpsync-test` | ftpsync | `ftpsync-fixture` (bare hostname) + path `debian` | `PT1H` | Manually triggered ftpsync target |
 | `lftp-test` | lftp | `ftp://lftp-fixture/data` | `PT1H` | FTP target |
-| `debmirror-test` | debmirror | `http://debmirror-fixture:8000/debian` | `PT1H` | Signed Debian archive target |
+| `debmirror-test` | debmirror | `http://apt-fixture:8000/debian` | `PT1H` | Signed Debian archive target |
+| `apt-mirror2-test` | apt-mirror2 | two flat HTTP repositories | `PT1H` | Multi-source signed flat archive target |
 | `error-test` | rsync | `rsync://rsync-fixture/nonexistent` | `PT5S` | Always fails to verify error-retry behavior |
 
 `errorcontinuetime` is set to `10` seconds for fast retry observation.
@@ -211,7 +229,7 @@ tests/integration/
 ├── docker/
 │   ├── rsync-fixture/       # Dockerfile + rsyncd.conf + data/
 │   ├── ftpsync-fixture/     # Dockerfile + rsyncd.conf + data/
-│   ├── debmirror-fixture/   # HTTP server + signed v1/v2 repositories + public keyring
+│   ├── apt-fixture/         # Shared HTTP/FTP server + signed flat and Debian repositories
 │   └── mirror/              # Dockerfile + supervisord.conf + config.json + dist/ (gitignored)
 ├── fixtures/
 │   └── tree_v2/             # Alternate rsync content for FFTS-changed test

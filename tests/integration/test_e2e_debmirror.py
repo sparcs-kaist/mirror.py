@@ -13,8 +13,8 @@ import pytest
 
 
 PACKAGE_ID = "debmirror-test"
-FIXTURE_CONTAINER = "debmirror-fixture"
-FIXTURE_PATH = Path(__file__).parent / "docker" / "debmirror-fixture"
+FIXTURE_CONTAINER = "apt-fixture"
+FIXTURE_PATH = Path(__file__).parent / "docker" / "apt-fixture"
 
 
 def _run_fixture_python(script: str, *args: str) -> subprocess.CompletedProcess[str]:
@@ -32,7 +32,7 @@ def _replace_fixture(version: str) -> None:
     """Replace the served repository with a pristine fixture version."""
     script = (
         "import pathlib, shutil, sys; "
-        "source = pathlib.Path('/srv/fixtures') / sys.argv[1]; "
+        "source = pathlib.Path('/srv/fixtures') / sys.argv[1] / 'debian'; "
         "target = pathlib.Path('/srv/data/debian'); "
         "shutil.rmtree(target, ignore_errors=True); "
         "shutil.copytree(source, target)"
@@ -151,7 +151,7 @@ def _clean_destination(mirror_stack: Any) -> None:
 
 def _fixture_bytes(version: str, relative: str) -> bytes:
     """Read expected bytes from a repository fixture version."""
-    return (FIXTURE_PATH / version / relative).read_bytes()
+    return (FIXTURE_PATH / version / "debian" / relative).read_bytes()
 
 
 @pytest.fixture(autouse=True)

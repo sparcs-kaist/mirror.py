@@ -1,0 +1,15 @@
+Package: ubuntu2604-toolkit
+Version: 1.0
+Architecture: amd64
+Section: devel
+Filename: pool/ubuntu2604-1.0_amd64.deb
+Size: 30
+SHA256: 37d4e2614dac70dbb5fa42038d4fc324072ee151d2d9333f0b41885bfe01bcae
+
+Package: ubuntu2604-shared
+Version: 1.0
+Architecture: amd64
+Section: devel
+Filename: pool/ubuntu2604-shared_1.0_all.deb
+Size: 25
+SHA256: 1f1e937ea83d67d66af7a45cea4e19813796ce96f558295b4a7063b07119e768
