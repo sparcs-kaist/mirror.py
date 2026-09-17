@@ -1,0 +1,19 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+Origin: mirror.py apt-mirror2 fixture
+Label: apt-mirror2 fixture
+SHA256:
+ 290e92d724e057c0b5f254ae9639445826a96c738f9419e2eaca23acd453ff8e 401 Packages
+ a14ec8311262fe36ff2adf04490df5b5442976235a2f6435a30ee8fcdd2b96c7 187 Sources
+-----BEGIN PGP SIGNATURE-----
+
+iQEzBAEBCAAdFiEEjJ/fRKLiRJWxekJ0wzKG+6nyMm0FAmqq/hcACgkQwzKG+6ny
+Mm1W4Af/Qj9YoIfwff0JUEFltNNLWyvtWmi55WZI9JElP7YPtMu62MSGy32OsCvr
+cpeXzGdNOKGCLG+2afknlpNai50Zgi9v+MNMOdiKXMU5rUDO5VfbwumgoCai1cMv
+YEbExTxcji6XDXKfw4x1ee6gHsU+gy8DykgRP5KbBbxf1HXCa0bvSw092JfbBT37
+XfaqLQBx77Bwf7zh4jelBBYtq161uL5rT1uE/MXdgVpMMbPLuRStp607OrtvABrJ
+/x7DEYHKxCodlWm1wYu49WaWbQl+r242crlmICBlWIYN3LS0u+JEN3G1lwV9HlEA
+dVrrZGaYVKvZuTpkvuTpaOQm85Nh7g==
+=ZsnH
+-----END PGP SIGNATURE-----

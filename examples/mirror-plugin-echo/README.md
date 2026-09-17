@@ -44,18 +44,20 @@ Edit `/etc/mirror/config.json` and add an entry under `settings.plugins`:
 {
   "settings": {
     "plugins": {
-      "echo": {
-        "enabled": true,
-        "config": {
-          "prefix": "[hello-from-echo]"
-        }
-      }
+      "echo": {"enabled": true}
     }
   }
 }
 ```
 
-If you skip this, the plug-in still loads (default `enabled: true`) and the
+Per-plugin config lives in a separate file next to `config.json`. To set a
+custom prefix, create `/etc/mirror/echo.json`:
+
+```json
+{"prefix": "[hello-from-echo]"}
+```
+
+If you skip both, the plug-in still loads (default `enabled: true`) and the
 prefix defaults to `[echo]`.
 
 To disable without uninstalling: set `"echo": {"enabled": false}`.

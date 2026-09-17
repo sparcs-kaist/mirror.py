@@ -39,6 +39,20 @@ services:
       retries: 10
       start_period: 3s
 
+  apt-fixture:
+    container_name: apt-fixture
+    build:
+      context: docker/apt-fixture
+    expose:
+      - "8000"
+      - "2121"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import ftplib, urllib.request; urllib.request.urlopen('http://localhost:8000/debian/dists/bookworm/Release', timeout=3).read(); urllib.request.urlopen('http://localhost:8000/ubuntu2404/Release', timeout=3).read(); ftp = ftplib.FTP(); ftp.connect('localhost', 2121, timeout=3); ftp.login(); list(ftp.mlsd('/')); ftp.quit()"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+
   mirror:
     container_name: mirror
     build:
@@ -55,9 +69,14 @@ services:
         condition: service_healthy
       lftp-fixture:
         condition: service_healthy
+      apt-fixture:
+        condition: service_healthy
     volumes:
       - "${INTEGRATION_TMP}/publish:/srv/publish"
       - "${INTEGRATION_TMP}/state:/var/lib/mirror"
       - "${INTEGRATION_TMP}/log:/var/log/mirror"
+      - "./docker/apt-fixture/keyring.gpg:/etc/mirror/debmirror-test.gpg:ro"
+      - "./docker/apt-fixture/key-ubuntu2404.gpg:/etc/mirror/apt-mirror2-ubuntu2404.gpg:ro"
+      - "./docker/apt-fixture/key-ubuntu2604.gpg:/etc/mirror/apt-mirror2-ubuntu2604.gpg:ro"
     environment:
       - PYTHONUNBUFFERED=1

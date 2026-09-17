@@ -39,6 +39,7 @@ def test_lftp_valid_source_delegates_to_worker(tmp_path, monkeypatch):
     assert calls[0]["uid"] == 1234
     assert calls[0]["gid"] == 5678
     script = calls[0]["commandline"][2]
+    assert "set ftp:anon-user anonymous;" in script
     assert "set ftp:anon-pass mirror@example.org;" in script
     assert "set net:max-retries 3;" in script
     assert "set net:timeout 60;" in script
@@ -174,6 +175,7 @@ def test_lftp_isc_like_options_are_rendered(tmp_path, monkeypatch):
 
     assert len(calls) == 1
     script = calls[0]["commandline"][2]
+    assert "set ftp:anon-user anonymous;" in script
     assert "set ftp:anon-pass mirror@ftp.isc.org;" in script
     assert "set list-options -a;" in script
     assert "set net:max-retries 4;" in script

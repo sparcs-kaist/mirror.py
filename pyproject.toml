@@ -1,6 +1,6 @@
 [project]
 name = "mirror.py"
-version = "1.2.2"
+version = "1.3.0"
 description = "Mirror manager daemon that maintains local mirrors of remote package repositories via rsync, ftpsync, and other sync protocols."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,6 +33,7 @@ Repository = "https://github.com/sparcs-kaist/mirror.py"
 Issues = "https://github.com/sparcs-kaist/mirror.py/issues"
 
 [project.optional-dependencies]
+apt-mirror2 = ["apt-mirror==16"]
 dev = [
     "pytest>=8",
     "pytest-docker>=3",
@@ -55,6 +56,7 @@ ftpsync = "mirror.sync.ftpsync:plugin"
 lftp = "mirror.sync.lftp:plugin"
 bandersnatch = "mirror.sync.bandersnatch:plugin"
 local = "mirror.sync.local:plugin"
+apt-mirror2 = "mirror.sync.apt_mirror2:plugin"
 
 [build-system]
 requires = ["setuptools>=68"]

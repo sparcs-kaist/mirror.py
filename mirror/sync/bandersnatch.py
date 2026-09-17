@@ -5,7 +5,7 @@ import mirror.sync
 import logging
 
 
-def execute(package: mirror.structure.Package, pkg_logger: logging.Logger):
+def execute(package: mirror.structure.Package, pkg_logger: logging.Logger, trigger: str = "auto"):
     """Sync package using bandersnatch
 
     Args:

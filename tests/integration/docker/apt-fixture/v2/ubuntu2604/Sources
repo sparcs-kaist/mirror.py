@@ -1,0 +1,6 @@
+Package: ubuntu2604-source
+Version: 2.0
+Section: devel
+Directory: pool
+Checksums-Sha256:
+ d8195e30c13dacd7c45e96df630bad9cd0967a30f181cff762d1dfaf34c1a0ab 30 ubuntu2604-source_2.0.tar.xz

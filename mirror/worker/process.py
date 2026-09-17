@@ -20,6 +20,73 @@ _jobs_lock = threading.Lock()
 NOTIFY_ATTEMPT_BUDGET = 40
 HELPER_DRAIN_TIMEOUT = 5.0
 
+# Seconds to wait for log helper to terminate before sending SIGKILL.
+FOREGROUND_HELPER_KILL_TIMEOUT = 5.0
+
+
+def _make_preexec(uid: Optional[int], gid: Optional[int], nice: int):
+    """Return a preexec closure that applies niceness, GID, and UID.
+
+    The closure applies os.nice(nice) first (only when nice is truthy so that a
+    zero adjustment is skipped), then os.setgid(gid) if gid is not None, then
+    os.setuid(uid) if uid is not None.  Any OSError is logged and re-raised so
+    the Popen call fails visibly.
+
+    Args:
+        uid(int | None): User ID to set, or None to skip setuid.
+        gid(int | None): Group ID to set, or None to skip setgid.
+        nice(int): Niceness increment; skipped when falsy (i.e. 0).
+
+    Return:
+        preexec(callable): Zero-argument callable for subprocess preexec_fn.
+    """
+    def preexec():
+        # Apply niceness before changing identity so the setuid call cannot
+        # lose the privilege needed to renice.
+        if nice:
+            try:
+                os.nice(nice)
+            except OSError as e:
+                logger.error(f"Failed to set niceness to {nice}: {e}")
+                raise e
+
+        if gid is not None:
+            try:
+                os.setgid(gid)
+            except OSError as e:
+                logger.error(f"Failed to set GID to {gid}: {e}")
+                raise e
+
+        if uid is not None:
+            try:
+                os.setuid(uid)
+            except OSError as e:
+                logger.error(f"Failed to set UID to {uid}: {e}")
+                raise e
+
+    return preexec
+
+
+def _identity_popen_kwargs(uid: Optional[int], gid: Optional[int], nice: int) -> dict:
+    """Return Popen identity kwargs for the given uid/gid/nice combination.
+
+    When nice == 0 the native Popen user/group keyword arguments are used so
+    that no preexec_fn overhead is incurred.  When nice is non-zero a
+    preexec_fn built by _make_preexec is used instead because Popen has no
+    native nice support.
+
+    Args:
+        uid(int | None): User ID, or None to run as the current user.
+        gid(int | None): Group ID, or None to run as the current group.
+        nice(int): Niceness increment.
+
+    Return:
+        kwargs(dict): Keyword arguments to spread into subprocess.Popen.
+    """
+    if nice == 0:
+        return {"group": gid, "user": uid}
+    return {"preexec_fn": _make_preexec(uid, gid, nice)}
+
 
 class Job:
     """Represents a worker process."""
@@ -66,29 +133,7 @@ class Job:
         if self.env:
             run_env.update(self.env)
 
-        def preexec():
-            # Apply niceness before changing identity so the setuid
-            # call cannot lose the privilege needed to renice.
-            if self.nice is not None:
-                try:
-                    os.nice(self.nice)
-                except OSError as e:
-                    logger.error(f"Failed to set niceness to {self.nice}: {e}")
-                    raise e
-
-            if self.gid is not None:
-                try:
-                    os.setgid(self.gid)
-                except OSError as e:
-                    logger.error(f"Failed to set GID to {self.gid}: {e}")
-                    raise e
-
-            if self.uid is not None:
-                try:
-                    os.setuid(self.uid)
-                except OSError as e:
-                    logger.error(f"Failed to set UID to {self.uid}: {e}")
-                    raise e
+        preexec = _make_preexec(self.uid, self.gid, self.nice)
 
         self.start_time = time.time()
 
@@ -147,11 +192,7 @@ class Job:
         }
         # Popen has user/group support but no nice kwarg; only use
         # preexec_fn when a niceness adjustment is actually needed.
-        if self.nice == 0:
-            popen_kwargs["group"] = self.gid
-            popen_kwargs["user"] = self.uid
-        else:
-            popen_kwargs["preexec_fn"] = preexec
+        popen_kwargs.update(_identity_popen_kwargs(self.uid, self.gid, self.nice))
         return popen_kwargs
 
     def _missing_directories(self, directory: Path) -> list[Path]:
@@ -310,6 +351,72 @@ class Job:
                 else 0
             ),
         }
+
+
+def run_foreground(
+    job_id: str,
+    commandline: list[str],
+    env: dict[str, str],
+    uid: Optional[int],
+    gid: Optional[int],
+    nice: int,
+    log_path: Optional[Path] = None,
+    log_helper_command: Optional[list[str]] = None,
+) -> int:
+    """Run a command synchronously in the foreground and return its exit code.
+
+    Unlike Job/create(), this inherits the parent's stdout/stderr (live console
+    output), does not register in the _jobs table, and permits uid/gid == None
+    (no privilege change).  Optional log_helper_command is started first and
+    terminated after the main process exits (parity with ftpsync log merge).
+
+    Args:
+        job_id(str): Identifier used only for logging; not registered in _jobs.
+        commandline(list[str]): Command to run in the foreground.
+        env(dict[str, str]): Extra environment variables merged into os.environ.
+        uid(int | None): User ID for the subprocess; None skips setuid.
+        gid(int | None): Group ID for the subprocess; None skips setgid.
+        nice(int): Niceness increment; 0 means no adjustment.
+        log_path(Path, optional): Unused in foreground mode (reserved for
+            future --log FILE support); accepted for API symmetry.
+        log_helper_command(list[str], optional): Helper command started before
+            the main process.  Always terminated/killed in a finally block.
+
+    Return:
+        returncode(int): Exit code of the main process.
+    """
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
+
+    identity_kwargs = _identity_popen_kwargs(uid, gid, nice)
+
+    log_helper_proc: Optional[subprocess.Popen] = None
+    try:
+        if log_helper_command:
+            log_helper_proc = subprocess.Popen(
+                log_helper_command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                **identity_kwargs,
+            )
+
+        result = subprocess.run(
+            commandline,
+            env=run_env,
+            stdin=subprocess.DEVNULL,
+            **identity_kwargs,
+        )
+        return result.returncode
+    finally:
+        if log_helper_proc is not None and log_helper_proc.poll() is None:
+            log_helper_proc.terminate()
+            try:
+                log_helper_proc.wait(timeout=FOREGROUND_HELPER_KILL_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                log_helper_proc.kill()
+                log_helper_proc.wait()
 
 
 def create(

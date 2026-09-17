@@ -66,7 +66,7 @@ def mock_dependencies():
         class MockSync: pass
         mirror.sync = MockSync()
 
-    mirror.sync.methods = ['rsync', 'ftpsync', 'lftp', 'local', 'ubuntu', 'jigdo']
+    mirror.sync.methods = ['rsync', 'ftpsync', 'lftp', 'local', 'ubuntu', 'jigdo', 'debmirror', 'apt-mirror2']
 
     yield
 
@@ -112,6 +112,21 @@ def test_example_config_has_statfile_key():
     p = Path(__file__).parent.parent / "config-example.json"
     cfg = json.loads(p.read_text())
     assert "statfile" in cfg["settings"], "config-example.json missing statfile key"
+
+
+def test_debmirror_example_separates_main_and_security_archives():
+    p = Path(__file__).parent.parent / "config-example.json"
+    packages = json.loads(p.read_text())["packages"]
+    main = packages["debmirror-debian"]
+    security = packages["debmirror-debian-security"]
+
+    assert main["id"] != security["id"]
+    assert main["settings"]["dst"] != security["settings"]["dst"]
+    assert main["settings"]["src"] == "http://deb.debian.org/debian"
+    assert main["settings"]["options"]["dist"] == ["bookworm", "bookworm-updates"]
+    assert security["settings"]["src"] == "https://security.debian.org/debian-security"
+    assert security["settings"]["options"]["dist"] == "bookworm-security"
+    assert "bookworm-security" not in main["settings"]["options"]["dist"]
 
 
 def test_load_config_example(setup_example_env):

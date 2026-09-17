@@ -310,7 +310,7 @@ def test_perform_reload_plugin_change_warns_and_ignores(reload_env):
         reload_env["tmp_path"],
         reload_env["initial_pkgs"],
     )
-    new_cfg["settings"]["plugins"] = {"fake-plugin": {"enabled": True, "config": {}}}
+    new_cfg["settings"]["plugins"] = {"fake-plugin": {"enabled": True}}
     reload_env["config_path"].write_text(json.dumps(new_cfg))
 
     result = mirror.config._perform_reload()

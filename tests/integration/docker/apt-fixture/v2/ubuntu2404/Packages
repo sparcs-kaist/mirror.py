@@ -1,0 +1,15 @@
+Package: ubuntu2404-toolkit
+Version: 2.0
+Architecture: amd64
+Section: devel
+Filename: pool/ubuntu2404-2.0_amd64.deb
+Size: 30
+SHA256: 733be410f3f642c5102eb6801b6621e0c6b865868cf1e0ad168ef872eb49193b
+
+Package: ubuntu2404-shared
+Version: 1.0
+Architecture: amd64
+Section: devel
+Filename: pool/ubuntu2404-shared_1.0_all.deb
+Size: 25
+SHA256: 9cad940c65df64b587c6e832dd6a1d60fc694afcc1f45147f710edadf01dbfdf

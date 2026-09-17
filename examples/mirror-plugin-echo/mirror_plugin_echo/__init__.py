@@ -43,4 +43,4 @@ def plugin():
         record(mirror.plugin.PluginRecord): Event plug-in record.
     """
     from mirror.plugin import event_plugin
-    return event_plugin(name=NAME, setup=setup)
+    return event_plugin(name=NAME, setup=setup, api_version=(1, 0))

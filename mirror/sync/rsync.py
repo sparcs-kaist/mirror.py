@@ -9,8 +9,8 @@ import logging
 import subprocess
 from pathlib import Path
 
-_DEFAULT_RSYNC_FLAGS = "vrltDSH"
-_SAFE_RSYNC_FLAGS = "vrlptDSHaznhPxWENcimub"
+_DEFAULT_RSYNC_FLAGS = "vrltDH"
+_SAFE_RSYNC_FLAGS = "vrlptDHaznhPxWENcimub"
 
 
 def _validate_flag_option(value, name: str, whitelist: str | None = None) -> str:
@@ -57,7 +57,7 @@ def setup(path: Path, package: mirror.structure.Package) -> None:
     """Prepare the sync environment (no-op for rsync)."""
     pass
 
-def execute(package: mirror.structure.Package, pkg_logger: logging.Logger) -> None:
+def execute(package: mirror.structure.Package, pkg_logger: logging.Logger, trigger: str = "auto") -> None:
     """Run rsync sync for the given package.
 
     Args:

@@ -201,7 +201,7 @@ def setup(path: Path, package: "mirror.structure.Package") -> None:
     pass
 
 
-def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger) -> None:
+def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger, trigger: str = "auto") -> None:
     """Run ubuntu two-stage sync for the given package via the worker daemon.
 
     Args:

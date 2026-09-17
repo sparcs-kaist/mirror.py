@@ -1,0 +1,5 @@
+Archive: bookworm
+Component: partner
+Origin: mirror.py integration
+Label: mirror.py integration
+Architecture: amd64
