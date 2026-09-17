@@ -97,6 +97,14 @@ def test_jigdo_command_help_contains_debian_mirror_option():
     assert "--debian-mirror" in result.output
 
 
+def test_jigdo_command_help_contains_image_filter_options():
+    """worker-execute jigdo --help must list both image filter options."""
+    runner = CliRunner()
+    result = runner.invoke(worker_execute_group, ["jigdo", "--help"])
+    assert "--jigdo-include" in result.output
+    assert "--jigdo-exclude" in result.output
+
+
 def test_jigdo_command_no_args_shows_help():
     """Invoking jigdo with no args must print help (no_args_is_help=True)."""
     runner = CliRunner()
@@ -121,6 +129,8 @@ def test_jigdo_command_dispatches_to_run_standalone(monkeypatch, tmp_path):
         "--dst", str(tmp_path),
         "--jigdo-file", "/usr/bin/jigdo-file",
         "--debian-mirror", "file:/mirror/ftp/debian",
+        "--jigdo-include", ".*amd64-DVD-[1-3]\\.iso.*",
+        "--jigdo-exclude", ".*kfreebsd.*",
     ])
 
     assert result.exit_code == 0, result.output
@@ -128,6 +138,8 @@ def test_jigdo_command_dispatches_to_run_standalone(monkeypatch, tmp_path):
     assert captured["src"] == "rsync://cdimage.debian.org/debian-cd/"
     assert captured["jigdo_file"] == "/usr/bin/jigdo-file"
     assert captured["debian_mirror"] == "file:/mirror/ftp/debian"
+    assert captured["jigdo_include"] == ".*amd64-DVD-[1-3]\\.iso.*"
+    assert captured["jigdo_exclude"] == ".*kfreebsd.*"
     assert captured["trace"] is True
 
 
@@ -154,3 +166,36 @@ def test_jigdo_command_default_excludes_and_includes(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert captured["template_excludes"] == mirror.sync.jigdo.JIGDO_TEMPLATE_EXCLUDES
     assert captured["final_includes"] == mirror.sync.jigdo.JIGDO_FINAL_INCLUDES
+    assert captured["jigdo_include"] == mirror.sync.jigdo.JIGDO_INCLUDE_DEFAULT
+    assert captured["jigdo_exclude"] == mirror.sync.jigdo.JIGDO_EXCLUDE_DEFAULT
+
+
+@pytest.mark.parametrize("option", ["--jigdo-include", "--jigdo-exclude"])
+def test_jigdo_command_rejects_repeated_image_filter(
+    option,
+    monkeypatch,
+    tmp_path,
+):
+    """Each image filter option may be specified at most once."""
+    called = False
+
+    def fake_run_standalone(**kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("mirror.sync.jigdo.run_standalone", fake_run_standalone)
+
+    runner = CliRunner()
+    result = runner.invoke(worker_execute_group, [
+        "jigdo",
+        "--src", "rsync://host/debian-cd/",
+        "--dst", str(tmp_path),
+        "--jigdo-file", "/usr/bin/jigdo-file",
+        "--debian-mirror", "file:/mirror/ftp/debian",
+        option, ".*DVD-1\\.iso.*",
+        option, ".*DVD-2\\.iso.*",
+    ])
+
+    assert result.exit_code == 2
+    assert f"{option} may only be specified once" in result.output
+    assert called is False
