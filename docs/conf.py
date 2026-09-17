@@ -1,6 +1,9 @@
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
+
+from sphinx.errors import SphinxError
 
 # conf.py lives in docs/, the package is one level up.
 sys.path.insert(0, os.path.abspath(".."))
@@ -54,6 +57,7 @@ myst_heading_anchors = 3
 suppress_warnings = ["misc.highlighting_failure"]
 
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
+exclude_patterns = ["editor/**", "_build/**"]
 
 # -- HTML output (Read the Docs theme) --
 html_theme = "sphinx_rtd_theme"
@@ -64,3 +68,52 @@ html_theme_options = {
     "titles_only": False,
 }
 html_title = f"mirror.py {release}"
+templates_path = ["_templates"]
+
+
+def check_editor_assets(app) -> None:
+    """Require the configuration editor bundle before an HTML build.
+
+    Args:
+        app: The Sphinx application invoking the builder.
+    """
+    if app.builder.format != "html":
+        return
+    assets = Path(app.confdir) / "_static" / "config-editor"
+    if not all((assets / name).is_file() for name in ("editor.js", "editor.css")):
+        raise SphinxError(
+            "Configuration editor assets are missing. Run "
+            "'npm --prefix docs/editor run docs:build' from the repository root."
+        )
+
+
+def select_editor_template(app, pagename, templatename, context, doctree):
+    """Select the editor-only template without loading assets on other pages.
+
+    Args:
+        app: The Sphinx application.
+        pagename: Name of the page being rendered.
+        templatename: Default template name.
+        context: Template variables.
+        doctree: Page document tree.
+
+    Returns:
+        The editor template name, or None for other pages.
+    """
+    if pagename == "guide/config-editor":
+        return "config-editor.html"
+    return None
+
+
+def setup(app) -> dict:
+    """Register the editor asset check and page template.
+
+    Args:
+        app: The Sphinx application.
+
+    Returns:
+        Parallel build compatibility metadata.
+    """
+    app.connect("builder-inited", check_editor_assets)
+    app.connect("html-page-context", select_editor_template)
+    return {"parallel_read_safe": True, "parallel_write_safe": True}

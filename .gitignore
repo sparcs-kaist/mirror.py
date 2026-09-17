@@ -137,3 +137,9 @@ tests/integration/docker/mirror/dist/
 # Claude Code session files
 .claude/
 .tmp/
+
+# Sphinx configuration editor build and browser tests
+docs/editor/node_modules/
+docs/editor/test-results/
+docs/editor/playwright-report/
+docs/_static/config-editor/

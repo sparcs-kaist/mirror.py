@@ -25,11 +25,43 @@ uv run pytest -m integration
 
 ## Building documentation
 
+The configuration editor requires Node.js 22.12 or later and npm. From a clean
+checkout, install its locked dependencies, build its local assets, and build
+the Sphinx site with one command:
+
 ```bash
-uv run --group docs sphinx-build -b html -W --keep-going docs docs/_build/html
+npm --prefix docs/editor run docs:build
 ```
 
-Open `docs/_build/html/index.html` to preview the site.
+The generated editor assets are ignored by Git. An HTML build fails with a clear
+message if they are absent. After the initial build, rerun `npm --prefix
+docs/editor run build` when editing frontend sources; prose-only changes can
+use the normal `uv run --group docs sphinx-build -b html -W --keep-going docs
+docs/_build/html` command.
+
+Serve the site locally instead of opening `file://` URLs, because Monaco uses
+Web Workers:
+
+```bash
+python -m http.server 8000 --directory docs/_build/html
+```
+
+Open `http://localhost:8000/guide/config-editor.html`. Editor assets and workers
+are bundled with the site; no CDN or external schema service is used.
+
+Run editor unit and browser tests:
+
+```bash
+npm --prefix docs/editor test
+uv run pytest tests/test_editor_contract.py
+cd docs/editor
+npx playwright install chromium firefox
+npm run test:browser
+```
+
+The editor schema is shared by the forms and Monaco. Python loaders and sync
+validation remain authoritative. When changing configuration fields, update
+the editor schema and its contract fixtures as well as the reference docs.
 
 ## Keeping sync-method docs in sync
 

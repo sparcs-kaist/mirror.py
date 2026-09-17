@@ -91,8 +91,12 @@ this documentation:
 
 ```bash
 uv sync --group docs
-uv run --group docs sphinx-build -b html -W --keep-going docs docs/_build/html
+npm --prefix docs/editor run docs:build
 ```
+
+Building the configuration editor also requires Node.js 22.12 or later and npm.
+See [Contributing](../contributing/index.md#building-documentation) for local preview
+and test commands.
 
 The default `dev` group installs pytest for running the unit test suite:
 

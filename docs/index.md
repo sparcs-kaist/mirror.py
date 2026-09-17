@@ -17,6 +17,7 @@ getting-started/quickstart
 :maxdepth: 2
 :caption: User guide
 guide/configuration
+guide/config-editor
 guide/cli
 guide/state-files
 guide/troubleshooting
