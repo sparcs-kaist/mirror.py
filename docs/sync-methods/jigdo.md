@@ -1,9 +1,9 @@
 # jigdo
 
-Debian CD/DVD image assembly using rsync and `jigdo-mirror`. The sync runs in three
+Debian CD/DVD image assembly using rsync and `jigdo-mirror`. The sync runs in four
 phases: phase 1 fetches jigdo template files (excluding ISOs), phase 2 runs
 `jigdo-mirror` to assemble ISO images from a Debian package mirror, and phase 3
-syncs the final ISO files.
+syncs selected final ISO files with `--size-only`. Phase 4 writes the trace file.
 
 ## Options
 
@@ -25,12 +25,18 @@ syncs the final ISO files.
 
 ## Example
 
+This entry is ready to place inside the top-level `packages` object:
+
 ```json
-{
-  "pkgid": "debian-iso-amd64",
+"debian-iso-amd64": {
+  "name": "Debian ISO amd64",
+  "id": "debian-iso-amd64",
+  "href": "/debian-cd",
   "synctype": "jigdo",
   "syncrate": "P1D",
+  "link": [{ "rel": "HOME", "href": "https://www.debian.org/CD/" }],
   "settings": {
+    "hidden": false,
     "src": "rsync://cdimage.debian.org/debian-cd/current/",
     "dst": "/srv/mirror/debian-cd",
     "options": {

@@ -64,7 +64,7 @@ def setup() -> None:
 
 def plugin():
     from mirror.plugin import event_plugin
-    return event_plugin(name=NAME, setup=setup)
+    return event_plugin(name=NAME, setup=setup, api_version=(1, 0))
 ```
 
 ### 2. Install into the daemon's environment
@@ -292,6 +292,9 @@ A frozen dataclass produced by the factory helpers. Fields:
 | `execute` | `Callable | None` | Required for `sync` |
 | `on_sync_done` | `Callable | None` | Optional for `sync` |
 | `setup` | `Callable | None` | Required for `event`; optional for the rest |
+| `create_config` | callable or None | Optional on-demand config-file creation callback |
+| `config_filename` | string or None | Per-plugin config filename; defaults to `<name>.json` |
+| `api_version` | tuple of two integers or None | Target core plugin API version |
 | `extend_stat_fields` | `Callable | None` | Optional for `status` |
 | `extend_web_status_fields` | `Callable | None` | Optional for `status` |
 | `transform_stat_payload` | `Callable | None` | Optional for `status`; single-owner |
@@ -304,14 +307,35 @@ You should not construct `PluginRecord` directly — always use the factory func
 
 ```python
 mirror.plugin.sync_plugin(name, execute, on_sync_done=None, setup=None,
-                         config_filename=None) -> PluginRecord
-mirror.plugin.event_plugin(name, setup, config_filename=None) -> PluginRecord
+                         create_config=None, config_filename=None, api_version=None) -> PluginRecord
+mirror.plugin.event_plugin(name, setup, create_config=None,
+                          config_filename=None, api_version=None) -> PluginRecord
 mirror.plugin.status_plugin(name, extend_stat_fields=None, extend_web_status_fields=None,
                            transform_stat_payload=None, transform_web_status_payload=None,
-                           outputs=None, setup=None, config_filename=None) -> PluginRecord
+                           outputs=None, setup=None, create_config=None,
+                           config_filename=None, api_version=None) -> PluginRecord
 ```
 
 Each validates its required arguments and raises `TypeError` on contract violation, so a plug-in author with a typo gets a clear error at import time.
+
+### API compatibility
+
+External plugins should declare `api_version=(1, 0)` in their factory call.
+The core exposes `mirror.plugin.PLUGIN_API_VERSION`, currently `(1, 0)`.
+A different major version or a newer minor version causes the plugin to be
+skipped. Omitting the version still loads the plugin with a deprecation warning.
+Declare the version your plugin was written against rather than copying the
+running core version dynamically.
+
+### Creating plugin configuration
+
+Plugins can provide `create_config(force: bool) -> ConfigCreateResult`. The
+callback owns writing its default config and returns `ConfigCreateResult(path,
+created)`. Preserve an existing file unless `force=True`. This callback runs
+only when requested through `mirror plugin config create NAME`; it is not
+called automatically during startup. The main `config.json` remains unchanged.
+Use `--config PATH` to select the main config file and `--force` to request
+overwriting an existing plugin config.
 
 ### `mirror.plugin.StatusOutput`
 

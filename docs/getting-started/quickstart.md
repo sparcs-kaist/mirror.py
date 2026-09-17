@@ -4,17 +4,18 @@ This walkthrough gets a single package syncing in under ten minutes.
 
 ## 1. Provision the runtime directories
 
-Run the setup command once as root. It creates `/etc/mirror/`, `/var/lib/mirror/`,
+Complete the [installation steps](installation.md), including the required tools,
+then run the setup command once as root. It creates `/etc/mirror/`, `/var/lib/mirror/`,
 `/var/run/mirror/`, `/var/log/mirror/`, and `/var/www/mirror/`, and installs the
 systemd unit files.
 
 ```bash
-sudo mirror setup
+sudo env "PATH=$PATH" mirror setup
 ```
 
 ## 2. Create the configuration file
 
-Create `/etc/mirror/config.json`. The example below mirrors Rocky Linux via
+Edit the `/etc/mirror/config.json` created by setup. The example below mirrors Rocky Linux via
 rsync every 10 minutes.
 
 ```json
@@ -53,7 +54,7 @@ rsync every 10 minutes.
                 "gzip": true
             }
         },
-        "plugins": []
+        "plugins": {}
     },
     "packages": {
         "rocky-linux": {
@@ -89,6 +90,10 @@ Key fields to change for your environment:
 - `settings.src` — the upstream rsync URL.
 - `syncrate` — ISO 8601 duration, for example `PT10M` (10 minutes) or `PT6H` (6 hours).
 
+Create the destination directory and grant the configured UID/GID write access
+before starting the worker. The daemon and worker run as root in this example;
+only sync subprocesses drop to the configured UID/GID.
+
 For full configuration details see [Configuration](../guide/configuration.md) and the
 [Sync methods](../sync-methods/index.md) section.
 
@@ -98,7 +103,7 @@ The worker server spawns and monitors the actual sync subprocesses. Start it in
 one terminal (or as a systemd unit):
 
 ```bash
-mirror worker
+sudo env "PATH=$PATH" mirror worker
 ```
 
 By default it reads `/etc/mirror/config.json`. Pass `--config` to use a
@@ -110,7 +115,7 @@ The master daemon schedules syncs and delegates them to the worker. Start it in
 a second terminal:
 
 ```bash
-mirror daemon
+sudo env "PATH=$PATH" mirror daemon
 ```
 
 The daemon connects to the worker via Unix domain sockets under
@@ -130,7 +135,7 @@ to users.
 **TUI**: Run the real-time status terminal UI:
 
 ```bash
-mirror tui
+sudo env "PATH=$PATH" mirror tui
 ```
 
 ## Next steps

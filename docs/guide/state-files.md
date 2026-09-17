@@ -28,10 +28,12 @@ paths, timestamps — lives exclusively in `stat.json`. There is intentionally n
 ## stat.json — persistent package state
 
 `/var/lib/mirror/stat.json` is rewritten atomically every time a package
-changes status. Its top-level shape is:
+changes status. Its default structure includes these fields (package configuration fields are
+also retained):
 
 ```json
 {
+    "mirrorname": "<name>",
     "packages": {
         "<packageid>": {
             "status": {
@@ -55,12 +57,12 @@ These fields are defined in `Package.StatusInfo` in `mirror/structure/__init__.p
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `lasterrorlog` | string or null | Relative path (under the package log base) of the most recent error log file. `null` if no error has occurred. |
-| `lastsuccesslog` | string or null | Relative path of the most recent successful sync log file. `null` if no successful sync has completed. |
-| `runninglog` | string or null | Relative path of the log file for the currently running sync. `null` when not syncing. |
+| `lasterrorlog` | string or null | Path of the most recent error log file. `null` initially and after a successful sync. |
+| `lastsuccesslog` | string or null | Path of the most recent successful sync log file. `null` if no successful sync has completed. |
+| `runninglog` | string or null | Path of the log file for the currently running sync. `null` when not syncing. |
 | `errorcount` | integer | Number of consecutive errors since the last successful sync. Reset to 0 on `ACTIVE`. |
 | `lastsuccesstime` | float | Unix timestamp (seconds) of the last successful sync completion. `0.0` if never succeeded. |
-| `lasterrortime` | float | Unix timestamp (seconds) of the last error. `0.0` if no error has occurred. |
+| `lasterrortime` | float | Unix timestamp (seconds) of the last error. `0.0` initially and after a successful sync. |
 
 ---
 
@@ -100,11 +102,16 @@ fields:
 | `status` | string | Current status: `ACTIVE`, `SYNC`, `ERROR`, or `UNKNOWN`. |
 | `synctype` | string or null | Sync method in use (e.g. `rsync`, `ftpsync`). |
 | `syncrate` | string | Sync interval as an ISO 8601 duration or a special token (`PUSH`). |
-| `synctime` | array of integers | Hours at which a timed sync is scheduled, when applicable. Empty array otherwise. |
 | `syncurl` | string | Upstream source URL. |
 | `href` | string | Web-accessible path for this mirror on the local server. |
-| `lastsync` | float | Millisecond timestamp of the last completed sync. `0` if never synced. |
+| `lastsync` | float | Unix timestamp in seconds of the last completed sync. `0` if never synced. |
 | `links` | array of objects | Related links, each with `rel` (relation label) and `href` (URL). |
+| `lastsuccesstime`, `lasterrortime` | float | Unix timestamps in seconds from `statusinfo`. |
+| `lastsuccesslog`, `lasterrorlog` | string or null | Log paths from `statusinfo`. |
+| `errorcount` | integer | Consecutive failures since the last success. |
+
+Status plugins can add a `plugins` object to per-package entries or replace the
+default payload through a transform hook.
 
 ---
 

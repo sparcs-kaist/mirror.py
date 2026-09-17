@@ -1,7 +1,7 @@
 # local
 
-No-op sync method for serving an existing local directory. The daemon verifies
-that `dst` exists on disk and marks the package as active without performing any
+No-op sync method for serving an existing local path. The daemon verifies that
+`dst` exists and marks the package as active without performing any
 remote fetch. Use this when data is already present locally and only needs to be
 registered with the daemon for status tracking and web-status reporting.
 
@@ -15,12 +15,18 @@ This method reads no per-package options. Set `"options": {}` in the package con
 
 ## Example
 
+This entry is ready to place inside the top-level `packages` object:
+
 ```json
-{
-  "pkgid": "local-data",
+"local-data": {
+  "name": "Local data",
+  "id": "local-data",
+  "href": "/local-data",
   "synctype": "local",
-  "syncrate": "PT1H",
+  "syncrate": "",
+  "link": [],
   "settings": {
+    "hidden": false,
     "src": "",
     "dst": "/srv/mirror/local-data",
     "options": {}

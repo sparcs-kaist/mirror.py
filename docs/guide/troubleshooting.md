@@ -72,8 +72,9 @@ A sync subprocess may have hung or been killed without notifying the worker.
 2. Inspect the running log file (`statusinfo.runninglog` in `stat.json`) for
    recent output.
 3. If the process is no longer running but the status has not been updated,
-   restart the daemon and worker. On restart, packages in `SYNC` state are
-   reset to `UNKNOWN`.
+   check the daemon log for reconciliation messages. Persisted `SYNC` states
+   survive restart; when the worker reports no matching job, the daemon waits
+   for its mismatch/setup grace periods and transitions the package to `ERROR`.
 
 ### Permission or UID/GID problems
 
@@ -99,7 +100,7 @@ The master and worker communicate over Unix domain sockets under
    ```
 2. Check for stale socket files from a previous run and remove them if the
    process is no longer running.
-3. If you use a custom socket path via `settings.socket`, ensure the
+3. If you use a custom socket path via `settings.socket_path`, ensure the
    `mirror config reload` and `mirror tui` commands use the same path via
    `--socket`.
 
@@ -133,10 +134,9 @@ The daemon applies the new configuration and reports which packages were added,
 removed, or modified. Packages that were not changed continue syncing without
 interruption.
 
-If the socket path was changed in the config, the reload command uses the
-previously recorded socket path (from the runtime metadata file) so it can
-still reach the running daemon. After the reload, subsequent commands will use
-the new path.
+Socket path changes require a daemon restart. Reload keeps the current
+`settings.socket_path` and reports a warning; it does not move the running
+socket. Without `--socket`, client commands use the recorded runtime path.
 
 Pass `--timeout` to extend the wait time for large configs:
 

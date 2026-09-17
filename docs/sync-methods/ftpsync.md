@@ -9,7 +9,7 @@ architecture filtering, and the push-triggered mirroring protocol.
 | Option | Type | Default | Required | Description |
 |--------|------|---------|----------|-------------|
 | `path` | string | (none) | Conditional | REQUIRED when `src` is a bare hostname (e.g. `ftp.example.org`); a `ValueError` is raised at sync time if omitted. OPTIONAL when `src` is an `rsync://` URL, where it overrides the path component of the URL. |
-| `hub` | string | `"false"` | No | Passed through to the `HUB=` shell variable in `ftpsync.conf`. Use `"true"` or `"false"`. |
+| `hub` | bool or string | `"false"` | No | Passed through to the `HUB=` shell variable in `ftpsync.conf`. Use `false`/`true` or their string forms. |
 | `user` | string | (none) | No | `RSYNC_USER` in `ftpsync.conf`. Emitted only when BOTH `user` and `password` are present. |
 | `password` | string | (none) | No | `RSYNC_PASSWORD` in `ftpsync.conf`. Emitted only when BOTH `user` and `password` are present. |
 | `email` | string | (none) | No | `MAILTO` for ftpsync notifications. |
@@ -29,18 +29,24 @@ architecture filtering, and the push-triggered mirroring protocol.
 
 ## Example
 
+This entry is ready to place inside the top-level `packages` object:
+
 ```json
-{
-  "pkgid": "debian-amd64",
+"debian-amd64": {
+  "name": "Debian amd64",
+  "id": "debian-amd64",
+  "href": "/debian",
   "synctype": "ftpsync",
-  "syncrate": "PT6H",
+  "syncrate": "PUSH",
+  "link": [{ "rel": "HOME", "href": "https://www.debian.org/" }],
   "settings": {
+    "hidden": false,
     "src": "rsync://ftp.example.org/debian/",
     "dst": "/srv/mirror/debian",
     "options": {
       "user": "mirror",
       "password": "secret",
-      "hub": "false",
+      "hub": false,
       "email": "admin@example.org",
       "maintainer": "Example Mirror Operators",
       "country": "KR",

@@ -17,12 +17,18 @@ inconsistent state. Stage 2 syncs the full tree including indexes.
 
 ## Example
 
+This entry is ready to place inside the top-level `packages` object:
+
 ```json
-{
-  "pkgid": "ubuntu-jammy",
+"ubuntu-jammy": {
+  "name": "Ubuntu Jammy",
+  "id": "ubuntu-jammy",
+  "href": "/ubuntu",
   "synctype": "ubuntu",
   "syncrate": "PT6H",
+  "link": [{ "rel": "HOME", "href": "https://ubuntu.com/" }],
   "settings": {
+    "hidden": false,
     "src": "rsync://archive.ubuntu.com/ubuntu/",
     "dst": "/srv/mirror/ubuntu",
     "options": {

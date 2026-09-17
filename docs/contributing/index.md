@@ -8,7 +8,7 @@ package management.
 Install the package in editable mode:
 
 ```bash
-uv pip install -e .
+uv sync --group docs
 ```
 
 Run the unit test suite:
@@ -23,9 +23,17 @@ Run the integration tests (requires Docker):
 uv run pytest -m integration
 ```
 
+## Building documentation
+
+```bash
+uv run --group docs sphinx-build -b html -W --keep-going docs docs/_build/html
+```
+
+Open `docs/_build/html/index.html` to preview the site.
+
 ## Keeping sync-method docs in sync
 
-The option pages under `docs/sync-methods/` and `docs/config.md` document the configuration
+The option pages under `docs/sync-methods/` and `config.md` document the configuration
 fields accepted by each sync module. When you change a sync module's options — adding, removing,
 or renaming a field — you must update both the relevant `sync-methods/` page and `config.md`
 in the same pull request.

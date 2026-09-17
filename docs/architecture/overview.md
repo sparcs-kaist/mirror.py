@@ -1,103 +1,158 @@
 # Architecture
 
-mirror.py is a Linux daemon that maintains local mirrors of remote package repositories. It
-uses a master-worker model where two long-running processes collaborate over a Unix domain socket:
-the master schedules syncs and tracks state, while the worker executes sync subprocesses.
+mirror.py maintains local copies of remote package repositories on Linux. Its
+normal service mode separates scheduling and state management from subprocess
+execution. It also offers foreground commands for one-off synchronization.
 
-## Master-worker model
+## Runtime modes
 
 ```
-CLI (click)
-  └─ mirror daemon    → MasterServer (listens on master.sock)
-  └─ mirror worker    → WorkerServer (listens on worker.sock)
+                         master.sock
+mirror tui/push/reload ───────────────▶ MasterServer
+                                          │
+mirror daemon                              │ schedules and tracks
+  ├─ MasterServer                          ▼
+  └─ WorkerClientSupervisor ─────────▶ sync plug-in
+              ▲                           │ execute_command RPC
+              │ job_finished              ▼
+              └────────────────────── WorkerServer ──▶ subprocess
+                                      mirror worker
 
-Master daemon:
-  1. Loads config, starts MasterServer
-  2. Connects to Worker as WorkerClient (persistent session)
-  3. 1-second loop: checks each package's sync timing
-  4. Delegates sync to Worker via socket RPC
+mirror standalone ──▶ sync plug-in ──▶ foreground subprocess
 
-Worker server:
-  1. Receives execute_command RPC
-  2. Spawns subprocess (rsync/ftpsync/etc.) with UID/GID/nice
-  3. Broadcasts job_finished notification to Master
-  4. Master calls mirror.sync.on_sync_done() to update status
+mirror worker-execute ubuntu/jigdo ──▶ specialized foreground workflow
 ```
 
-Keeping the two processes separate means that if the master crashes or is restarted, in-flight
-sync subprocesses keep running under the worker. The master reconnects to the worker via
-`worker.sock` and resumes receiving `job_finished` notifications without interrupting the sync.
+The master owns configuration, scheduling, package state, per-run logging, and
+the client-facing RPC API. The worker owns subprocess lifetimes. If the master
+restarts, a running subprocess remains under the worker. A supervised
+`WorkerClient` reconnects with exponential backoff, and the worker retries
+completion notifications for finished jobs.
 
-## Socket IPC protocol
+`mirror standalone` activates the same sync plug-ins without either socket
+server. Calls that would normally delegate to the worker instead use the
+foreground process runner, and completion is returned to the CLI without
+persisting daemon status files.
 
-Communication between the master and worker uses length-prefixed JSON messages sent over Unix
-domain sockets. The protocol is:
+The `worker-execute` commands are another foreground path. They expose the
+specialized Ubuntu and jigdo workflows used as subprocess entry points by those
+daemon sync methods. The apt-mirror2 and debmirror methods use private Python
+wrapper entry points instead, allowing repository discovery and native tool
+execution to happen under the worker's identity and environment.
 
-- **Transport**: length-prefixed JSON frames over Unix domain sockets.
-- **Handshake**: 3-step — server info, client info, confirmation — before any RPC traffic.
-- **Bidirectional**: supports both request/response RPC (e.g., `execute_command`) and async
-  push notifications (e.g., `job_finished` sent from worker to master when a subprocess exits).
-- **Persistent connection**: the master holds a single long-lived `WorkerClient` connection so
-  it can receive `job_finished` notifications without polling.
+## Master-worker flow
 
-## Sync flow
+1. The daemon loads the main configuration and runtime state, registers enabled
+   plug-ins, initializes logging, and starts `MasterServer`.
+2. Starting the master also starts `WorkerClientSupervisor`, which maintains a
+   persistent connection to `worker.sock`.
+3. Once per second, the daemon skips disabled and running packages, then checks
+   `lastsync`, `syncrate`, and the error retry interval to decide what is due.
+4. `mirror.sync.start()` records the running log and `SYNC` status, then invokes
+   the selected sync plug-in in a daemon thread.
+5. The plug-in validates settings, builds its command, and calls
+   `mirror.socket.worker.execute_command()`. The worker starts the process with
+   the configured UID, GID, environment, and log destination.
+6. When the process exits, the worker broadcasts `job_finished`. The master
+   calls `mirror.sync.on_sync_done()`, runs the plug-in completion hook when
+   present, finalizes the log, changes the status to `ACTIVE` or `ERROR`, and
+   persists state.
 
-1. The master detects that a package needs syncing, based on comparing `time.time()` against
-   `lastsync + syncrate` (where `syncrate` is an ISO 8601 duration parsed to seconds).
-2. `mirror.sync.start(package)` launches the sync in a daemon thread.
-3. The sync module (e.g., `mirror.sync.rsync`) builds the command and calls
-   `mirror.socket.worker.execute_command()` over the persistent socket connection.
-4. The worker spawns the subprocess (rsync, ftpsync, etc.) with the configured UID, GID, and
-   nice value. When the subprocess exits, the worker sends a `job_finished` notification back
-   to the master.
-5. The master receives the notification and calls `mirror.sync.on_sync_done(pkgid, success,
-   returncode)`, which updates the package status to `ACTIVE` (success) or `ERROR` (failure)
-   and persists the new state to `stat.json`.
+The daemon also reconciles package state with worker jobs. It repairs a package
+whose worker job is running but whose status is stale, and eventually marks a
+stale `SYNC` package as `ERROR` when the worker no longer has its job. An
+optional global maximum runtime watchdog stops overlong worker jobs.
+
+## Client-facing master RPC
+
+The master socket serves the TUI and command-line control clients. Its handlers
+provide health and runtime information, package listing, manual start and stop,
+push-triggered synchronization, and configuration reload. The daemon writes the
+active master socket path to `/var/run/mirror/master.sock.path`; clients prefer
+that metadata when `--socket` is omitted.
+
+The TUI keeps one `MasterClient` connection, polls package state once per
+second, and performs manual start/stop RPCs outside the UI event loop. Its log
+reader accepts only regular non-symlink files under the configured package log
+root, supports plain and gzip files, and keeps bounded disk-backed windows while
+paging large logs.
+
+## Socket protocol
+
+Master and worker IPC uses length-prefixed JSON frames over Unix domain
+sockets. Every connection completes a three-step handshake—server information,
+client information, then confirmation—before application messages are handled.
+The framing supports request/response RPCs and asynchronous notifications on
+the same persistent connection.
+
+The two sockets have distinct roles:
+
+- `master.sock` accepts control and status RPCs from CLI clients.
+- `worker.sock` accepts process-management RPCs from the master and sends
+  `job_finished` notifications back over connected clients.
+
+## Plug-in lifecycle
+
+The plug-in framework is active and has two loading phases:
+
+1. Package import registers the built-in sync plug-ins so package validation
+   knows every built-in method.
+2. Configuration loading applies built-in enable/disable settings and discovers
+   third-party entry points from `mirror.sync`, `mirror.event`, and
+   `mirror.status`.
+
+External plug-ins declare a `(major, minor)` API version. Incompatible major
+versions and plug-ins that require a newer minor version are skipped. Sync
+plug-ins supply execution hooks, event plug-ins register event handlers, and
+status plug-ins can extend or transform status payloads or write additional
+status outputs.
+
+Per-plug-in JSON configuration is stored beside the main configuration and is
+read lazily. A plug-in may expose a `create_config` callback, invoked explicitly
+with `mirror plugin config create`; normal daemon startup never creates or
+rewrites plug-in configuration.
 
 ## Module map
 
 | Module | Responsibility |
 |--------|----------------|
-| `mirror/__main__.py` | CLI entry point (click commands: setup, daemon, worker, crontab) |
-| `mirror/command/` | Command implementations for daemon, worker, setup |
-| `mirror/config/` | JSON config loading, package state persistence |
-| `mirror/structure/` | Dataclasses: Package, Config, PackageSettings, StatusInfo |
-| `mirror/socket/` | Unix socket IPC (protocol, base server/client, master, worker) |
-| `mirror/sync/` | Sync method executors (rsync, ftpsync, lftp, bandersnatch) |
-| `mirror/worker/` | Subprocess lifecycle management (create, track, prune) |
-| `mirror/event/` | Priority-based pub/sub event system |
-| `mirror/logger/` | Time-based log rotation, per-package log files, gzip compression |
-| `mirror/toolbox/` | Utilities (ISO 8601 duration parser, permission checks) |
-| `mirror/plugin/` | Dynamic plugin loading (currently disabled) |
+| `mirror/__main__.py` | Click entry point and top-level command registration. |
+| `mirror/command/` | Service, control, TUI, plug-in, standalone, and worker-workflow commands. |
+| `mirror/config/` | Main JSON loading, safe runtime reload, state persistence, and web status output. |
+| `mirror/structure/` | Configuration, package, settings, and status data structures. |
+| `mirror/socket/` | Framed Unix socket protocol plus master and worker clients and servers. |
+| `mirror/sync/` | Built-in sync plug-ins, scheduling state, and completion handling. |
+| `mirror/worker/` | Foreground and background subprocess lifecycle, log merging, and pruning. |
+| `mirror/plugin/` | Built-in registration, external entry-point loading, API compatibility, and status hooks. |
+| `mirror/event/` | Priority-based event publication and subscription. |
+| `mirror/logger/` | Daemon and package logging, rotation, compression, and ownership. |
+| `mirror/toolbox/` | Duration parsing, command lookup, and other shared utilities. |
 
-## Path layout
+## Persistence and paths
 
-| Path | Purpose | Writable by daemon? |
-|------|---------|---------------------|
-| `/etc/mirror/config.json` | Main configuration | **No — read-only at runtime** |
-| `/var/lib/mirror/stat.json` | Persistent package state | Yes (atomic rewrite on status change) |
-| `/var/run/mirror/` | Sockets (master.sock, worker.sock), PID files | Yes |
-| `/var/log/mirror/` | Daemon logs, per-package logs under `packages/` | Yes |
-| `/var/www/mirror/status.json` | Web status JSON for the UI | Yes |
+| Path | Purpose | Written during daemon runtime? |
+|------|---------|--------------------------------|
+| `/etc/mirror/config.json` | Operator-supplied main configuration | No |
+| `/var/lib/mirror/stat.json` | Persistent package runtime state | Yes, by atomic replacement |
+| `/var/run/mirror/` | PID, socket, and active socket-path metadata | Yes |
+| `/var/log/mirror/` | Daemon and per-package logs | Yes |
+| `/var/www/mirror/status.json` | Web-facing package status | Yes, by atomic replacement |
 
-### Config invariant
+The main configuration is read-only after provisioning. `mirror setup` creates
+it only when it is absent. Runtime status, error counts, log paths, and
+timestamps belong in `stat.json`; web-facing state belongs in `status.json`.
+Plug-in status outputs are separate files owned by their plug-ins.
 
-`/etc/mirror/config.json` is read-only during daemon and worker runtime. Only `mirror setup`
-ever writes it (initial provisioning). Runtime state — sync status, error counts, log paths,
-timestamps — lives exclusively in `stat.json`.
+## Built-in sync methods
 
-When adding a new persisted field:
-
-- DO: extend `Package.StatusInfo` (or another stat-side dataclass) and emit it via
-  `Package.to_dict()` so `save_stat_data()` picks it up automatically.
-- DO: surface it in `generate_and_save_web_status()` if the UI needs it.
-- DON'T: never call `mirror.confPath.write_text(...)` or otherwise mutate the
-  user-supplied config.json. There is intentionally no `Config.save()`.
-
-## Active sync methods
-
-- **rsync**: Incremental sync with optional FFTS (Full File Time Stamp) pre-check. The FFTS
-  check fetches a metadata file from the upstream to determine whether a full sync is needed,
-  short-circuiting the rsync transfer when the upstream has not changed.
-- **ftpsync**: Debian archvsync-based FTP mirroring. Uses the bundled archvsync script
-  (`mirror/sync/_ftpsync_script.py`) so no external archvsync installation is required.
+| Method | Execution model |
+|--------|-----------------|
+| `rsync` | Validates rsync options, optionally checks FFTS metadata, then delegates rsync to the worker. |
+| `ftpsync` | Creates a temporary archvsync environment, preferring a git clone and falling back to the bundled archive, then delegates `ftpsync` to the worker. |
+| `lftp` | Builds a validated lftp mirror script and delegates it to the worker. |
+| `bandersnatch` | Runs the PyPI mirror command through the worker. |
+| `local` | Verifies that the authoritative local destination exists; no subprocess is needed. |
+| `ubuntu` | Delegates the `worker-execute ubuntu` two-stage rsync workflow. |
+| `jigdo` | Delegates the `worker-execute jigdo` template sync, image reconstruction, final ISO pull, and trace workflow. |
+| `debmirror` | Builds a native debmirror command, discovers omitted distributions, sections, and architectures inside the worker wrapper, and runs with isolated debmirror configuration. |
+| `apt-mirror2` | Resolves one or more APT repositories inside the worker wrapper, generates a temporary apt-mirror2 configuration, and runs the optional `apt-mirror==16` implementation. |

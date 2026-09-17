@@ -17,12 +17,18 @@ bandersnatch configuration file (typically `/etc/bandersnatch.conf`).
 
 ## Example
 
+This entry is ready to place inside the top-level `packages` object:
+
 ```json
-{
-  "pkgid": "pypi",
+"pypi": {
+  "name": "PyPI",
+  "id": "pypi",
+  "href": "/pypi",
   "synctype": "bandersnatch",
   "syncrate": "PT1H",
+  "link": [{ "rel": "HOME", "href": "https://pypi.org/" }],
   "settings": {
+    "hidden": false,
     "src": "https://pypi.org",
     "dst": "/srv/mirror/pypi",
     "options": {}
