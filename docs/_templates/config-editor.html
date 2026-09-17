@@ -1,0 +1,6 @@
+{% extends "page.html" %}
+{% block extrahead %}
+{{ super() }}
+<link rel="stylesheet" href="{{ pathto('_static/config-editor/editor.css', 1) }}">
+<script type="module" src="{{ pathto('_static/config-editor/editor.js', 1) }}"></script>
+{% endblock %}

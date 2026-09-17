@@ -1,0 +1,25 @@
+{
+  "name": "mirror-config-editor",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "vite build",
+    "test": "node --test tests/*.test.js",
+    "test:browser": "playwright test",
+    "docs:build": "npm ci && npm run build && cd ../.. && uv run --group docs sphinx-build -b html -W --keep-going docs docs/_build/html"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "monaco-editor": "^0.56.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "vite": "^7.3.1"
+  },
+  "overrides": {
+    "dompurify": "^3.4.15"
+  }
+}
