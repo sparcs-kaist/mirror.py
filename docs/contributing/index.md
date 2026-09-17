@@ -65,47 +65,17 @@ the editor schema and its contract fixtures as well as the reference docs.
 
 ## Deploying documentation
 
-Documentation is deployed through Cloudflare Workers Builds, not GitHub Actions.
-The root `wrangler.toml` serves the generated Sphinx site as static assets without
-a Worker script. Its custom build command builds both the editor and the HTML
-documentation before deployment.
-
-In Cloudflare, connect this repository to a Worker named `mirror-py-docs` and use:
+Configure Cloudflare Pages with the repository root as the root directory:
 
 | Setting | Value |
 |---------|-------|
-| Root directory | Repository root |
-| Build command | `python3 -m pip install uv` |
-| Deploy command | `npx wrangler deploy` |
-| Production branch | `main` (or `feat/docs-sphinx` while testing this branch) |
+| Build command | `python3 -m pip install uv && npm --prefix docs/editor run docs:build` |
+| Build output directory | `docs/_build/html` |
 | Build variable | `NODE_VERSION=22` |
 | Build variable | `PYTHON_VERSION=3.13` |
 
-The build command installs `uv`, which is required by the documentation build.
-Wrangler runs `npm ci`, builds the editor, and builds Sphinx through its custom
-build hook; do not repeat these steps in the dashboard build command.
-The Worker name in Cloudflare must match `name` in `wrangler.toml`.
-
-For a local deployment, install Node.js 22.12 or later, Python 3.10 or later, and
-`uv`, then run from the repository root:
-
-```bash
-npx wrangler login
-npx wrangler deploy
-```
-
-To validate the build and deployment configuration without publishing:
-
-```bash
-npx wrangler deploy --dry-run
-```
-
-This deploys to Workers, not to an existing Cloudflare Pages project. Existing
-Pages domains are not migrated automatically. Connect the desired domain to the
-Worker in Cloudflare when ready to switch traffic.
-
-See the [Cloudflare static assets guide](https://developers.cloudflare.com/workers/static-assets/get-started/)
-and [Workers Builds configuration](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/).
+The build command installs `uv` and the editor's locked npm dependencies, then
+builds the editor and Sphinx HTML. Cloudflare publishes the output directory.
 
 ## Keeping sync-method docs in sync
 

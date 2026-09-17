@@ -1,8 +1,0 @@
-name = "mirror-py-docs"
-compatibility_date = "2026-01-01"
-
-[build]
-command = "npm --prefix docs/editor run docs:build"
-
-[assets]
-directory = "./docs/_build/html"
