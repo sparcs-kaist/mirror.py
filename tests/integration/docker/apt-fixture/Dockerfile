@@ -8,5 +8,5 @@ COPY server.py /srv/server.py
 
 RUN python -c "import shutil; shutil.copytree('/srv/fixtures/v1', '/srv/data')"
 
-EXPOSE 8001 2121
+EXPOSE 8000 2121
 CMD ["python", "/srv/server.py"]

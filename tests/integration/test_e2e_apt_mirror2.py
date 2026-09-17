@@ -13,8 +13,9 @@ import pytest
 
 
 PACKAGE_ID = "apt-mirror2-test"
-FIXTURE_CONTAINER = "apt-mirror2-fixture"
-FIXTURE_PATH = Path(__file__).parent / "docker" / "apt-mirror2-fixture"
+FIXTURE_CONTAINER = "apt-fixture"
+FIXTURE_PATH = Path(__file__).parent / "docker" / "apt-fixture"
+FLAT_REPOSITORIES = ("sourceonly", "ubuntu2404", "ubuntu2604")
 
 
 def _run_fixture_python(script: str, *args: str) -> subprocess.CompletedProcess[str]:
@@ -29,15 +30,19 @@ def _run_fixture_python(script: str, *args: str) -> subprocess.CompletedProcess[
 
 
 def _replace_fixture(version: str) -> None:
-    """Replace the served repositories with a pristine fixture version."""
-    script = (
-        "import pathlib, shutil, sys; "
-        "source = pathlib.Path('/srv/fixtures') / sys.argv[1]; "
-        "target = pathlib.Path('/srv/data'); "
-        "shutil.rmtree(target, ignore_errors=True); "
-        "shutil.copytree(source, target)"
-    )
-    _run_fixture_python(script, version)
+    """Replace only the served flat repositories with a pristine version."""
+    script = """
+import pathlib
+import shutil
+import sys
+
+root = pathlib.Path("/srv/fixtures") / sys.argv[1]
+target = pathlib.Path("/srv/data")
+for name in sys.argv[2:]:
+    shutil.rmtree(target / name, ignore_errors=True)
+    shutil.copytree(root / name, target / name)
+"""
+    _run_fixture_python(script, version, *FLAT_REPOSITORIES)
 
 
 def _corrupt_payload(relative: str) -> None:
@@ -194,12 +199,12 @@ def test_source_enabled_and_source_only_flat_repositories(mirror_stack: Any) -> 
         "limit_rate": "20m",
         "config": [
             {
-                "src": "http://apt-mirror2-fixture:8001/ubuntu2404/",
+                "src": "http://apt-fixture:8000/ubuntu2404/",
                 "dst": "source-enabled",
                 "keyring": ["/etc/mirror/apt-mirror2-ubuntu2404.gpg"],
             },
             {
-                "src": "http://apt-mirror2-fixture:8001/sourceonly/",
+                "src": "http://apt-fixture:8000/sourceonly/",
                 "dst": "source-only",
                 "keyring": ["/etc/mirror/apt-mirror2-ubuntu2404.gpg"],
             },
@@ -240,12 +245,12 @@ def test_repository_key_isolation_failure_preserves_existing_mirror(
         "source": False,
         "config": [
             {
-                "src": "http://apt-mirror2-fixture:8001/ubuntu2404/",
+                "src": "http://apt-fixture:8000/ubuntu2404/",
                 "dst": "ubuntu2404/x86_64",
                 "keyring": ["/etc/mirror/apt-mirror2-ubuntu2404.gpg"],
             },
             {
-                "src": "http://apt-mirror2-fixture:8001/ubuntu2604/",
+                "src": "http://apt-fixture:8000/ubuntu2604/",
                 "dst": "ubuntu2604/x86_64",
                 "keyring": ["/etc/mirror/apt-mirror2-ubuntu2404.gpg"],
             },
@@ -309,9 +314,9 @@ def test_ftp_conventional_repository_auto_discovery_and_release_fallback(
         "source": False,
         "config": [
             {
-                "src": "ftp://apt-mirror2-fixture:2121/debian/",
+                "src": "ftp://apt-fixture:2121/debian/",
                 "dst": "ftp-conventional",
-                "keyring": ["/etc/mirror/apt-mirror2-ubuntu2404.gpg"],
+                "keyring": ["/etc/mirror/debmirror-test.gpg"],
             }
         ],
     }
@@ -321,9 +326,16 @@ def test_ftp_conventional_repository_auto_discovery_and_release_fallback(
         _wait_for_completion(mirror_stack, previous_lastsync, "ACTIVE")
 
         destination = mirror_stack.publish_dir / PACKAGE_ID / "ftp-conventional"
-        payload = destination / "pool/main/f/ftp-test/ftp-test_1.0_amd64.deb"
-        assert payload.read_bytes() == _fixture_bytes(
-            "v1", "debian/pool/main/f/ftp-test/ftp-test_1.0_amd64.deb"
+        expected_payloads = (
+            "pool/main/m/mirror-test/mirror-test_1.0_amd64.deb",
+            "pool/main/m/mirror-test/mirror-test_1.0_arm64.deb",
+            "pool/extras/e/extra-test/extra-test_1.0_amd64.deb",
+            "pool/main/a/allonly-test/allonly-test_1.0_all.deb",
         )
-        assert (destination / "dists/bookworm/Release").exists()
-        assert not (destination / "dists/bookworm/InRelease").exists()
+        for relative in expected_payloads:
+            assert (destination / relative).read_bytes() == _fixture_bytes(
+                "v1", f"debian/{relative}"
+            )
+        assert (destination / "dists/bookworm/InRelease").exists()
+        assert (destination / "dists/allonly/Release").exists()
+        assert not (destination / "dists/allonly/InRelease").exists()

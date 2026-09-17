@@ -102,7 +102,7 @@
       "link": [],
       "settings": {
         "hidden": false,
-        "src": "http://debmirror-fixture:8000/debian",
+        "src": "http://apt-fixture:8000/debian",
         "dst": "/srv/publish/debmirror-test",
         "options": {
           "check_gpg": true,
@@ -123,19 +123,19 @@
       "link": [],
       "settings": {
         "hidden": false,
-        "src": "http://apt-mirror2-fixture:8001/",
+        "src": "http://apt-fixture:8000/",
         "dst": "/srv/publish/apt-mirror2-test",
         "options": {
           "source": false,
           "nthreads": 4,
           "config": [
             {
-              "src": "http://apt-mirror2-fixture:8001/ubuntu2404/",
+              "src": "http://apt-fixture:8000/ubuntu2404/",
               "dst": "ubuntu2404/x86_64",
               "keyring": ["/etc/mirror/apt-mirror2-ubuntu2404.gpg"]
             },
             {
-              "src": "http://apt-mirror2-fixture:8001/ubuntu2604/",
+              "src": "http://apt-fixture:8000/ubuntu2604/",
               "dst": "ubuntu2604/x86_64",
               "keyring": ["/etc/mirror/apt-mirror2-ubuntu2604.gpg"]
             }
