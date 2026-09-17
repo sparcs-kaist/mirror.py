@@ -906,6 +906,7 @@ class TestBoundedLogReader:
         assert reader._temporary is None
 
     def test_fstat_failure_closes_new_source_fd(self, tmp_path):
+        import errno
         import threading
 
         tui_module, reader = self._reader_api()
@@ -913,15 +914,24 @@ class TestBoundedLogReader:
         path.write_bytes(b"content\n")
         source_fd = os.open(path, os.O_RDONLY)
 
-        with patch.object(
-            tui_module, "safe_open_log_for_read", return_value=source_fd
-        ), patch.object(tui_module.os, "fstat", side_effect=OSError("stat failed")):
-            with pytest.raises(OSError, match="stat failed"):
-                reader.read(path, tmp_path, False, "tail", threading.Event())
+        try:
+            with patch.object(
+                tui_module, "safe_open_log_for_read", return_value=source_fd
+            ), patch.object(tui_module.os, "fstat", side_effect=OSError("stat failed")):
+                with pytest.raises(OSError, match="stat failed"):
+                    reader.read(path, tmp_path, False, "tail", threading.Event())
 
-        with pytest.raises(OSError):
-            os.fstat(source_fd)
-        assert reader._fd is None
+            with pytest.raises(OSError) as error:
+                os.fstat(source_fd)
+            assert error.value.errno == errno.EBADF
+            assert reader._fd is None
+        finally:
+            try:
+                os.close(source_fd)
+            except OSError as exc:
+                # The reader is expected to have closed this descriptor already.
+                if exc.errno != errno.EBADF:
+                    raise
 
     def test_gzip_bidirectional_paging_evicts_opposite_edge(self, tmp_path):
         import gzip
@@ -1020,7 +1030,7 @@ class TestBoundedLogReader:
         with patch.object(tui_module, "LOG_INITIAL_LINES", 2), patch.object(
             tui_module, "LOG_PAGE_LINES", 2
         ):
-            snapshot = reader.read(path, tmp_path, False, "start", cancel)
+            reader.read(path, tmp_path, False, "start", cancel)
             original_read = reader._read_range
             shortened = False
 
@@ -1051,7 +1061,7 @@ class TestBoundedLogReader:
         expected = b"initial\n"
         path.write_bytes(expected)
         cancel = threading.Event()
-        snapshot = reader.read(path, tmp_path, True, "tail", cancel)
+        reader.read(path, tmp_path, True, "tail", cancel)
 
         addition = b"one\ntwo\nthree\n"
         expected += addition
