@@ -93,6 +93,56 @@
         }
       }
     },
+    "debmirror-test": {
+      "name": "debmirror-test",
+      "id": "debmirror-test",
+      "href": "/debmirror-test",
+      "synctype": "debmirror",
+      "syncrate": "PT1H",
+      "link": [],
+      "settings": {
+        "hidden": false,
+        "src": "http://apt-fixture:8000/debian",
+        "dst": "/srv/publish/debmirror-test",
+        "options": {
+          "check_gpg": true,
+          "keyring": "/etc/mirror/debmirror-test.gpg",
+          "rsync_extra": "none",
+          "diff": "none",
+          "cleanup": "postcleanup",
+          "timeout": 10
+        }
+      }
+    },
+    "apt-mirror2-test": {
+      "name": "apt-mirror2-test",
+      "id": "apt-mirror2-test",
+      "href": "/apt-mirror2-test",
+      "synctype": "apt-mirror2",
+      "syncrate": "PT1H",
+      "link": [],
+      "settings": {
+        "hidden": false,
+        "src": "http://apt-fixture:8000/",
+        "dst": "/srv/publish/apt-mirror2-test",
+        "options": {
+          "source": false,
+          "nthreads": 4,
+          "config": [
+            {
+              "src": "http://apt-fixture:8000/ubuntu2404/",
+              "dst": "ubuntu2404/x86_64",
+              "keyring": ["/etc/mirror/apt-mirror2-ubuntu2404.gpg"]
+            },
+            {
+              "src": "http://apt-fixture:8000/ubuntu2604/",
+              "dst": "ubuntu2604/x86_64",
+              "keyring": ["/etc/mirror/apt-mirror2-ubuntu2604.gpg"]
+            }
+          ]
+        }
+      }
+    },
     "error-test": {
       "name": "error-test",
       "id": "error-test",

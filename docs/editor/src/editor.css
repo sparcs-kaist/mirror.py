@@ -1,0 +1,45 @@
+.ce-page .wy-nav-content { max-width: none; }
+#mirror-config-editor { --ce-border: #d8e0e8; --ce-muted: #536679; --ce-accent: #176892; color: #223243; }
+#mirror-config-editor button { font: inherit; cursor: pointer; border: 1px solid var(--ce-border); border-radius: 5px; background: #fff; padding: 7px 11px; color: inherit; }
+#mirror-config-editor button:hover:not(:disabled) { background: #edf5fa; border-color: var(--ce-accent); }
+#mirror-config-editor button:focus-visible, #mirror-config-editor input:focus-visible, #mirror-config-editor select:focus-visible, #ce-divider:focus-visible { outline: 2px solid var(--ce-accent); outline-offset: 2px; }
+#mirror-config-editor button:disabled { cursor: not-allowed; opacity: .5; }
+#mirror-config-editor .ce-primary { color: #fff; background: var(--ce-accent); border-color: var(--ce-accent); margin-left: auto; }
+.ce-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ce-statusbar { display: flex; justify-content: space-between; gap: 10px; padding: 12px 0 4px; font-size: 14px; }
+#ce-status[data-state=valid] { color: #267347; }
+#ce-status[data-state=error], .ce-error { color: #a42c34; }
+#mirror-config-editor .ce-privacy { font-size: 12px; color: var(--ce-muted); margin: 3px 0 15px; }
+.ce-workspace { display: grid; grid-template-columns: minmax(0, var(--ce-json-width, 50%)) 8px minmax(0, 1fr); height: clamp(520px, 74vh, 1000px); border: 1px solid var(--ce-border); border-radius: 8px; overflow: hidden; background: #fff; }
+.ce-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+#mirror-config-editor .ce-pane > h2 { margin: 0; padding: 11px 16px; font: 600 14px system-ui, sans-serif; background: #f1f5f8; border-bottom: 1px solid var(--ce-border); }
+#ce-monaco { flex: 1; min-height: 0; overflow: hidden; }
+#ce-divider { cursor: col-resize; background: #edf1f5; touch-action: none; border-inline: 1px solid var(--ce-border); }
+#ce-divider:hover { background: #c3dce9; }
+#ce-form { margin: 0; border: 0; padding: 16px; min-width: 0; overflow: auto; flex: 1; }
+#ce-form:disabled { opacity: .65; }
+.ce-field { margin: 0 0 15px; min-width: 0; }
+.ce-field > label, .ce-label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 5px; overflow-wrap: anywhere; }
+#ce-form input:not([type=checkbox]), #ce-form select, #ce-form textarea { box-sizing: border-box; max-width: 100%; width: 100%; border: 1px solid var(--ce-border); border-radius: 4px; padding: 7px 9px; box-shadow: none; font: 14px system-ui, sans-serif; background: #fff; }
+#ce-form input[type=checkbox] { margin-right: 8px; }
+#ce-form input:invalid { border-color: #a42c34; }
+#ce-form .ce-help { display: block; font-size: 12px; color: var(--ce-muted); margin: 5px 0; overflow-wrap: anywhere; }
+#ce-form .ce-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+#ce-form .ce-row > input, #ce-form .ce-row > select { flex: 1; min-width: 100px; }
+#ce-form .ce-section, #ce-form .ce-group { border: 1px solid var(--ce-border); border-radius: 5px; margin-bottom: 12px; padding: 10px; }
+#ce-form summary { cursor: pointer; font-weight: 600; margin-bottom: 10px; overflow-wrap: anywhere; }
+#ce-form .ce-package-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+#ce-form button { font-size: 12px; padding: 5px 9px; }
+#ce-notice { min-height: 24px; padding-top: 8px; font-size: 13px; }
+.ce-diagnostics { border-top: 1px solid var(--ce-border); margin-top: 8px; padding: 10px 0; }
+.ce-diagnostics summary { cursor: pointer; font-size: 14px; }
+#ce-issues { max-height: 220px; overflow: auto; padding-top: 8px; }
+#ce-issues button { text-align: left; font-size: 12px; overflow-wrap: anywhere; border: 0; }
+.ce-tabs { display: none; }
+@media (max-width: 1100px) {
+  .ce-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+  .ce-tabs [aria-selected=true] { border-color: var(--ce-accent) !important; background: #edf5fa !important; }
+  .ce-workspace { display: block; }
+  .ce-pane { height: 100%; }
+  #ce-divider, .ce-workspace[data-pane=json] #ce-settings-pane, .ce-workspace[data-pane=settings] #ce-json-pane { display: none; }
+}

@@ -1,0 +1,14 @@
+Package: trixie-test
+Version: 1.0
+Architecture: amd64
+Maintainer: Integration Test <test@example.com>
+Installed-Size: 1
+Filename: pool/main/t/trixie-test/trixie-test_1.0_amd64.deb
+Size: 590
+MD5sum: a067f5eb09ba9c4b5695c67902fc085e
+SHA1: 7239f98e3dc49a0f7cbcde25775b63e9bfe551a3
+SHA256: f5a5069e0f1d74e2c78d391dafb54d4655e57ec7352f674749a7659aa482ccdf
+Section: misc
+Priority: optional
+Description: mirror.py debmirror integration fixture
+

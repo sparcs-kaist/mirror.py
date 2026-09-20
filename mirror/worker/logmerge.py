@@ -3,7 +3,7 @@ import os
 import signal
 import stat
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -22,7 +22,6 @@ class TailSource:
     fd: int | None = None
     identity: tuple[int, int] | None = None
     buffer: bytes = b""
-    rotated_paths_seen: set[Path] = field(default_factory=set)
 
     def close(self) -> None:
         if self.fd is not None:
@@ -49,23 +48,21 @@ def _open_regular(path: Path, flags: int, mode: int = 0o644) -> tuple[int, os.st
     return fd, st
 
 
-def _ensure_source_open(source: TailSource) -> None:
-    try:
-        current = source.path.stat()
-    except FileNotFoundError:
-        source.close()
-        return
+def _read_open_fd(dest_fd: int, source: TailSource, chunk_size: int) -> None:
+    """Read all currently-available bytes from the open fd, emitting whole lines.
 
-    current_identity = (current.st_dev, current.st_ino)
-    if source.identity == current_identity:
+    A rename (log rotation) does not invalidate an already-open fd, so draining
+    here captures the full content of the current inode even after the file has
+    been rotated out from under us — as long as the fd is not closed first.
+    """
+    if source.fd is None:
         return
-
-    source.close()
-    opened = _open_regular(source.path, os.O_RDONLY)
-    if opened is None:
-        return
-    source.fd, st = opened
-    source.identity = (st.st_dev, st.st_ino)
+    while True:
+        data = os.read(source.fd, chunk_size)
+        if not data:
+            break
+        source.buffer += data
+        _emit_complete_lines(dest_fd, source)
 
 
 def _write_line(dest_fd: int, label: str, line: bytes) -> None:
@@ -92,40 +89,34 @@ def _emit_complete_lines(dest_fd: int, source: TailSource, final: bool = False) 
 
 
 def _drain_source(dest_fd: int, source: TailSource, final: bool = False, chunk_size: int = 65536) -> None:
-    _ensure_source_open(source)
-    if source.fd is None:
-        if final:
-            _drain_rotated_once(dest_fd, source, chunk_size)
-        return
+    # 1. Drain the currently-open fd to EOF first. Because a rename does not
+    #    break an open fd, this reads the full tail of the current inode even if
+    #    it has just been rotated to `<path>.0`. Never close before draining, or
+    #    the unread tail is lost and later re-read whole (causing duplicates).
+    _read_open_fd(dest_fd, source, chunk_size)
 
-    while True:
-        data = os.read(source.fd, chunk_size)
-        if not data:
-            break
-        source.buffer += data
-        _emit_complete_lines(dest_fd, source)
-    _emit_complete_lines(dest_fd, source, final=final)
-
-
-def _drain_rotated_once(dest_fd: int, source: TailSource, chunk_size: int) -> None:
-    rotated = Path(str(source.path) + ".0")
-    if rotated in source.rotated_paths_seen:
-        return
-    opened = _open_regular(rotated, os.O_RDONLY)
-    if opened is None:
-        return
-    source.rotated_paths_seen.add(rotated)
-    fd, _ = opened
+    # 2. If the path now resolves to a different inode (rotation created a fresh
+    #    file) or the file has appeared for the first time, switch to it. The old
+    #    fd was fully drained above, so no bytes are lost or replayed. If the path
+    #    is currently gone (rotated away with no replacement yet), keep the old fd
+    #    open and keep draining that inode on later polls.
     try:
-        while True:
-            data = os.read(fd, chunk_size)
-            if not data:
-                break
-            source.buffer += data
-            _emit_complete_lines(dest_fd, source)
+        current = source.path.stat()
+    except FileNotFoundError:
+        current = None
+
+    if current is not None and stat.S_ISREG(current.st_mode):
+        current_identity = (current.st_dev, current.st_ino)
+        if source.identity != current_identity:
+            source.close()
+            opened = _open_regular(source.path, os.O_RDONLY)
+            if opened is not None:
+                source.fd, st = opened
+                source.identity = (st.st_dev, st.st_ino)
+                _read_open_fd(dest_fd, source, chunk_size)
+
+    if final:
         _emit_complete_lines(dest_fd, source, final=True)
-    finally:
-        os.close(fd)
 
 
 def _parse_source(value: str) -> TailSource:

@@ -67,16 +67,16 @@ def _restore_registry():
 # ---------------------------------------------------------------------------
 
 def test_all_five_builtins_registered():
-    """Phase A must populate all seven built-in sync types."""
-    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo"}
+    """Phase A must populate all nine built-in sync types."""
+    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo", "debmirror", "apt-mirror2"}
     assert expected == set(mirror.sync.methods)
     for name in expected:
         assert name in mirror.plugin._registry, f"{name} missing from registry"
 
 
 def test_builtin_names_set_populated():
-    """_BUILTIN_NAMES must contain all seven canonical names after phase A."""
-    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo"}
+    """_BUILTIN_NAMES must contain all nine canonical names after phase A."""
+    expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo", "debmirror", "apt-mirror2"}
     assert expected.issubset(mirror.plugin._BUILTIN_NAMES)
 
 

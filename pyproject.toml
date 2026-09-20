@@ -33,6 +33,7 @@ Repository = "https://github.com/sparcs-kaist/mirror.py"
 Issues = "https://github.com/sparcs-kaist/mirror.py/issues"
 
 [project.optional-dependencies]
+apt-mirror2 = ["apt-mirror==16"]
 dev = [
     "pytest>=8",
     "pytest-docker>=3",
@@ -55,6 +56,7 @@ ftpsync = "mirror.sync.ftpsync:plugin"
 lftp = "mirror.sync.lftp:plugin"
 bandersnatch = "mirror.sync.bandersnatch:plugin"
 local = "mirror.sync.local:plugin"
+apt-mirror2 = "mirror.sync.apt_mirror2:plugin"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -63,6 +65,11 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+]
+docs = [
+    "sphinx>=7.3",
+    "sphinx-rtd-theme>=3.0",
+    "myst-parser>=3.0",
 ]
 
 [tool.setuptools.packages.find]
