@@ -11,7 +11,7 @@ import mirror
 import mirror.socket.worker
 import mirror.structure
 import mirror.sync
-from mirror.sync import apt_mirror2
+import mirror.sync.apt_mirror2
 
 
 def make_package(options: dict, dst: str = "/srv/mirror/cuda") -> MagicMock:
@@ -52,7 +52,7 @@ def test_build_payload_supports_multiple_repositories_and_defaults() -> None:
         }
     )
 
-    payload = apt_mirror2.build_payload(package)
+    payload = mirror.sync.apt_mirror2.build_payload(package)
 
     assert payload["nthreads"] == 8
     assert payload["limit_rate"] is None
@@ -83,21 +83,21 @@ def test_build_payload_supports_multiple_repositories_and_defaults() -> None:
 )
 def test_build_payload_rejects_invalid_input(options: dict, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        apt_mirror2.build_payload(make_package(options))
+        mirror.sync.apt_mirror2.build_payload(make_package(options))
 
 
 def test_build_payload_rejects_duplicate_sources_and_overlapping_destinations() -> None:
     first = repository()
     duplicate = repository(dst="other")
     with pytest.raises(ValueError, match="src values must be unique"):
-        apt_mirror2.build_payload(make_package({"config": [first, duplicate]}))
+        mirror.sync.apt_mirror2.build_payload(make_package({"config": [first, duplicate]}))
 
     second = repository(
         src="https://repo2.example/",
         dst="ubuntu2404/x86_64/subdirectory",
     )
     with pytest.raises(ValueError, match="must not overlap"):
-        apt_mirror2.build_payload(make_package({"config": [first, second]}))
+        mirror.sync.apt_mirror2.build_payload(make_package({"config": [first, second]}))
 
 
 def test_execute_delegates_static_worker_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -105,13 +105,13 @@ def test_execute_delegates_static_worker_wrapper(monkeypatch: pytest.MonkeyPatch
     logger = MagicMock(spec=logging.Logger)
     logger.handlers = []
     execute_command = MagicMock()
-    monkeypatch.setattr(apt_mirror2.importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(mirror.sync.apt_mirror2.importlib.util, "find_spec", lambda name: object())
     monkeypatch.setattr(mirror.socket.worker, "execute_command", execute_command)
     monkeypatch.setattr(mirror.sync, "get_extra_args", lambda pkgid: {"TOKEN": "value"})
     monkeypatch.setattr(mirror.sync, "on_sync_done", MagicMock())
     mirror.conf = MagicMock(uid=123, gid=456)
 
-    apt_mirror2.execute(package, logger)
+    mirror.sync.apt_mirror2.execute(package, logger)
 
     call = execute_command.call_args.kwargs
     assert call["commandline"][:4] == [
@@ -133,11 +133,11 @@ def test_execute_reports_preflight_failure(monkeypatch: pytest.MonkeyPatch) -> N
     logger.handlers = []
     execute_command = MagicMock()
     on_done = MagicMock()
-    monkeypatch.setattr(apt_mirror2.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(mirror.sync.apt_mirror2.importlib.util, "find_spec", lambda name: None)
     monkeypatch.setattr(mirror.socket.worker, "execute_command", execute_command)
     monkeypatch.setattr(mirror.sync, "on_sync_done", on_done)
 
-    apt_mirror2.execute(package, logger)
+    mirror.sync.apt_mirror2.execute(package, logger)
 
     execute_command.assert_not_called()
     on_done.assert_called_once_with("cuda", success=False, returncode=None)
@@ -150,7 +150,7 @@ def test_render_config_maps_destinations_gpg_cleanup_and_rate(tmp_path: Path) ->
         "limit_rate": "20m",
     }
     resolved = [
-        apt_mirror2.ResolvedRepository(
+        mirror.sync.apt_mirror2.ResolvedRepository(
             src="https://repo.example/cuda/",
             dst="ubuntu2404/x86_64",
             dist=("./",),
@@ -164,7 +164,7 @@ def test_render_config_maps_destinations_gpg_cleanup_and_rate(tmp_path: Path) ->
         )
     ]
 
-    config = apt_mirror2.render_config(payload, resolved, tmp_path)
+    config = mirror.sync.apt_mirror2.render_config(payload, resolved, tmp_path)
 
     assert "set mirror_path /srv/mirror/cuda" in config
     assert "set nthreads 12" in config
@@ -180,7 +180,7 @@ def test_render_config_maps_destinations_gpg_cleanup_and_rate(tmp_path: Path) ->
 
 def test_render_config_uses_unlimited_rate_and_source_only(tmp_path: Path) -> None:
     payload = {"dst": "/srv/mirror/source", "nthreads": 8, "limit_rate": None}
-    repository = apt_mirror2.ResolvedRepository(
+    repository = mirror.sync.apt_mirror2.ResolvedRepository(
         "https://repo.example/source/",
         "source",
         ("bookworm",),
@@ -193,7 +193,7 @@ def test_render_config_uses_unlimited_rate_and_source_only(tmp_path: Path) -> No
         (),
     )
 
-    config = apt_mirror2.render_config(payload, [repository], tmp_path)
+    config = mirror.sync.apt_mirror2.render_config(payload, [repository], tmp_path)
 
     assert "set limit_rate 0" in config
     assert "slow_rate_protection" not in config
@@ -210,10 +210,10 @@ def test_run_payload_cleans_private_config_on_success_and_failure(
         "limit_rate": None,
         "repositories": [repository()],
     }
-    resolved = apt_mirror2.ResolvedRepository(
+    resolved = mirror.sync.apt_mirror2.ResolvedRepository(
         "https://repo.example/", "repo", ("./",), (), ("all",), False, True, True, False, ()
     )
-    monkeypatch.setattr(apt_mirror2, "resolve_repository", lambda raw, dst: resolved)
+    monkeypatch.setattr(mirror.sync.apt_mirror2, "resolve_repository", lambda raw, dst: resolved)
     processes: list[MagicMock] = []
 
     def create_process(command: list[str]) -> MagicMock:
@@ -226,9 +226,9 @@ def test_run_payload_cleans_private_config_on_success_and_failure(
         assert config_path.parent.stat().st_mode & 0o777 == 0o700
         return process
 
-    monkeypatch.setattr(apt_mirror2.subprocess, "Popen", create_process)
+    monkeypatch.setattr(mirror.sync.apt_mirror2.subprocess, "Popen", create_process)
 
-    assert apt_mirror2.run_payload(payload) == 7
+    assert mirror.sync.apt_mirror2.run_payload(payload) == 7
     assert not list(tmp_path.glob(".mirror-apt-mirror2-*"))
     assert processes
 
@@ -248,21 +248,21 @@ def test_run_payload_rejects_existing_destination_symlink(
         "repositories": [repository(dst="linked/repo")],
     }
     native = MagicMock()
-    monkeypatch.setattr(apt_mirror2.subprocess, "Popen", native)
+    monkeypatch.setattr(mirror.sync.apt_mirror2.subprocess, "Popen", native)
 
-    with pytest.raises(apt_mirror2.AptMirrorError, match="contains a symlink"):
-        apt_mirror2.run_payload(payload)
+    with pytest.raises(mirror.sync.apt_mirror2.AptMirrorError, match="contains a symlink"):
+        mirror.sync.apt_mirror2.run_payload(payload)
 
     native.assert_not_called()
 
 
 def test_terminate_child_escalates_after_two_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
     process = MagicMock()
-    process.wait.side_effect = [apt_mirror2.subprocess.TimeoutExpired("apt", 2), 0]
-    apt_mirror2._ACTIVE_PROCESS = process
+    process.wait.side_effect = [mirror.sync.apt_mirror2.subprocess.TimeoutExpired("apt", 2), 0]
+    mirror.sync.apt_mirror2._ACTIVE_PROCESS = process
 
     with pytest.raises(SystemExit, match="143"):
-        apt_mirror2._terminate_child(signal.SIGTERM, None)
+        mirror.sync.apt_mirror2._terminate_child(signal.SIGTERM, None)
 
     process.terminate.assert_called_once()
     process.kill.assert_called_once()
@@ -270,6 +270,6 @@ def test_terminate_child_escalates_after_two_seconds(monkeypatch: pytest.MonkeyP
 
 
 def test_plugin_exposes_apt_mirror2() -> None:
-    record = apt_mirror2.plugin()
+    record = mirror.sync.apt_mirror2.plugin()
     assert record.name == "apt-mirror2"
-    assert record.execute is apt_mirror2.execute
+    assert record.execute is mirror.sync.apt_mirror2.execute
