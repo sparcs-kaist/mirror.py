@@ -82,6 +82,14 @@ def ubuntu_cmd(
     help="Value for the debianMirror= line (local Debian package mirror, e.g. file:/mirror/ftp/debian).",
 )
 @click.option(
+    "--jigdo-include", multiple=True, metavar="POSIX_ERE",
+    help="POSIX ERE selecting images to regenerate. May be specified once.",
+)
+@click.option(
+    "--jigdo-exclude", multiple=True, metavar="POSIX_ERE",
+    help="POSIX ERE excluding images after --jigdo-include. May be specified once.",
+)
+@click.option(
     "--hostname", default=None, type=str,
     help="Hostname used for AUiP/trace excludes and the trace filename (default: mirror.conf.hostname or socket.getfqdn()).",
 )
@@ -126,6 +134,8 @@ def jigdo_cmd(
     dst: Path,
     jigdo_file: str,
     debian_mirror: str,
+    jigdo_include: tuple[str, ...],
+    jigdo_exclude: tuple[str, ...],
     hostname: Optional[str],
     timeout: int,
     trace: bool,
@@ -139,6 +149,20 @@ def jigdo_cmd(
 ) -> None:
     """Debian CD jigdo mirror: rsync templates, regenerate ISOs with jigdo-mirror, then pull a few real ISOs."""
     import mirror.sync.jigdo
+    if len(jigdo_include) > 1:
+        raise click.UsageError("--jigdo-include may only be specified once")
+    if len(jigdo_exclude) > 1:
+        raise click.UsageError("--jigdo-exclude may only be specified once")
+    jigdo_include_value = (
+        jigdo_include[0]
+        if jigdo_include
+        else mirror.sync.jigdo.JIGDO_INCLUDE_DEFAULT
+    )
+    jigdo_exclude_value = (
+        jigdo_exclude[0]
+        if jigdo_exclude
+        else mirror.sync.jigdo.JIGDO_EXCLUDE_DEFAULT
+    )
     template_excludes = tuple(template_excludes) or mirror.sync.jigdo.JIGDO_TEMPLATE_EXCLUDES
     final_includes = tuple(final_includes) or mirror.sync.jigdo.JIGDO_FINAL_INCLUDES
     mirror.sync.jigdo.run_standalone(
@@ -146,6 +170,8 @@ def jigdo_cmd(
         dst=dst,
         jigdo_file=jigdo_file,
         debian_mirror=debian_mirror,
+        jigdo_include=jigdo_include_value,
+        jigdo_exclude=jigdo_exclude_value,
         hostname=hostname,
         timeout=timeout,
         trace=trace,
