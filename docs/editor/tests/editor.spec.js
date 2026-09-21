@@ -76,7 +76,7 @@ function configWithPackages(packages) {
 }
 
 function field(page, path) {
-  return page.locator(`[data-path='${JSON.stringify(path)}']`);
+  return page.locator(`[data-path='${JSON.stringify(path)}']`).filter({ visible: true });
 }
 
 async function openEditor(page) {
@@ -96,7 +96,8 @@ async function importConfig(page, value) {
 
 async function selectPackage(page, packageId) {
   await page.getByLabel('Configuration section').selectOption(packageId);
-  await expect(field(page, ['packages', packageId, 'id'])).toBeVisible();
+  await page.getByRole('tab', { name: 'Sync', exact: true }).click();
+  await expect(field(page, ['packages', packageId, 'synctype'])).toBeVisible();
 }
 
 async function fillFormField(page, path, value) {
@@ -153,8 +154,9 @@ test('imports a configuration and reflects JSON values in the form', async ({ pa
   await expect(field(page, ['mirrorname'])).toHaveValue('Imported Mirror');
   await expect(field(page, ['hostname'])).toHaveValue('mirror.example.com');
   await selectPackage(page, 'sample');
-  await expect(field(page, ['packages', 'sample', 'name'])).toHaveValue('Package sample');
   await expect(field(page, ['packages', 'sample', 'synctype'])).toHaveValue(JSON.stringify('rsync'));
+  await page.getByRole('tab', { name: 'Basic information', exact: true }).click();
+  await expect(field(page, ['packages', 'sample', 'name'])).toHaveValue('Package sample');
 });
 
 test('synchronizes Monaco and form edits in both directions', async ({ page }) => {
@@ -281,7 +283,7 @@ test('renders method-specific option forms for all built-in methods', async ({ p
   for (const method of BUILTIN_METHODS) {
     await selectPackage(page, method);
     await expect(field(page, ['packages', method, 'synctype'])).toHaveValue(JSON.stringify(method));
-    await expect(field(page, ['packages', method, 'settings', 'options'])).toBeVisible();
+    await page.getByText(`${method} options`, { exact: true }).filter({ visible: true }).click();
     if (representativeField[method]) {
       await expect(field(page, [
         'packages', method, 'settings', 'options', representativeField[method],
@@ -298,6 +300,7 @@ test('renames a package key and prevents duplicate package IDs', async ({ page }
   await importConfig(page, config);
   await selectPackage(page, 'first');
 
+  await page.locator('#ce-form').getByText('Package actions', { exact: true }).click();
   const firstId = field(page, ['packages', 'first', 'id']);
   await firstId.fill('renamed');
   await page.getByRole('button', { name: 'Rename package' }).click();
@@ -341,11 +344,335 @@ test('switches between JSON and form tabs on a narrow screen', async ({ page }) 
 
 
 test('adds and deletes a package through the form', async ({ page }) => {
-  await page.getByLabel('New package ID').fill('sample');
   await page.getByRole('button', { name: 'Add package', exact: true }).click();
-  await expect(field(page, ['packages', 'sample', 'id'])).toHaveValue('sample');
+  await page.getByLabel('New package ID').fill('sample');
+  await page.getByLabel('New package ID').press('Tab');
+  await fillFormField(page, ['packages', 'sample', 'settings', 'src'], 'rsync://example.com/repository');
+  await page.getByRole('button', { name: 'Create package', exact: true }).click();
+  await expect(field(page, ['packages', 'sample', 'synctype'])).toHaveValue(JSON.stringify('rsync'));
   expect(JSON.parse(await downloadText(page)).packages.sample.synctype).toBe('rsync');
+  await page.locator('#ce-form').getByText('Package actions', { exact: true }).click();
   page.once('dialog', (dialog) => dialog.accept());
   await page.getByRole('button', { name: 'Delete package', exact: true }).click();
   expect(JSON.parse(await downloadText(page)).packages).toEqual({});
+});
+
+test('finds a package among fifty entries by ID or display name', async ({ page }) => {
+  const packages = Object.fromEntries(Array.from({ length: 55 }, (_, index) => {
+    const id = `repository-${index}`;
+    return [id, packageConfig(id)];
+  }));
+  packages['repository-42'].name = 'Debian Archive';
+  await importConfig(page, configWithPackages(packages));
+  const search = page.getByLabel('Search packages', { exact: true });
+  const selector = page.getByLabel('Configuration section');
+  await search.fill('Debian');
+  await expect(selector.locator('option[value="repository-42"]')).toHaveCount(1);
+  await expect(selector.locator('option[value="repository-1"]')).toHaveCount(0);
+  await selectPackage(page, 'repository-42');
+  await expect(field(page, ['packages', 'repository-42', 'settings', 'src'])).toBeVisible();
+  await search.fill('repository-12');
+  await selectPackage(page, 'repository-12');
+  await expect(field(page, ['packages', 'repository-12', 'settings', 'dst'])).toHaveValue('/srv/mirror/repository-12');
+});
+
+test('retains the selected package tab while committing an input', async ({ page }) => {
+  await importConfig(page, configWithPackages({ sample: packageConfig('sample') }));
+  await selectPackage(page, 'sample');
+  const basic = page.getByRole('tab', { name: 'Basic information', exact: true });
+  await basic.click();
+  await fillFormField(page, ['packages', 'sample', 'name'], 'A friendlier name');
+  await expect(basic).toHaveAttribute('aria-selected', 'true');
+  await expect(field(page, ['packages', 'sample', 'name'])).toHaveValue('A friendlier name');
+  expect(JSON.parse(await downloadText(page)).packages.sample.name).toBe('A friendlier name');
+});
+
+test('opening package tabs preserves omitted options and raw extension values', async ({ page }) => {
+  const config = configWithPackages({ sample: packageConfig('sample') });
+  delete config.packages.sample.disabled;
+  config.packages.sample.settings.options = { custom_extension: { enabled: false, text: '' } };
+  await importConfig(page, config);
+  await selectPackage(page, 'sample');
+  for (const name of ['Basic information', 'Links', 'Advanced', 'Sync']) {
+    await page.getByRole('tab', { name, exact: true }).click();
+  }
+  expect(JSON.parse(await downloadText(page))).toEqual(config);
+});
+
+test('edits package links independently from synchronization settings', async ({ page }) => {
+  await importConfig(page, configWithPackages({ sample: packageConfig('sample') }));
+  await selectPackage(page, 'sample');
+  await expect(field(page, ['packages', 'sample', 'link', 0, 'href'])).not.toBeVisible();
+  await page.getByRole('tab', { name: 'Links', exact: true }).click();
+  await fillFormField(page, ['packages', 'sample', 'link', 0, 'href'], 'https://new.example.org/');
+  const result = JSON.parse(await downloadText(page));
+  expect(result.packages.sample.link).toEqual([{ rel: 'HOME', href: 'https://new.example.org/' }]);
+  expect(result.packages.sample.settings.src).toBe('rsync://example.com/repository');
+});
+
+test('focuses the selected package in JSON and provides a settings-only view', async ({ page }) => {
+  const packages = Object.fromEntries(Array.from({ length: 50 }, (_, index) => {
+    const id = `repository-${index}`;
+    return [id, packageConfig(id)];
+  }));
+  await importConfig(page, configWithPackages(packages));
+  await selectPackage(page, 'repository-42');
+  await expect(page.locator('.ce-json-highlight').first()).toBeVisible();
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('repository-42');
+  await page.getByRole('button', { name: 'Settings only', exact: true }).click();
+  await expect(page.locator('.monaco-editor')).not.toBeVisible();
+  await expect(field(page, ['packages', 'repository-42', 'settings', 'src'])).toBeVisible();
+  await page.getByRole('button', { name: 'Split view', exact: true }).click();
+  await expect(page.locator('.monaco-editor')).toBeVisible();
+});
+
+test('toggles documentation navigation without losing form edits', async ({ page }) => {
+  await fillFormField(page, ['mirrorname'], 'More room for settings');
+  await page.getByRole('button', { name: 'Hide documentation navigation', exact: true }).click();
+  await expect(page.locator('.wy-nav-side')).not.toBeVisible();
+  await page.getByRole('button', { name: 'Show documentation navigation', exact: true }).click();
+  await expect(page.locator('.wy-nav-side')).toBeVisible();
+  expect(JSON.parse(await downloadText(page)).mirrorname).toBe('More room for settings');
+});
+
+test('keeps the active form controls attached when committing a value', async ({ page }) => {
+  await importConfig(page, configWithPackages({ sample: packageConfig('sample') }));
+  await selectPackage(page, 'sample');
+  const source = field(page, ['packages', 'sample', 'settings', 'src']);
+  const originalControl = await source.elementHandle();
+  await source.fill('rsync://new.example.org/archive');
+  await source.press('Tab');
+  await expect.poll(() => originalControl.evaluate((node) => node.isConnected)).toBe(true);
+  expect(await page.evaluate(() => document.activeElement?.closest('#ce-form') !== null)).toBe(true);
+  expect(JSON.parse(await downloadText(page)).packages.sample.settings.src).toBe('rsync://new.example.org/archive');
+});
+
+test('edits a friendly interval and retains complex duration text', async ({ page }) => {
+  const config = configWithPackages({ sample: packageConfig('sample'), complex: packageConfig('complex') });
+  config.packages.complex.syncrate = 'P1DT2H30M';
+  await importConfig(page, config);
+  await selectPackage(page, 'sample');
+  await expect(field(page, ['packages', 'sample', 'syncrate'])).toHaveValue('6');
+  await expect(page.getByLabel('Sync interval unit', { exact: true }).filter({ visible: true })).toHaveValue('H');
+  await fillFormField(page, ['packages', 'sample', 'syncrate'], '30');
+  await page.getByLabel('Sync interval unit', { exact: true }).filter({ visible: true }).selectOption('M');
+  expect(JSON.parse(await downloadText(page)).packages.sample.syncrate).toBe('PT30M');
+  await selectPackage(page, 'complex');
+  await expect(field(page, ['packages', 'complex', 'syncrate'])).toHaveValue('P1DT2H30M');
+  expect(JSON.parse(await downloadText(page)).packages.complex.syncrate).toBe('P1DT2H30M');
+});
+
+test('keeps invalid input visible until explicitly discarded', async ({ page }) => {
+  await importConfig(page, configWithPackages({ sample: packageConfig('sample') }));
+  await selectPackage(page, 'sample');
+  const interval = field(page, ['packages', 'sample', 'syncrate']);
+  await interval.fill('-1');
+  await interval.press('Tab');
+  await expect(page.getByRole('button', { name: 'Download config.json' })).toBeDisabled();
+  await page.getByRole('tab', { name: 'Links', exact: true }).click();
+  await expect(interval).toBeVisible();
+  await expect(interval).toHaveValue('-1');
+  await page.getByRole('button', { name: 'Discard input', exact: true }).click();
+  await expect(interval).toHaveValue('6');
+  expect(JSON.parse(await downloadText(page)).packages.sample.syncrate).toBe('PT6H');
+});
+
+test('preserves an expanded options section when a field changes', async ({ page }) => {
+  const config = configWithPackages({ sample: packageConfig('sample') });
+  config.packages.sample.settings.options = { ffts: false };
+  await importConfig(page, config);
+  await selectPackage(page, 'sample');
+  await page.getByText('rsync options', { exact: true }).filter({ visible: true }).click();
+  const option = field(page, ['packages', 'sample', 'settings', 'options', 'ffts']);
+  await option.check();
+  await expect(option).toBeVisible();
+  await expect(option).toBeChecked();
+  expect(JSON.parse(await downloadText(page)).packages.sample.settings.options.ffts).toBe(true);
+});
+
+test('opens the package and tab for a validation error', async ({ page }) => {
+  const config = configWithPackages({ sample: packageConfig('sample') });
+  config.packages.sample.syncrate = 'not-an-interval';
+  await importConfig(page, config);
+  await page.locator('#ce-issues-heading').click();
+  await page.locator('#ce-issues button').filter({ hasText: 'syncrate' }).first().click();
+  await expect(page.getByLabel('Configuration section')).toHaveValue('sample');
+  await expect(page.getByRole('tab', { name: 'Sync', exact: true })).toHaveAttribute('aria-selected', 'true');
+  const interval = field(page, ['packages', 'sample', 'syncrate']);
+  await expect(interval).toHaveValue('not-an-interval');
+  await expect(interval).toHaveAttribute('aria-invalid', 'true');
+  await fillFormField(page, ['packages', 'sample', 'syncrate'], 'PT6H');
+  await expect(page.getByRole('button', { name: 'Download config.json' })).toBeEnabled();
+});
+
+for (const method of BUILTIN_METHODS) {
+  test(`creates a ${method} package with its relevant settings`, async ({ page }) => {
+    await page.getByRole('button', { name: 'Add package', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Add package', exact: true });
+    await dialog.getByLabel('New package ID').fill('created');
+    await dialog.getByLabel('New package ID').press('Tab');
+    await dialog.getByLabel('New package sync type').selectOption(method);
+    if (method !== 'local') {
+      await fillFormField(page, ['packages', 'created', 'settings', 'src'], 'rsync://example.com/repository');
+    }
+    if (method === 'jigdo') {
+      if (!await dialog.locator('.ce-method-options').evaluate((node) => node.open)) {
+        await dialog.getByText('jigdo options', { exact: true }).click();
+      }
+      await fillFormField(page, ['packages', 'created', 'settings', 'options', 'jigdo_file'], 'rsync://example.com/images');
+      await fillFormField(page, ['packages', 'created', 'settings', 'options', 'debian_mirror'], 'https://deb.example.com/');
+    }
+    if (method === 'apt-mirror2') {
+      if (!await dialog.locator('.ce-method-options').evaluate((node) => node.open)) {
+        await dialog.getByText('apt-mirror2 options', { exact: true }).click();
+      }
+      await dialog.getByRole('button', { name: 'Add Config item', exact: true }).click();
+      await dialog.getByText('Repository 1', { exact: true }).click();
+      await fillFormField(page, ['packages', 'created', 'settings', 'options', 'config', 0, 'src'], 'https://apt.example.com/');
+      await fillFormField(page, ['packages', 'created', 'settings', 'options', 'config', 0, 'dst'], 'stable/');
+      await field(page, ['packages', 'created', 'settings', 'options', 'config', 0, 'keyring']).getByRole('button').click();
+      await fillFormField(page, ['packages', 'created', 'settings', 'options', 'config', 0, 'keyring'], '/usr/share/keyrings/debian-archive-keyring.gpg');
+    }
+    await dialog.getByRole('button', { name: 'Create package', exact: true }).click();
+    await expect(dialog).not.toBeVisible();
+    const result = JSON.parse(await downloadText(page));
+    expect(result.packages.created.id).toBe('created');
+    expect(result.packages.created.synctype).toBe(method);
+    expect(result.packages.created.settings.dst).toBe('/srv/mirror/created');
+  });
+}
+
+test('navigates package tabs with the keyboard', async ({ page }) => {
+  await importConfig(page, configWithPackages({ sample: packageConfig('sample') }));
+  await selectPackage(page, 'sample');
+  const sync = page.getByRole('tab', { name: 'Sync', exact: true });
+  await sync.focus();
+  await page.keyboard.press('ArrowRight');
+  const basic = page.getByRole('tab', { name: 'Basic information', exact: true });
+  await expect(basic).toBeFocused();
+  await expect(basic).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('End');
+  await expect(page.getByRole('tab', { name: 'Advanced', exact: true })).toBeFocused();
+  await page.keyboard.press('Home');
+  await expect(sync).toBeFocused();
+});
+
+test('preserves text during composition until the input is committed', async ({ page }) => {
+  await importConfig(page, configWithPackages({ sample: packageConfig('sample') }));
+  await selectPackage(page, 'sample');
+  await page.getByRole('tab', { name: 'Basic information', exact: true }).click();
+  const name = field(page, ['packages', 'sample', 'name']);
+  await name.focus();
+  await name.dispatchEvent('compositionstart', { data: '' });
+  await name.evaluate((node) => {
+    node.value = '한국 미러';
+    node.dispatchEvent(new InputEvent('input', { bubbles: true, data: '한국 미러', inputType: 'insertCompositionText', isComposing: true }));
+  });
+  await page.getByRole('tab', { name: 'Links', exact: true }).click();
+  await expect(name).toBeVisible();
+  await expect(name).toHaveValue('한국 미러');
+  await name.dispatchEvent('compositionend', { data: '한국 미러' });
+  await name.press('Tab');
+  expect(JSON.parse(await downloadText(page)).packages.sample.name).toBe('한국 미러');
+});
+
+test('reveals unknown plugin settings in JSON without changing them', async ({ page }) => {
+  const config = configWithPackages({ sample: packageConfig('sample', 'custom-plugin') });
+  config.packages.sample.plugin_data = { endpoint: 'https://plugin.example.org/', flags: [false, ''] };
+  await importConfig(page, config);
+  await selectPackage(page, 'sample');
+  await page.getByRole('button', { name: 'Settings only', exact: true }).click();
+  await page.getByRole('tab', { name: 'Advanced', exact: true }).click();
+  await field(page, ['packages', 'sample', 'plugin_data']).getByRole('button', { name: 'Show in JSON', exact: true }).click();
+  await expect(page.locator('.monaco-editor')).toBeVisible();
+  await expect(page.locator('.ce-json-highlight').first()).toBeVisible();
+  expect(JSON.parse(await downloadText(page))).toEqual(config);
+});
+
+for (const viewport of [{ width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1920, height: 1080 }]) {
+  test(`shows essential settings without pane scrolling at ${viewport.width}×${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const packages = Object.fromEntries(Array.from({ length: 55 }, (_, index) => {
+      const id = `repository-${index}`;
+      return [id, packageConfig(id)];
+    }));
+    await importConfig(page, configWithPackages(packages));
+    await selectPackage(page, 'repository-42');
+    const form = page.locator('#ce-form');
+    await expect.poll(() => form.evaluate((node) => node.scrollTop)).toBe(0);
+    const bounds = await form.boundingBox();
+    for (const path of [
+      ['packages', 'repository-42', 'settings', 'src'],
+      ['packages', 'repository-42', 'settings', 'dst'],
+      ['packages', 'repository-42', 'syncrate'],
+    ]) {
+      const box = await field(page, path).boundingBox();
+      expect(box.y).toBeGreaterThanOrEqual(bounds.y);
+      expect(box.y + box.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+      expect(box.x).toBeGreaterThanOrEqual(bounds.x);
+      expect(box.x + box.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+    }
+  });
+}
+
+test('closes package creation with Escape and returns focus to Add package', async ({ page }) => {
+  const add = page.getByRole('button', { name: 'Add package', exact: true });
+  await add.click();
+  const dialog = page.getByRole('dialog', { name: 'Add package', exact: true });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel('New package ID').fill('unfinished');
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await expect(add).toBeFocused();
+  expect(JSON.parse(await downloadText(page)).packages).toEqual({});
+});
+
+test('requires an explicit choice when JSON changes an unfinished form value', async ({ page }) => {
+  const config = configWithPackages({ sample: packageConfig('sample') });
+  await importConfig(page, config);
+  await selectPackage(page, 'sample');
+  const interval = field(page, ['packages', 'sample', 'syncrate']);
+  await interval.fill('-1');
+  await interval.press('Tab');
+  config.packages.sample.syncrate = 'PT12H';
+  await replaceEditorText(page, JSON.stringify(config, null, 2));
+  await expect(page.locator('#ce-draft-message')).toContainText('This value also changed in JSON');
+  await expect(interval).toHaveValue('-1');
+  await expect(page.getByRole('button', { name: 'Download config.json' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Discard input', exact: true }).click();
+  await expect(interval).toHaveValue('12');
+  expect(JSON.parse(await downloadText(page)).packages.sample.syncrate).toBe('PT12H');
+});
+
+test('repairing a draft to its original value clears errors without an extra undo step', async ({ page }) => {
+  await importConfig(page, configWithPackages({ sample: packageConfig('sample') }));
+  await selectPackage(page, 'sample');
+  await fillFormField(page, ['packages', 'sample', 'settings', 'src'], 'rsync://new.example.org/archive');
+  const interval = field(page, ['packages', 'sample', 'syncrate']);
+  await interval.fill('-1');
+  await interval.press('Tab');
+  await expect(page.getByRole('button', { name: 'Download config.json' })).toBeDisabled();
+  await interval.fill('6');
+  await interval.press('Tab');
+  await expect(page.getByRole('button', { name: 'Download config.json' })).toBeEnabled();
+  await expect(page.locator('#ce-draft-notice')).not.toBeVisible();
+  await page.locator('.monaco-editor textarea').first().focus();
+  await page.keyboard.press('ControlOrMeta+Z');
+  await expect(field(page, ['packages', 'sample', 'settings', 'src'])).toHaveValue('rsync://example.com/repository');
+  expect(JSON.parse(await downloadText(page)).packages.sample.syncrate).toBe('PT6H');
+});
+
+
+test('copies committed JSON while retaining an invalid form draft', async ({ page }) => {
+  const config = configWithPackages({ sample: packageConfig('sample') });
+  await importConfig(page, config);
+  await selectPackage(page, 'sample');
+  const interval = field(page, ['packages', 'sample', 'syncrate']);
+  await interval.fill('-1');
+  await interval.press('Tab');
+  await page.getByRole('button', { name: 'Copy JSON', exact: true }).click();
+  await expect(page.locator('#ce-notice')).toHaveText('JSON copied.');
+  expect(JSON.parse(await page.evaluate(() => navigator.clipboard.readText()))).toEqual(config);
+  await expect(interval).toHaveValue('-1');
+  await expect(page.getByRole('button', { name: 'Download config.json' })).toBeDisabled();
 });
