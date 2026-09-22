@@ -6,6 +6,8 @@ import mirror
 from mirror.sync import _watchdog_fired, _start_lock
 from mirror.command.daemon import _watchdog_check
 
+pytestmark = pytest.mark.usefixtures("mock_mirror_log")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,11 +46,6 @@ def _reset_watchdog_fired():
     yield
     with _start_lock:
         _watchdog_fired.clear()
-
-
-@pytest.fixture(autouse=True)
-def _mock_mirror_log(monkeypatch):
-    monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
 
 
 # ---------------------------------------------------------------------------

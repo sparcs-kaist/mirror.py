@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-RUN python -m pip install --no-cache-dir aioftp==0.23.1
+RUN python -m pip install --no-cache-dir aioftp==0.27.2
 
 COPY v1/ /srv/fixtures/v1/
 COPY v2/ /srv/fixtures/v2/

@@ -9,23 +9,9 @@ import mirror
 import mirror.config
 import mirror.logger
 import mirror.sync as sync_mod
-from mirror.sync import _start_lock, on_sync_done
+from mirror.sync import on_sync_done
 
-
-@pytest.fixture(autouse=True)
-def _mock_mirror_log(monkeypatch):
-    monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
-
-
-@pytest.fixture(autouse=True)
-def _clear_sync_state():
-    with _start_lock:
-        sync_mod._extra_args.clear()
-        sync_mod._watchdog_fired.clear()
-    yield
-    with _start_lock:
-        sync_mod._extra_args.clear()
-        sync_mod._watchdog_fired.clear()
+pytestmark = pytest.mark.usefixtures("clean_sync_state", "mock_mirror_log")
 
 
 def _make_pkg(pkgid: str = "pkgid"):

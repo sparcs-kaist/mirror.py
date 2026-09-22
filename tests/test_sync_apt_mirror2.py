@@ -109,7 +109,7 @@ def test_execute_delegates_static_worker_wrapper(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(mirror.socket.worker, "execute_command", execute_command)
     monkeypatch.setattr(mirror.sync, "get_extra_args", lambda pkgid: {"TOKEN": "value"})
     monkeypatch.setattr(mirror.sync, "on_sync_done", MagicMock())
-    mirror.conf = MagicMock(uid=123, gid=456)
+    monkeypatch.setattr(mirror, "conf", MagicMock(uid=123, gid=456), raising=False)
 
     mirror.sync.apt_mirror2.execute(package, logger)
 

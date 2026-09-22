@@ -5,19 +5,26 @@
 - Python 3.10 or later
 - Linux (the daemon relies on Unix domain sockets and Linux process management)
 
-## Installing from source
+## Installing a release
 
-mirror.py is not published to PyPI. Install it directly from the repository
-using [uv](https://github.com/astral-sh/uv).
+Releases are available on [PyPI](https://pypi.org/project/mirror.py/). Install
+into a Python environment using [uv](https://github.com/astral-sh/uv):
+
+```bash
+uv venv --python 3.10
+source .venv/bin/activate
+uv pip install mirror.py
+```
+
+## Installing from source
 
 **Development install (editable):**
 
 ```bash
 git clone https://github.com/sparcs-kaist/mirror.py.git
 cd mirror.py
-uv venv
+uv sync
 source .venv/bin/activate
-uv pip install -e .
 ```
 
 This registers the `mirror` CLI entry point in the virtual environment. Keep that
@@ -72,6 +79,7 @@ tools that correspond to the sync methods you intend to use.
 | `debmirror` | `debmirror` | Install separately; mirrors selected APT suites and architectures |
 | `apt-mirror2` | `apt-mirror` | Install the optional `apt-mirror2` extra |
 | `lftp` | `lftp` | Mirror via LFTP's mirror command |
+| `ubuntu` | `rsync` | Two-stage Ubuntu archive mirroring |
 | `jigdo` | `jigdo-mirror` | Required for Debian CD jigdo mirroring |
 | `bandersnatch` | `bandersnatch` | Included as a Python dependency; mirrors PyPI |
 | `local` | none | Registers existing local data; performs no copying |
@@ -98,7 +106,8 @@ Building the configuration editor also requires Node.js 22.12 or later and npm.
 See [Contributing](../contributing/index.md#building-documentation) for local preview
 and test commands.
 
-The default `dev` group installs pytest for running the unit test suite:
+The default `dev` group installs pytest and pytest-docker for running the unit
+and Docker integration suites:
 
 ```bash
 uv run pytest tests/

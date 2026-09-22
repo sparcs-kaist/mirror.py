@@ -16,26 +16,11 @@ import mirror.structure
 import mirror.sync
 from mirror.sync import on_sync_done, _extra_args, _watchdog_fired, _start_lock
 
-
-@pytest.fixture(autouse=True)
-def _stub_event(monkeypatch):
-    monkeypatch.setattr("mirror.event.post_event", lambda *a, **kw: None)
-
-
-@pytest.fixture(autouse=True)
-def _mock_mirror_log(monkeypatch):
-    monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
-
-
-@pytest.fixture(autouse=True)
-def _clear_sync_state():
-    with _start_lock:
-        _extra_args.clear()
-        _watchdog_fired.clear()
-    yield
-    with _start_lock:
-        _extra_args.clear()
-        _watchdog_fired.clear()
+pytestmark = pytest.mark.usefixtures(
+    "clean_sync_state",
+    "mock_mirror_log",
+    "stub_mirror_event",
+)
 
 
 def _make_package(status: str) -> mirror.structure.Package:

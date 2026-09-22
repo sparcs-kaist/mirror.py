@@ -1,4 +1,5 @@
 """Unit tests for the mirror.plugin two-phase loader."""
+from importlib.metadata import distribution
 import json
 import logging
 from pathlib import Path
@@ -26,52 +27,30 @@ from mirror.plugin import (
 from mirror.structure import PluginSettings
 
 
-# ---------------------------------------------------------------------------
-# Fixture: ensure clean built-in state before each test and restore after
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def _restore_registry():
-    """Reset to a clean built-in baseline before each test, then restore after.
-
-    test_example_config.py replaces mirror.sync.methods with a new list object
-    (line: mirror.sync.methods = ['local', 'ftpsync', 'rsync']), which means
-    any snapshot taken after that module runs would be incomplete. To guarantee
-    isolation, we always rebuild a clean baseline here.
-    """
-    # Build a known-good baseline regardless of earlier test pollution
-    mirror.plugin._registry.clear()
-    mirror.plugin._BUILTIN_NAMES.clear()
-    mirror.plugin._status_stat_hooks.clear()
-    mirror.plugin._status_web_hooks.clear()
-    mirror.sync.methods.clear()
-    load_builtin_plugins()
-
-    clean_registry = dict(mirror.plugin._registry)
-    clean_methods = list(mirror.sync.methods)
-    clean_builtins = set(mirror.plugin._BUILTIN_NAMES)
-
-    yield
-
-    mirror.plugin._registry.clear()
-    mirror.plugin._registry.update(clean_registry)
-    mirror.sync.methods[:] = clean_methods
-    mirror.plugin._BUILTIN_NAMES.clear()
-    mirror.plugin._BUILTIN_NAMES.update(clean_builtins)
-    mirror.plugin._status_stat_hooks.clear()
-    mirror.plugin._status_web_hooks.clear()
+pytestmark = pytest.mark.usefixtures("clean_plugin_registry")
 
 
 # ---------------------------------------------------------------------------
 # Built-in load
 # ---------------------------------------------------------------------------
 
-def test_all_five_builtins_registered():
+def test_all_builtins_registered():
     """Phase A must populate all nine built-in sync types."""
     expected = {"rsync", "ftpsync", "lftp", "bandersnatch", "local", "ubuntu", "jigdo", "debmirror", "apt-mirror2"}
     assert expected == set(mirror.sync.methods)
     for name in expected:
         assert name in mirror.plugin._registry, f"{name} missing from registry"
+
+
+def test_packaged_sync_entry_points_match_runtime_builtins():
+    """Every runtime built-in sync method must be shipped as an entry point."""
+    packaged = {
+        entry_point.name
+        for entry_point in distribution("mirror.py").entry_points
+        if entry_point.group == "mirror.sync"
+    }
+
+    assert packaged == set(mirror.sync.methods)
 
 
 def test_builtin_names_set_populated():

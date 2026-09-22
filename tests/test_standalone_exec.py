@@ -20,9 +20,7 @@ from mirror.sync import set_standalone_mode, get_standalone_result
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(autouse=True)
-def _mock_mirror_log(monkeypatch):
-    monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
+pytestmark = pytest.mark.usefixtures("mock_mirror_log")
 
 
 @pytest.fixture(autouse=True)

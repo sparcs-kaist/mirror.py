@@ -7,7 +7,7 @@ export default defineConfig({
     outDir: '../_static/config-editor',
     emptyOutDir: true,
     cssCodeSplit: false,
-    rollupOptions: {
+    rolldownOptions: {
       input: fileURLToPath(new URL('./src/editor.js', import.meta.url)),
       output: {
         entryFileNames: 'editor.js',

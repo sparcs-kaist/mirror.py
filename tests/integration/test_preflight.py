@@ -11,7 +11,6 @@ import pytest
 
 
 @pytest.mark.integration
-@pytest.mark.dependency(name="ftpsync_preflight")
 def test_ftpsync_preflight_archvsync_runs(mirror_stack):
     """Sanity-check: archvsync's ftpsync exits 0 against our minimal Debian archive fixture.
 

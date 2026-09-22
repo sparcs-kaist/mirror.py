@@ -11,26 +11,7 @@ import mirror.structure
 import mirror.sync
 from mirror.sync import on_sync_done, _extra_args, _watchdog_fired, _start_lock
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def _mock_mirror_log(monkeypatch):
-    monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
-
-
-@pytest.fixture(autouse=True)
-def _clear_sync_state():
-    """Clean _extra_args / _watchdog_fired before and after each test."""
-    with _start_lock:
-        _extra_args.clear()
-        _watchdog_fired.clear()
-    yield
-    with _start_lock:
-        _extra_args.clear()
-        _watchdog_fired.clear()
+pytestmark = pytest.mark.usefixtures("clean_sync_state", "mock_mirror_log")
 
 
 @pytest.fixture()

@@ -1,7 +1,7 @@
 """Entry-points based plug-in framework for mirror.py.
 
 Loading splits into two phases:
-  Phase A (load_builtin_plugins): imports and registers the five built-in sync
+  Phase A (load_builtin_plugins): imports and registers the built-in sync
     modules at package-import time so mirror.sync.methods is populated before
     package validation runs.
   Phase B (load_external_plugins): called from mirror.config.load() after the
@@ -598,9 +598,9 @@ _REGISTER_DISPATCH: dict[str, Callable[[PluginRecord], None]] = {
 # ---------------------------------------------------------------------------
 
 def load_builtin_plugins() -> None:
-    """Phase A: import and register all five built-in sync plug-ins.
+    """Phase A: import and register all built-in sync plug-ins.
 
-    Hard-codes the five canonical sync module references so that
+    Hard-codes the canonical sync module references so that
     mirror.sync.methods is fully populated before package validation runs.
     ImportError for any individual module is logged as a warning and skipped;
     a successful import that yields a malformed PluginRecord raises immediately

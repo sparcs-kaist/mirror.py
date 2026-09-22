@@ -13,86 +13,15 @@ import mirror.structure
 import mirror.sync
 
 
-# ---------------------------------------------------------------------------
-# Config builder helpers (same shape as the other reload test files)
-# ---------------------------------------------------------------------------
-
-def _make_settings(tmp_path: Path) -> dict:
-    return {
-        "logfolder": str(tmp_path / "logs"),
-        "webroot": str(tmp_path / "web"),
-        "statusfile": str(tmp_path / "status.json"),
-        "statfile": str(tmp_path / "stat.json"),
-        "socket_path": str(tmp_path / "mirror.sock"),
-        "uid": 1000,
-        "gid": 1000,
-        "localtimezone": "UTC",
-        "errorcontinuetime": 60,
-        "maintainer": {"name": "Test", "email": "t@t.com"},
-        "logger": {
-            "level": "INFO",
-            "packagelevel": "ERROR",
-            "format": "[%(asctime)s] %(levelname)s # %(message)s",
-            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
-            "fileformat": {
-                "base": str(tmp_path / "logs"),
-                "folder": "{year}/{month}",
-                "filename": "{year}-{month}-{day}.log",
-                "gzip": False,
-            },
-            "packagefileformat": {
-                "base": str(tmp_path / "logs" / "packages"),
-                "folder": "{year}/{month}/{day}",
-                "filename": "{packageid}.{hour}.log",
-                "gzip": False,
-            },
-        },
-        "ftpsync": {
-            "maintainer": "M",
-            "sponsor": "S",
-            "country": "KR",
-            "location": "Seoul",
-            "throughput": "1G",
-        },
-        "plugins": [],
-    }
-
-
-def _make_pkg_entry(pkgid: str) -> dict:
-    return {
-        "id": pkgid,
-        "name": pkgid,
-        "href": f"/{pkgid}",
-        "synctype": "rsync",
-        "syncrate": "PT1H",
-        "link": [],
-        "settings": {
-            "hidden": False,
-            "src": "rsync://src/a",
-            "dst": "/tmp/" + pkgid,
-            "options": {},
-        },
-    }
-
-
-def _valid_config(tmp_path: Path) -> dict:
-    return {
-        "mirrorname": "TestMirror",
-        "hostname": "test.local",
-        "settings": _make_settings(tmp_path),
-        "packages": {"pkg-lock": _make_pkg_entry("pkg-lock")},
-    }
-
-
 @pytest.fixture()
-def lock_env(tmp_path, monkeypatch):
+def lock_env(tmp_path, monkeypatch, reload_config_factory, reload_package_factory):
     """Set up mirror.config globals with a known package for lock tests."""
     config_path = tmp_path / "config.json"
     stat_path = tmp_path / "stat.json"
     status_path = tmp_path / "status.json"
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
-    initial_cfg = _valid_config(tmp_path)
+    initial_cfg = reload_config_factory(tmp_path, default_pkgid="pkg-lock")
     config_path.write_text(json.dumps(initial_cfg))
     stat_path.write_text(json.dumps({"packages": {}}))
     status_path.write_text(json.dumps({}))
@@ -107,7 +36,7 @@ def lock_env(tmp_path, monkeypatch):
     mirror.packages = mirror.structure.Packages(
         {
             "pkg-lock": {
-                **_make_pkg_entry("pkg-lock"),
+                **reload_package_factory("pkg-lock"),
                 "status": {"status": "UNKNOWN", "statusinfo": {"errorcount": 0, "lastsync": 0.0}},
             }
         }
@@ -187,7 +116,11 @@ def test_save_stat_data_serializes_with_reload_lock(lock_env):
 # Test 2: _perform_reload and on_sync_done are serialized by _reload_state_lock
 # ---------------------------------------------------------------------------
 
-def test_perform_reload_and_on_sync_done_are_serialized(lock_env, monkeypatch):
+def test_perform_reload_and_on_sync_done_are_serialized(
+    lock_env,
+    monkeypatch,
+    reload_config_factory,
+):
     """on_sync_done blocks while _reload_state_lock is held inside _perform_reload."""
     # We intercept the lock acquisition inside _load_from_dict to pause mid-reload
     # and measure that on_sync_done blocks for that duration.
@@ -218,7 +151,7 @@ def test_perform_reload_and_on_sync_done_are_serialized(lock_env, monkeypatch):
 
     # Write a valid (no-change) config so _perform_reload reaches _load_from_dict.
     env = lock_env
-    new_cfg = _valid_config(env["tmp_path"])
+    new_cfg = reload_config_factory(env["tmp_path"], default_pkgid="pkg-lock")
     env["config_path"].write_text(json.dumps(new_cfg))
 
     # Set up on_sync_done with an empty packages (simulating unknown pkg).

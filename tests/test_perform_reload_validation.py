@@ -12,89 +12,18 @@ import mirror.sync
 
 
 # ---------------------------------------------------------------------------
-# Config builder helpers (same shape as test_perform_reload_diff.py)
-# ---------------------------------------------------------------------------
-
-def _make_settings(tmp_path: Path) -> dict:
-    return {
-        "logfolder": str(tmp_path / "logs"),
-        "webroot": str(tmp_path / "web"),
-        "statusfile": str(tmp_path / "status.json"),
-        "statfile": str(tmp_path / "stat.json"),
-        "socket_path": str(tmp_path / "mirror.sock"),
-        "uid": 1000,
-        "gid": 1000,
-        "localtimezone": "UTC",
-        "errorcontinuetime": 60,
-        "maintainer": {"name": "Test", "email": "t@t.com"},
-        "logger": {
-            "level": "INFO",
-            "packagelevel": "ERROR",
-            "format": "[%(asctime)s] %(levelname)s # %(message)s",
-            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
-            "fileformat": {
-                "base": str(tmp_path / "logs"),
-                "folder": "{year}/{month}",
-                "filename": "{year}-{month}-{day}.log",
-                "gzip": False,
-            },
-            "packagefileformat": {
-                "base": str(tmp_path / "logs" / "packages"),
-                "folder": "{year}/{month}/{day}",
-                "filename": "{packageid}.{hour}.log",
-                "gzip": False,
-            },
-        },
-        "ftpsync": {
-            "maintainer": "M",
-            "sponsor": "S",
-            "country": "KR",
-            "location": "Seoul",
-            "throughput": "1G",
-        },
-        "plugins": [],
-    }
-
-
-def _make_valid_pkg(pkgid: str) -> dict:
-    return {
-        "id": pkgid,
-        "name": pkgid,
-        "href": f"/{pkgid}",
-        "synctype": "rsync",
-        "syncrate": "PT1H",
-        "link": [],
-        "settings": {
-            "hidden": False,
-            "src": "rsync://src/a",
-            "dst": "/tmp/" + pkgid,
-            "options": {},
-        },
-    }
-
-
-def _valid_config(tmp_path: Path, packages: dict | None = None) -> dict:
-    return {
-        "mirrorname": "TestMirror",
-        "hostname": "test.local",
-        "settings": _make_settings(tmp_path),
-        "packages": packages or {"pkg-alpha": _make_valid_pkg("pkg-alpha")},
-    }
-
-
-# ---------------------------------------------------------------------------
 # Per-test fixture
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def val_env(tmp_path, monkeypatch):
+def val_env(tmp_path, monkeypatch, reload_config_factory, reload_package_factory):
     """Seed mirror.config globals with a single known package and clean paths."""
     config_path = tmp_path / "config.json"
     stat_path = tmp_path / "stat.json"
     status_path = tmp_path / "status.json"
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
-    initial_cfg = _valid_config(tmp_path)
+    initial_cfg = reload_config_factory(tmp_path)
     config_path.write_text(json.dumps(initial_cfg))
     stat_path.write_text(json.dumps({"packages": {}}))
     status_path.write_text(json.dumps({}))
@@ -109,7 +38,7 @@ def val_env(tmp_path, monkeypatch):
     mirror.packages = mirror.structure.Packages(
         {
             "pkg-alpha": {
-                **_make_valid_pkg("pkg-alpha"),
+                **reload_package_factory("pkg-alpha"),
                 "status": {"status": "UNKNOWN", "statusinfo": {"errorcount": 0, "lastsync": 0.0}},
             }
         }
@@ -160,7 +89,10 @@ def test_perform_reload_malformed_json_returns_error(val_env):
 # Test 2: valid JSON but missing "settings" key → error, no state change
 # ---------------------------------------------------------------------------
 
-def test_perform_reload_missing_settings_block_returns_error(val_env):
+def test_perform_reload_missing_settings_block_returns_error(
+    val_env,
+    reload_package_factory,
+):
     """Config missing 'settings' dict → error, state unchanged."""
     config_path: Path = val_env["config_path"]
     stat_path: Path = val_env["stat_path"]
@@ -171,7 +103,7 @@ def test_perform_reload_missing_settings_block_returns_error(val_env):
     bad_cfg = {
         "mirrorname": "TestMirror",
         # "settings" is intentionally absent.
-        "packages": {"pkg-alpha": _make_valid_pkg("pkg-alpha")},
+        "packages": {"pkg-alpha": reload_package_factory("pkg-alpha")},
     }
     config_path.write_text(json.dumps(bad_cfg))
 
@@ -189,7 +121,11 @@ def test_perform_reload_missing_settings_block_returns_error(val_env):
 # ---------------------------------------------------------------------------
 
 
-def test_perform_reload_invalid_pkgid_returns_error(val_env):
+def test_perform_reload_invalid_pkgid_returns_error(
+    val_env,
+    reload_config_factory,
+    reload_package_factory,
+):
     """Config with a reserved pkgid (starts with '_') → error, state unchanged."""
     config_path: Path = val_env["config_path"]
     stat_path: Path = val_env["stat_path"]
@@ -197,9 +133,9 @@ def test_perform_reload_invalid_pkgid_returns_error(val_env):
     pkg_keys_before = list(mirror.packages.keys())
     stat_before = stat_path.read_text()
 
-    bad_cfg = _valid_config(
+    bad_cfg = reload_config_factory(
         val_env["tmp_path"],
-        packages={"_priv": _make_valid_pkg("_priv")},
+        packages={"_priv": reload_package_factory("_priv")},
     )
     # _priv starts with '_' → Packages._validate_id will reject it.
     bad_cfg["packages"]["_priv"]["id"] = "_priv"
@@ -218,7 +154,11 @@ def test_perform_reload_invalid_pkgid_returns_error(val_env):
 # Test 4: invalid synctype → error, stat file byte-identical (no write)
 # ---------------------------------------------------------------------------
 
-def test_perform_reload_invalid_synctype_no_state_change(val_env):
+def test_perform_reload_invalid_synctype_no_state_change(
+    val_env,
+    reload_config_factory,
+    reload_package_factory,
+):
     """Config with an invalid synctype → error returned, packages and stat unchanged."""
     config_path: Path = val_env["config_path"]
     stat_path: Path = val_env["stat_path"]
@@ -229,10 +169,10 @@ def test_perform_reload_invalid_synctype_no_state_change(val_env):
     }
     stat_before = stat_path.read_bytes()
 
-    bad_pkg = _make_valid_pkg("pkg-bad")
+    bad_pkg = reload_package_factory("pkg-bad")
     bad_pkg["synctype"] = "nonexistent_method"
 
-    bad_cfg = _valid_config(
+    bad_cfg = reload_config_factory(
         val_env["tmp_path"],
         packages={"pkg-bad": bad_pkg},
     )

@@ -1,8 +1,6 @@
 """End-to-end apt-mirror2 tests against signed flat and Debian repositories."""
 
-import gzip
 import json
-import subprocess
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,22 +9,18 @@ from typing import Any
 
 import pytest
 
+from .helpers import (
+    MIRROR_CONTAINER,
+    latest_package_log_text,
+    run_fixture_python,
+    write_container_config,
+)
+
 
 PACKAGE_ID = "apt-mirror2-test"
 FIXTURE_CONTAINER = "apt-fixture"
 FIXTURE_PATH = Path(__file__).parent / "docker" / "apt-fixture"
 FLAT_REPOSITORIES = ("sourceonly", "ubuntu2404", "ubuntu2604")
-
-
-def _run_fixture_python(script: str, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run a bounded Python mutation inside the apt-mirror2 fixture."""
-    return subprocess.run(
-        ["docker", "exec", FIXTURE_CONTAINER, "python", "-c", script, *args],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
 
 
 def _replace_fixture(version: str) -> None:
@@ -42,7 +36,7 @@ for name in sys.argv[2:]:
     shutil.rmtree(target / name, ignore_errors=True)
     shutil.copytree(root / name, target / name)
 """
-    _run_fixture_python(script, version, *FLAT_REPOSITORIES)
+    run_fixture_python(FIXTURE_CONTAINER, script, version, *FLAT_REPOSITORIES)
 
 
 def _corrupt_payload(relative: str) -> None:
@@ -53,7 +47,7 @@ def _corrupt_payload(relative: str) -> None:
         "data = path.read_bytes(); "
         "path.write_bytes(b'X' * len(data))"
     )
-    _run_fixture_python(script, relative)
+    run_fixture_python(FIXTURE_CONTAINER, script, relative)
 
 
 def _wait_for_completion(
@@ -77,29 +71,6 @@ def _wait_for_completion(
     )
 
 
-def _latest_log_text(mirror_stack: Any) -> str:
-    """Read the newest completed package log."""
-    logs = mirror_stack.read_package_log_dir(PACKAGE_ID)
-    assert logs, f"No package logs found for {PACKAGE_ID}"
-    latest = logs[-1]
-    if latest.suffix == ".gz":
-        with gzip.open(latest, "rt", errors="replace") as stream:
-            return stream.read()
-    return latest.read_text(errors="replace")
-
-
-def _write_container_config(config_text: str) -> None:
-    """Replace the integration config inside the mirror container."""
-    result = subprocess.run(
-        ["docker", "exec", "-i", "mirror", "tee", "/etc/mirror/config.json"],
-        input=config_text,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"Failed to write config.json: {result.stderr!r}"
-
-
 @contextmanager
 def _package_options(mirror_stack: Any, options: dict[str, Any]) -> Iterator[None]:
     """Apply temporary apt-mirror2 options through the production reload path."""
@@ -107,7 +78,7 @@ def _package_options(mirror_stack: Any, options: dict[str, Any]) -> Iterator[Non
     original = result.stdout
     config = json.loads(original)
     config["packages"][PACKAGE_ID]["settings"]["options"] = options
-    _write_container_config(json.dumps(config, indent=2))
+    write_container_config(MIRROR_CONTAINER, json.dumps(config, indent=2))
     reload_result = mirror_stack.docker_exec("mirror", "config", "reload", check=False)
     assert reload_result.returncode == 0, (
         f"Failed to reload temporary apt-mirror2 options: {reload_result.stderr!r}"
@@ -115,7 +86,7 @@ def _package_options(mirror_stack: Any, options: dict[str, Any]) -> Iterator[Non
     try:
         yield
     finally:
-        _write_container_config(original)
+        write_container_config(MIRROR_CONTAINER, original)
         reload_result = mirror_stack.docker_exec("mirror", "config", "reload", check=False)
         assert reload_result.returncode == 0, (
             f"Failed to restore apt-mirror2 options: {reload_result.stderr!r}"
@@ -264,7 +235,9 @@ def test_repository_key_isolation_failure_preserves_existing_mirror(
         )
         assert mirror_stack.package_errorcount(PACKAGE_ID) > previous_errorcount
         assert preserved.read_bytes() == preserved_bytes
-        assert "Release signature verification failed" in _latest_log_text(mirror_stack)
+        assert "Release signature verification failed" in latest_package_log_text(
+            mirror_stack, PACKAGE_ID
+        )
 
     mirror_stack.trigger_sync(PACKAGE_ID)
     _wait_for_completion(mirror_stack, failed_lastsync, "ACTIVE")
@@ -291,7 +264,7 @@ def test_payload_hash_failure_skips_metadata_publish_and_cleanup(
 
     assert (destination / "Packages").read_bytes() == previous_packages
     assert previous_payload.read_bytes() == previous_payload_bytes
-    log = _latest_log_text(mirror_stack)
+    log = latest_package_log_text(mirror_stack, PACKAGE_ID)
     assert "HashMismatchException" in log
     assert "Repository cleanup skipped because of download errors" in log
     assert "Metadata movement skipped because of download errors" in log

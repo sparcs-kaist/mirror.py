@@ -1,5 +1,6 @@
 """Integration test helpers for mirror.py docker-based test suite."""
 
+import gzip
 import json
 import subprocess
 import time
@@ -377,3 +378,63 @@ def make_minimal_config(packages: dict) -> dict:
         },
         "packages": packages,
     }
+
+
+def run_fixture_python(
+    container: str,
+    script: str,
+    *args: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run a bounded Python mutation inside a fixture container.
+
+    Args:
+        container(str): Fixture container name.
+        script(str): Python source passed to ``python -c``.
+        *args(str): Positional arguments exposed to the script through ``sys.argv``.
+
+    Return:
+        result(subprocess.CompletedProcess): Completed Docker command.
+    """
+    return subprocess.run(
+        ["docker", "exec", container, "python", "-c", script, *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def latest_package_log_text(mirror_stack: MirrorStack, package_id: str) -> str:
+    """Read the newest completed log for a package.
+
+    Args:
+        mirror_stack(MirrorStack): Running integration stack.
+        package_id(str): Package identifier used to select logs.
+
+    Return:
+        text(str): Uncompressed package log contents.
+    """
+    logs = mirror_stack.read_package_log_dir(package_id)
+    assert logs, f"No package logs found for {package_id}"
+    latest = logs[-1]
+    if latest.suffix == ".gz":
+        with gzip.open(latest, "rt", errors="replace") as stream:
+            return stream.read()
+    return latest.read_text(errors="replace")
+
+
+def write_container_config(container: str, config_text: str) -> None:
+    """Replace the integration config inside a container.
+
+    Args:
+        container(str): Container whose config should be replaced.
+        config_text(str): Complete JSON config contents.
+    """
+    result = subprocess.run(
+        ["docker", "exec", "-i", container, "tee", "/etc/mirror/config.json"],
+        input=config_text,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"Failed to write config.json: {result.stderr!r}"

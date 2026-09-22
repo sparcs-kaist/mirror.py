@@ -756,6 +756,23 @@ class TestMasterPushSync:
                 server.stop()
 
 
+def test_json_transport_round_trip_preserves_mapping():
+    """The protocol sends and receives nested JSON mappings without coercion."""
+    sender, receiver = _protocol_module.socket.socketpair()
+    payload = {
+        "command": "sync",
+        "kwargs": {"packages": ["debian", "한글"], "force": True},
+        "request_id": "request-1",
+    }
+
+    try:
+        _protocol_module.send_message(sender, payload)
+        assert _protocol_module.recv_message(receiver, timeout=1.0) == payload
+    finally:
+        sender.close()
+        receiver.close()
+
+
 def test_recv_message_handles_fragmented_header(tmp_path):
     """recv_message must reassemble headers split across multiple recv() calls."""
     import socket as _socket
@@ -796,6 +813,50 @@ def test_recv_message_handles_fragmented_header(tmp_path):
     server.close()
 
     assert received["msg"] == {"hello": "world"}
+
+
+def test_recv_message_handles_fragmented_body():
+    """recv_message must reassemble a JSON body split across recv() calls."""
+    import struct
+
+    sender, receiver = _protocol_module.socket.socketpair()
+    body = b'{"hello":"fragmented body"}'
+
+    def _send_fragments():
+        sender.sendall(struct.pack(">I", len(body)) + body[:5])
+        time.sleep(0.05)
+        sender.sendall(body[5:])
+
+    thread = threading.Thread(target=_send_fragments, daemon=True)
+    thread.start()
+    try:
+        assert _protocol_module.recv_message(receiver, timeout=1.0) == {
+            "hello": "fragmented body"
+        }
+    finally:
+        thread.join(timeout=1.0)
+        sender.close()
+        receiver.close()
+
+
+@pytest.mark.parametrize(
+    ("wire_data", "message"),
+    [
+        (b"\x00\x00", "header"),
+        (b"\x00\x00\x00\x0a{}", "message"),
+    ],
+)
+def test_recv_message_reports_connection_closed_mid_frame(wire_data, message):
+    """A peer close during either frame section raises a useful error."""
+    sender, receiver = _protocol_module.socket.socketpair()
+    sender.sendall(wire_data)
+    sender.close()
+
+    try:
+        with pytest.raises(ConnectionError, match=message):
+            _protocol_module.recv_message(receiver, timeout=1.0)
+    finally:
+        receiver.close()
 
 
 def test_send_command_serialized_under_concurrent_callers(tmp_path):

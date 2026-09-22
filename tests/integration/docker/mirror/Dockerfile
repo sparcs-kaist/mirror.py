@@ -6,11 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rsync lftp debmirror gnupg jigdo-file wget gzip grep git ca-certificates curl procps \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir bandersnatch==6.5.0
-RUN python3 -m pip install --no-cache-dir apt-mirror==16
-
 COPY dist/mirror_py-*.whl /tmp/
-RUN python3 -m pip install --no-cache-dir /tmp/mirror_py-*.whl
+RUN for wheel in /tmp/mirror_py-*.whl; do python3 -m pip install --no-cache-dir "$wheel[apt-mirror2]"; done
 
 RUN mirror setup
 

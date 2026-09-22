@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import os
 import sys
 import logging
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -14,18 +15,39 @@ import mirror
 import mirror.sync
 import mirror.structure
 
+
+def test_bandersnatch_cli_loads_with_installed_dependencies():
+    """The bundled bandersnatch version must load its runtime dependencies."""
+    result = subprocess.run(
+        [sys.executable, "-m", "bandersnatch", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "mirror" in result.stdout
+
+
 class TestSyncWorkerDelegation(unittest.TestCase):
     def setUp(self):
         # Resync mirror submodule attributes with sys.modules in case a prior
         # test replaced them (e.g. test_socket.py's _load_module pattern)
         import mirror.socket
-        mirror.sync = sys.modules["mirror.sync"]
-        mirror.socket.worker = sys.modules["mirror.socket.worker"]
+        sync_module = patch.object(mirror, "sync", sys.modules["mirror.sync"])
+        sync_module.start()
+        self.addCleanup(sync_module.stop)
+        worker_module = patch.object(
+            mirror.socket, "worker", sys.modules["mirror.socket.worker"]
+        )
+        worker_module.start()
+        self.addCleanup(worker_module.stop)
 
         # Mock default settings
-        mirror.log = MagicMock()
-        mirror.packages = {}
-        mirror.conf = MagicMock()
+        runtime = patch.multiple(
+            mirror, log=MagicMock(), packages={}, conf=MagicMock(), create=True
+        )
+        runtime.start()
+        self.addCleanup(runtime.stop)
         mirror.conf.uid = 1234
         mirror.conf.gid = 5678
         mirror.conf.logfolder = Path("/tmp/mirror-ftpsync")
@@ -442,7 +464,8 @@ class TestRsyncOptions(unittest.TestCase):
         mock_execute_command.return_value = {}
 
         import mirror.sync.rsync as rsync_module
-        rsync_module.execute(pkg, pkg_logger)
+        with patch.object(mirror, "conf", MagicMock(uid=1234, gid=5678), create=True):
+            rsync_module.execute(pkg, pkg_logger)
 
         mock_execute_command.assert_called_once()
         cmd = mock_execute_command.call_args[1]["commandline"]
@@ -548,12 +571,20 @@ class TestFtpsyncInfoTrigger(unittest.TestCase):
 class TestFtpsyncTriggerDelegation(unittest.TestCase):
     def setUp(self):
         import mirror.socket
-        mirror.sync = sys.modules["mirror.sync"]
-        mirror.socket.worker = sys.modules["mirror.socket.worker"]
+        sync_module = patch.object(mirror, "sync", sys.modules["mirror.sync"])
+        sync_module.start()
+        self.addCleanup(sync_module.stop)
+        worker_module = patch.object(
+            mirror.socket, "worker", sys.modules["mirror.socket.worker"]
+        )
+        worker_module.start()
+        self.addCleanup(worker_module.stop)
 
-        mirror.log = MagicMock()
-        mirror.packages = {}
-        mirror.conf = MagicMock()
+        runtime = patch.multiple(
+            mirror, log=MagicMock(), packages={}, conf=MagicMock(), create=True
+        )
+        runtime.start()
+        self.addCleanup(runtime.stop)
         mirror.conf.uid = 1234
         mirror.conf.gid = 5678
 

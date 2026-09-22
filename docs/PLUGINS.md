@@ -8,7 +8,7 @@ If you have written pytest, Sphinx, or Celery plug-ins before, the model will fe
 
 | Category | Entry-point group | What it does | Example use case |
 |---|---|---|---|
-| `sync` | `mirror.sync` | Implements a new synctype (in addition to built-in `rsync`, `ftpsync`, `lftp`, `bandersnatch`, `local`) | Mirror via SFTP, S3, custom HTTP transport |
+| `sync` | `mirror.sync` | Implements a new synctype (in addition to built-in `rsync`, `ftpsync`, `lftp`, `bandersnatch`, `local`, `ubuntu`, `jigdo`, `debmirror`, `apt-mirror2`) | Mirror via SFTP, S3, custom HTTP transport |
 | `event` | `mirror.event` | Subscribes to mirror events to perform side effects | Slack/email notification on sync failure, push metrics to Prometheus, custom audit log |
 | `status` | `mirror.status` | Contributes extra fields into `stat.json` and the web status JSON | Bandwidth-used counter, freshness classification, mirror health rollup |
 
@@ -38,7 +38,7 @@ dependencies = ["mirror.py>=1.0.0rc10"]
 echo = "mirror_plugin_echo:plugin"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=84"]
 build-backend = "setuptools.build_meta"
 ```
 
@@ -368,7 +368,7 @@ The `plugins` value under `settings` is an enable-only map of `name -> {enabled:
 ```
 
 A plug-in absent from the map defaults to `enabled: true`. Setting `enabled: false`
-for a built-in (`rsync`, `ftpsync`, `lftp`, `bandersnatch`, `local`) prunes it from
+for a built-in (`rsync`, `ftpsync`, `lftp`, `bandersnatch`, `local`, `ubuntu`, `jigdo`, `debmirror`, `apt-mirror2`) prunes it from
 `mirror.sync.methods`; subsequent package validation rejects packages that still
 reference that synctype with `ValueError("Sync type not in [...]")`.
 
@@ -395,7 +395,7 @@ The legacy list-of-strings shape (`"plugins": ["/path/to/plugin.py", ...]`) used
 
 Plug-in registration happens in two phases:
 
-1. **Phase A — built-ins, at package import time.** `mirror/__init__.py` calls `mirror.plugin.load_builtin_plugins()`, which registers all five canonical synctypes (`rsync`, `ftpsync`, `lftp`, `bandersnatch`, `local`). These are hard-coded in `pyproject.toml` under the `mirror.sync` entry-point group.
+1. **Phase A — built-ins, at package import time.** `mirror/__init__.py` calls `mirror.plugin.load_builtin_plugins()`, which registers all nine built-in synctypes (`rsync`, `ftpsync`, `lftp`, `bandersnatch`, `local`, `ubuntu`, `jigdo`, `debmirror`, `apt-mirror2`). The module references are declared in `mirror.plugin._BUILTIN_ENTRY_POINTS` and published in `pyproject.toml` under the `mirror.sync` entry-point group.
 
 2. **Phase B — externals + disable, inside `mirror.config.load()`.** After `Config.load_from_dict` parses the raw config but before `Packages` validates each package's synctype, the loader:
    1. Removes built-ins that the operator disabled in config.

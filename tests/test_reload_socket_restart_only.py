@@ -20,49 +20,6 @@ import mirror.sync
 # Config builder helpers (mirrors test_perform_reload_diff.py style)
 # ---------------------------------------------------------------------------
 
-def _make_settings(tmp_path: Path, **overrides) -> dict:
-    base = {
-        "logfolder": str(tmp_path / "logs"),
-        "webroot": str(tmp_path / "web"),
-        "statusfile": str(tmp_path / "status.json"),
-        "statfile": str(tmp_path / "stat.json"),
-        "socket_path": str(tmp_path / "mirror.sock"),
-        "uid": 1000,
-        "gid": 1000,
-        "localtimezone": "UTC",
-        "errorcontinuetime": 60,
-        "maintainer": {"name": "Test", "email": "t@t.com"},
-        "logger": {
-            "level": "INFO",
-            "packagelevel": "ERROR",
-            "format": "[%(asctime)s] %(levelname)s # %(message)s",
-            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
-            "fileformat": {
-                "base": str(tmp_path / "logs"),
-                "folder": "{year}/{month}",
-                "filename": "{year}-{month}-{day}.log",
-                "gzip": False,
-            },
-            "packagefileformat": {
-                "base": str(tmp_path / "logs" / "packages"),
-                "folder": "{year}/{month}/{day}",
-                "filename": "{packageid}.{hour}.log",
-                "gzip": False,
-            },
-        },
-        "ftpsync": {
-            "maintainer": "M",
-            "sponsor": "S",
-            "country": "KR",
-            "location": "Seoul",
-            "throughput": "1G",
-        },
-        "plugins": [],
-    }
-    base.update(overrides)
-    return base
-
-
 def _make_pkg_entry(pkgid: str) -> dict:
     return {
         "id": pkgid,
@@ -80,16 +37,25 @@ def _make_pkg_entry(pkgid: str) -> dict:
     }
 
 
-def _make_config(tmp_path: Path, packages: dict, socket: dict | None = None, **settings_overrides) -> dict:
-    settings = _make_settings(tmp_path, **settings_overrides)
-    if socket is not None:
-        settings["socket"] = socket
-    return {
-        "mirrorname": "TestMirror",
-        "hostname": "test.local",
-        "settings": settings,
-        "packages": packages,
-    }
+@pytest.fixture
+def make_config(reload_settings_factory):
+    def build_config(
+        tmp_path: Path,
+        packages: dict,
+        socket: dict | None = None,
+        **settings_overrides,
+    ) -> dict:
+        settings = reload_settings_factory(tmp_path, **settings_overrides)
+        if socket is not None:
+            settings["socket"] = socket
+        return {
+            "mirrorname": "TestMirror",
+            "hostname": "test.local",
+            "settings": settings,
+            "packages": packages,
+        }
+
+    return build_config
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +63,7 @@ def _make_config(tmp_path: Path, packages: dict, socket: dict | None = None, **s
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def socket_env(tmp_path, monkeypatch):
+def socket_env(tmp_path, monkeypatch, make_config):
     """Initialize mirror state with a config that has a socket block."""
     import sys as _sys
     _real_toolbox = _sys.modules["mirror.toolbox"]
@@ -110,7 +76,7 @@ def socket_env(tmp_path, monkeypatch):
 
     initial_socket = {"gid": 1000, "mode": "0770"}
     initial_pkgs = {"pkg-one": _make_pkg_entry("pkg-one")}
-    initial_cfg = _make_config(tmp_path, initial_pkgs, socket=initial_socket)
+    initial_cfg = make_config(tmp_path, initial_pkgs, socket=initial_socket)
 
     config_path.write_text(json.dumps(initial_cfg))
     stat_path.write_text(json.dumps({"packages": {}}))
@@ -142,6 +108,7 @@ def socket_env(tmp_path, monkeypatch):
         "stat_path": stat_path,
         "initial_pkgs": initial_pkgs,
         "initial_socket": initial_socket,
+        "make_config": make_config,
     }
 
     with mirror.sync._start_lock:
@@ -165,7 +132,7 @@ def test_reload_socket_change_warns_and_keeps_current(socket_env):
     assert mirror.conf.socket.mode == 0o770
 
     # Rewrite config with a different socket block.
-    new_cfg = _make_config(
+    new_cfg = socket_env["make_config"](
         tmp_path,
         initial_pkgs,
         socket={"gid": 2000, "mode": "0750"},
@@ -195,7 +162,7 @@ def test_reload_same_socket_no_warning(socket_env):
     initial_pkgs = socket_env["initial_pkgs"]
 
     # Write the same socket settings that are already live.
-    new_cfg = _make_config(
+    new_cfg = socket_env["make_config"](
         tmp_path,
         initial_pkgs,
         socket={"gid": 1000, "mode": "0770"},

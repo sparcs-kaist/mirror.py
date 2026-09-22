@@ -4,33 +4,8 @@ import pytest
 import mirror
 import mirror.sync
 import mirror.plugin
-from mirror.plugin import load_builtin_plugins
 
-
-@pytest.fixture(autouse=True)
-def _ensure_builtins_loaded():
-    """Guarantee all six built-ins are registered before each test.
-
-    test_example_config.py replaces mirror.sync.methods with a truncated list,
-    so we always rebuild from scratch here rather than relying on whatever state
-    earlier tests left behind.
-    """
-    mirror.plugin._registry.clear()
-    mirror.plugin._BUILTIN_NAMES.clear()
-    mirror.sync.methods.clear()
-    load_builtin_plugins()
-
-    orig_registry = dict(mirror.plugin._registry)
-    orig_methods = list(mirror.sync.methods)
-    orig_builtins = set(mirror.plugin._BUILTIN_NAMES)
-
-    yield
-
-    mirror.plugin._registry.clear()
-    mirror.plugin._registry.update(orig_registry)
-    mirror.sync.methods[:] = orig_methods
-    mirror.plugin._BUILTIN_NAMES.clear()
-    mirror.plugin._BUILTIN_NAMES.update(orig_builtins)
+pytestmark = pytest.mark.usefixtures("clean_plugin_registry")
 
 
 def test_builtin_methods_present():

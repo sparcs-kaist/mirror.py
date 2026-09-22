@@ -5,7 +5,7 @@ End-to-end tests for `mirror.py` running against real rsync, ftpsync (archvsync)
 These tests are **deselected by default** (`pyproject.toml` sets `addopts = -m 'not integration'`). Run them explicitly:
 
 ```bash
-uv pip install -e ".[dev]"
+uv sync
 uv run pytest -m integration -v
 ```
 
@@ -28,7 +28,7 @@ serves both debmirror and apt-mirror2 over HTTP port 8000 and FTP port 2121.
 ```
 ┌────────────────────┐    ┌────────────────────┐
 │   rsync-fixture    │    │  ftpsync-fixture   │
-│  alpine + rsyncd   │    │  alpine + rsyncd   │
+│  ubuntu + rsyncd   │    │  ubuntu + rsyncd   │
 │  module [data]     │    │  module [debian]   │
 └─────────▲──────────┘    └──────────▲─────────┘
           │ rsync://                 │ rsync://
@@ -36,9 +36,9 @@ serves both debmirror and apt-mirror2 over HTTP port 8000 and FTP port 2121.
                        │
          ┌─────────────┴───────────────────────────┐
          │ mirror (ubuntu:22.04, python3.10)       │
-         │   supervisord (PID 1)                   │
-         │     ├─ worker  (priority 1)             │
-         │     └─ master  (priority 2, startsecs=2)│
+         │   systemd (PID 1)                       │
+         │     ├─ mirror-worker.service            │
+         │     └─ mirror.service                   │
          │   /var/run/mirror/{master,worker}.sock  │
          │                                         │
          │   bind-mounts to host:                  │
@@ -70,10 +70,10 @@ All test interactions go through the `mirror_stack` fixture (defined in `conftes
 |---|---|
 | Trigger sync | `mirror_stack.trigger_sync(pkgid)` runs `python -c` inside the mirror container, importing `mirror.socket.master.start_sync(pkgid)` |
 | Wait for status | `mirror_stack.wait_for_status(pkgid, "ACTIVE")` polls `${TMP}/state/stat.json` from host |
-| Restart process | `mirror_stack.restart_process("master")` runs `supervisorctl restart master` via `docker exec` |
+| Restart process | `mirror_stack.restart_process("master")` runs `systemctl restart mirror.service` via `docker exec` |
 | Inspect publish tree | Read `${TMP}/publish/<pkgid>/…` directly from host |
 | Swap upstream content | `mirror_stack.swap_rsync_fixture_tree(...)` runs `docker cp` into rsync-fixture |
-| Network isolation | `subprocess.run(["docker", "network", "disconnect", …])` on host (offline fallback test) |
+| Clone failure injection | Temporary git wrapper inside the mirror container; fixture networking remains available |
 
 ## Package source
 
@@ -81,7 +81,7 @@ The mirror image installs a locally-built wheel from `docker/mirror/dist/`:
 
 ```dockerfile
 COPY dist/mirror_py-*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/mirror_py-*.whl
+RUN for wheel in /tmp/mirror_py-*.whl; do python3 -m pip install --no-cache-dir "$wheel[apt-mirror2]"; done
 ```
 
 `conftest.py:built_wheel` (session-scoped) runs `uv build --wheel` against the
@@ -97,11 +97,14 @@ testing always uses the working-tree build.
 
 Each test starts with a fresh `mirror_stack`:
 
-1. Clear *contents* of the host bind-mount dirs (`publish/`, `state/`, `log/`). The directories themselves are preserved so the docker mount points stay attached.
-2. `supervisorctl restart master`. Worker keeps running. This forces master to reload `config.json` and start with empty in-memory package state, isolating tests from prior runs.
-3. Wait for master to be `RUNNING` again before yielding.
+1. Stop both master and worker services, including active sync subprocesses.
+2. Clear publish/state and package-log contents inside the container, preserving bind-mount directories.
+3. Start worker, wait for its socket, then start master and wait for readiness.
+4. Wait for fresh state and for initial automatic syncs to settle before yielding.
 
-Worker stays up across tests by design: tests that need worker restart explicitly do `mirror_stack.restart_process("worker")`.
+Tests that change configuration, fixture content, or executable wrappers restore
+those changes in `finally` blocks. Run suites sequentially: container names and
+fixture resources are shared.
 
 ## Test scenarios
 
@@ -111,10 +114,10 @@ Worker stays up across tests by design: tests that need worker restart explicitl
 | `test_e2e_rsync.py` | Basic rsync; FFTS short-circuit when upstream unchanged; full sync when FFTS file changed |
 | `test_e2e_debmirror.py` | Signed HTTP option discovery, explicit subsets, updates and cleanup, and failure recovery |
 | `test_e2e_apt_mirror2.py` | Multiple signed flat repositories, source indexes, automatic cleanup, hash and key failures, and FTP discovery |
-| `test_e2e_ftpsync.py` | Basic ftpsync; offline fallback exercises the embedded base64 archvsync (`mirror/sync/_ftpsync_script.py`) by disconnecting mirror from the docker network |
+| `test_e2e_ftpsync.py` | Basic ftpsync; offline fallback exercises the embedded base64 archvsync (`mirror/sync/_ftpsync_script.py`) by forcing git clone failure while keeping fixture networking available |
 | `test_master_restart.py` | Master restart during a 200MB sync does not kill worker subprocess (PID stable); master reconnects and sync completes |
 | `test_worker_restart.py` | Worker restart recovery; master gracefully handles worker unavailability |
-| `test_config_reload.py` | Add/remove package via config edit + `supervisorctl restart master` (daemon does not implement SIGHUP) |
+| `test_config_reload.py` | Restart, CLI, and SIGHUP reload; validation, concurrent requests, and removal of idle or actively syncing packages |
 | `test_error_retry.py` | Failed package retries after `errorcontinuetime` and increments errorcount |
 | `test_state_persistence.py` | `lastsync` survives master+worker restart |
 | `test_log_rotation.py` | Per-package log file is gzip-compressed after sync completes |
@@ -214,9 +217,9 @@ Six packages baked into the image:
 
 ## Known caveats
 
-- `syncrate: "PUSH"` parses to `-1`, which the daemon's auto-trigger condition (`time.time() - lastsync > syncrate`) treats as "always due" rather than "manual only". The ftpsync package therefore uses `PT1H` plus explicit triggering instead of `PUSH`.
-- `pytest-dependency` is not installed; the preflight gate uses a module-level cache in `test_e2e_ftpsync.py` rather than declarative test dependencies.
-- The offline-fallback test manipulates the docker network from the host; it is marked `xfail` if the network operation fails (e.g., on environments where docker is not the test runner's default).
+- `syncrate: "PUSH"` disables automatic scheduling. Tests trigger manual-only packages explicitly.
+- Preflight is an independent tool-level check; no pytest dependency-ordering plugin is required.
+- The offline-fallback test restores its temporary git wrapper even when assertions fail.
 - rsyncd in fixture containers runs as `uid = root` for simplicity; this is acceptable for a sealed test container but is not a production pattern.
 
 ## Layout reference
@@ -230,7 +233,7 @@ tests/integration/
 │   ├── rsync-fixture/       # Dockerfile + rsyncd.conf + data/
 │   ├── ftpsync-fixture/     # Dockerfile + rsyncd.conf + data/
 │   ├── apt-fixture/         # Shared HTTP/FTP server + signed flat and Debian repositories
-│   └── mirror/              # Dockerfile + supervisord.conf + config.json + dist/ (gitignored)
+│   └── mirror/             # Dockerfile + config.json + dist/ (gitignored); systemd services from mirror setup
 ├── fixtures/
 │   └── tree_v2/             # Alternate rsync content for FFTS-changed test
 └── test_*.py                # Integration scenarios

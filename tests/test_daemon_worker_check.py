@@ -1,126 +1,120 @@
-import unittest
-from unittest.mock import MagicMock, patch
-import sys
-import os
+import importlib
+import signal
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 
-# Ensure PYTHONPATH is set
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 import mirror
-# Make sure the module is loaded
+from mirror.config.reload_controller import reload_controller
 
-class TestDaemonWorkerCheck(unittest.TestCase):
-    
-    @patch('mirror.socket.init')
-    @patch('mirror.socket.worker.is_worker_running')
-    @patch('mirror.config.load')
-    @patch('mirror.logger.setup_logger')
-    @patch('mirror.sync.start')
-    @patch('time.sleep', side_effect=KeyboardInterrupt)
-    @patch('sys.exit')
-    @patch('os.getpid', return_value=12345)
-    @patch('pathlib.Path.write_text')
-    def test_daemon_startup_worker_running(self, mock_write_text, mock_getpid, mock_exit, mock_sleep, mock_sync_start, mock_setup_logger, mock_config_load, mock_is_worker_running, mock_socket_init):
-        mod = sys.modules['mirror.command.daemon']
-        
-        mock_log = MagicMock()
-        def setup_logger_side_effect():
-            mirror.log = mock_log
-        mock_setup_logger.side_effect = setup_logger_side_effect
 
-        mirror.packages = {}
-        mirror.__version__ = "1.0.0"
-        
-        mock_is_worker_running.return_value = True
-        
-        try:
-            mod.daemon("dummy_config.json")
-        except KeyboardInterrupt:
-            pass
-            
-        mock_log.info.assert_any_call("Worker server is running and reachable.")
+daemon_mod = importlib.import_module("mirror.command.daemon")
 
-    @pytest.mark.skip(reason="Difficult to debug mock assertion failure, likely due to pytest/unittest interaction.")
-    @patch('mirror.socket.init')
-    @patch('mirror.socket.worker.is_worker_running')
-    @patch('mirror.config.load')
-    @patch('mirror.logger.setup_logger')
-    @patch('mirror.sync.start')
-    @patch('time.sleep', side_effect=KeyboardInterrupt)
-    @patch('sys.exit')
-    @patch('os.getpid', return_value=12345)
-    @patch('pathlib.Path.write_text')
-    def test_daemon_startup_worker_not_running(self, mock_write_text, mock_getpid, mock_exit, mock_sleep, mock_sync_start, mock_setup_logger, mock_config_load, mock_is_worker_running, mock_socket_init):
-        mod = sys.modules['mirror.command.daemon']
-        
-        mock_log = MagicMock()
-        def setup_logger_side_effect():
-            mirror.log = mock_log
-        mock_setup_logger.side_effect = setup_logger_side_effect
 
-        mirror.packages = {}
-        mirror.__version__ = "1.0.0"
-        
-        mock_is_worker_running.return_value = False
-        
-        try:
-            mod.daemon("dummy_config.json")
-        except KeyboardInterrupt:
-            pass
-            
-        mock_log.error.assert_any_call("Worker server is NOT running. Sync operations may fail if they rely on it.")
+@pytest.fixture
+def daemon_runtime(monkeypatch, tmp_path):
+    """Isolate daemon globals and stop its loop through the installed handler."""
+    log = MagicMock()
+    socket_server = MagicMock(socket_path=tmp_path / "master.sock")
+    signal_handlers = {}
 
-    @patch('mirror.socket.init')
-    @patch('mirror.socket.worker.is_worker_running')
-    @patch('mirror.config.load')
-    @patch('mirror.logger.setup_logger')
-    @patch('mirror.sync.start')
-    @patch('time.sleep')
-    @patch('sys.exit')
-    @patch('os.getpid', return_value=12345)
-    @patch('pathlib.Path.write_text')
-    def test_daemon_loop_monitoring(self, mock_write_text, mock_getpid, mock_exit, mock_sleep, mock_sync_start, mock_setup_logger, mock_config_load, mock_is_worker_running, mock_socket_init):
-        mod = sys.modules['mirror.command.daemon']
-        
-        mock_log = MagicMock()
-        def setup_logger_side_effect():
-            mirror.log = mock_log
-        mock_setup_logger.side_effect = setup_logger_side_effect
+    monkeypatch.setattr(mirror, "RUN_PATH", tmp_path)
+    monkeypatch.setattr(mirror, "packages", {}, raising=False)
+    monkeypatch.setattr(
+        mirror, "conf", SimpleNamespace(errorcontinuetime=60), raising=False
+    )
+    monkeypatch.setattr(mirror, "log", log, raising=False)
+    monkeypatch.setattr(mirror.config, "load", MagicMock())
+    monkeypatch.setattr(mirror.logger, "setup_logger", MagicMock())
+    monkeypatch.setattr(mirror.event, "post_event", MagicMock())
+    monkeypatch.setattr(mirror.socket, "init", MagicMock(return_value=socket_server))
+    monkeypatch.setattr(mirror.socket, "stop", MagicMock())
+    monkeypatch.setattr(
+        reload_controller,
+        "consume_pending",
+        MagicMock(return_value=(False, [])),
+    )
+    monkeypatch.setattr(
+        daemon_mod.signal,
+        "signal",
+        lambda sig, handler: signal_handlers.__setitem__(sig, handler),
+    )
 
-        # Setup a package whose timing-based sync condition is unambiguously
-        # true on iteration 1: time.time() - 0 > 10 is always True (lastsync=0
-        # means epoch start, syncrate=10 seconds).
-        pkg = MagicMock()
-        pkg.pkgid = "test_pkg"
-        pkg.is_disabled.return_value = False
-        pkg.is_syncing.return_value = False
-        pkg.lastsync = 0
-        pkg.syncrate = 10
-        pkg.status = "ACTIVE"
+    sleep_calls = 0
 
-        mirror.packages = {"test_pkg": pkg}
-        mirror.conf = MagicMock()
-        mirror.conf.errorcontinuetime = 60
+    def stop_after_first_iteration(_seconds):
+        nonlocal sleep_calls
+        sleep_calls += 1
+        signal_handlers[signal.SIGTERM](signal.SIGTERM, None)
 
-        # Run exactly one iteration before raising.
-        mock_sleep.side_effect = [KeyboardInterrupt]
+    monkeypatch.setattr(daemon_mod.time, "sleep", stop_after_first_iteration)
+    daemon_mod._mismatch_first_seen.clear()
 
-        # The daemon calls is_worker_running() (no-arg) at startup AND
-        # is_worker_running(package.pkgid) per package. We want startup True
-        # and per-package False so that the timing branch is reached.
-        mock_is_worker_running.side_effect = lambda *args: not bool(args)
+    yield SimpleNamespace(
+        log=log,
+        socket_server=socket_server,
+        signal_handlers=signal_handlers,
+        sleep_calls=lambda: sleep_calls,
+    )
 
-        try:
-            mod.daemon("dummy_config.json")
-        except KeyboardInterrupt:
-            pass
+    daemon_mod._mismatch_first_seen.clear()
 
-        mock_sync_start.assert_called_with(pkg)
 
-        mock_log.info.assert_any_call(
-            f"Package {pkg.pkgid} requires sync (last_sync={pkg.lastsync}, syncrate={pkg.syncrate}, status={pkg.status})"
-        )
+@pytest.mark.parametrize(
+    ("worker_running", "level", "message"),
+    [
+        (True, "info", "Worker server is running and reachable."),
+        (
+            False,
+            "error",
+            "Worker server is NOT running. Sync operations may fail if they rely on it.",
+        ),
+    ],
+)
+def test_daemon_reports_worker_state_and_cleans_up(
+    daemon_runtime, monkeypatch, worker_running, level, message
+):
+    monkeypatch.setattr(
+        mirror.socket.worker,
+        "is_worker_running",
+        MagicMock(return_value=worker_running),
+    )
 
-if __name__ == '__main__':
-    unittest.main()
+    with pytest.raises(SystemExit) as exc_info:
+        daemon_mod.daemon("dummy_config.json")
+
+    assert exc_info.value.code == 0
+    getattr(daemon_runtime.log, level).assert_any_call(message)
+    assert daemon_runtime.sleep_calls() == 1
+    daemon_runtime.socket_server.stop.assert_called_once_with()
+    mirror.socket.stop.assert_called_once_with()
+    assert not (mirror.RUN_PATH / "mirror.pid").exists()
+    assert not (mirror.RUN_PATH / "master.sock.path").exists()
+
+
+def test_daemon_loop_starts_due_package(daemon_runtime, monkeypatch):
+    package = MagicMock(
+        pkgid="test-pkg",
+        lastsync=0,
+        syncrate=10,
+        status="ACTIVE",
+    )
+    package.is_disabled.return_value = False
+    package.is_syncing.return_value = False
+    mirror.packages = {package.pkgid: package}
+
+    worker_running = MagicMock(side_effect=lambda *args: not bool(args))
+    sync_start = MagicMock()
+    monkeypatch.setattr(mirror.socket.worker, "is_worker_running", worker_running)
+    monkeypatch.setattr(mirror.sync, "start", sync_start)
+
+    with pytest.raises(SystemExit) as exc_info:
+        daemon_mod.daemon("dummy_config.json")
+
+    assert exc_info.value.code == 0
+    sync_start.assert_called_once_with(package)
+    daemon_runtime.log.info.assert_any_call(
+        "Package test-pkg requires sync (last_sync=0, syncrate=10, status=ACTIVE)"
+    )
+    daemon_runtime.socket_server.stop.assert_called_once_with()
