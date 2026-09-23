@@ -16,39 +16,11 @@ from mirror.plugin import (
     ConfigCreateResult,
     PluginRecord,
     event_plugin,
-    load_builtin_plugins,
     status_plugin,
     sync_plugin,
 )
 
-
-# ---------------------------------------------------------------------------
-# Fixture: restore built-in registry state around each test
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def _restore_registry():
-    """Reset to a clean built-in baseline before each test, then restore after."""
-    mirror.plugin._registry.clear()
-    mirror.plugin._BUILTIN_NAMES.clear()
-    mirror.plugin._status_stat_hooks.clear()
-    mirror.plugin._status_web_hooks.clear()
-    mirror.sync.methods.clear()
-    load_builtin_plugins()
-
-    clean_registry = dict(mirror.plugin._registry)
-    clean_methods = list(mirror.sync.methods)
-    clean_builtins = set(mirror.plugin._BUILTIN_NAMES)
-
-    yield
-
-    mirror.plugin._registry.clear()
-    mirror.plugin._registry.update(clean_registry)
-    mirror.sync.methods[:] = clean_methods
-    mirror.plugin._BUILTIN_NAMES.clear()
-    mirror.plugin._BUILTIN_NAMES.update(clean_builtins)
-    mirror.plugin._status_stat_hooks.clear()
-    mirror.plugin._status_web_hooks.clear()
+pytestmark = pytest.mark.usefixtures("clean_plugin_registry")
 
 
 # ---------------------------------------------------------------------------

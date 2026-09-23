@@ -1530,26 +1530,53 @@ class TestPauseShortCircuit:
 
 
 class TestModalKeyPrecedence:
-    """
-    For each modal state (dialog, show_help, filter_input_active) and each
-    guarded key (j, x, r, Tab, s, /, p), assert that _modal_active returns True.
-    The keybinding handlers call _modal_active and early-return when True.
-    """
+    @pytest.mark.parametrize("modal", ["dialog", "help", "filter"])
+    def test_modal_blocks_background_bindings(self, modal):
+        tui = MirrorTUI(socket_path="/tmp/fake.sock")
+        tui._state.packages = [_make_package("debian"), _make_package("ubuntu")]
+        tui._state.selected_pkgid = "debian"
+        tui._client = MagicMock()
+        tui._on_selection_change = MagicMock()
 
-    @pytest.mark.parametrize("modal_flag,modal_value", [
-        ("dialog", "set"),
-        ("show_help", True),
-        ("filter_input_active", True),
-    ])
-    @pytest.mark.parametrize("key_name", ["j", "x", "r", "tab", "s", "slash", "p"])
-    def test_modal_active_blocks_key(self, modal_flag, modal_value, key_name):
-        state = TUIState()
-        if modal_flag == "dialog":
-            state.open_dialog("start", "debian")
+        if modal == "dialog":
+            tui._state.open_dialog("stop", "debian")
+            prefix = ""
+            selected_pkgid = "debian"
+        elif modal == "help":
+            prefix = "?"
+            selected_pkgid = "debian"
         else:
-            setattr(state, modal_flag, modal_value)
+            selected_pkgid = "jxrsp/package"
+            tui._state.packages = [
+                _make_package(selected_pkgid),
+                _make_package("ubuntu"),
+            ]
+            tui._state.selected_pkgid = selected_pkgid
+            prefix = "/"
 
-        assert _modal_active(state) is True
+        app = _run_tui_keys(tui, prefix + "jxrsp\t/")
+
+        assert tui._state.selected_pkgid == selected_pkgid
+        assert tui._state.sort_mode == "default"
+        assert tui._state.paused is False
+        tui._on_selection_change.assert_not_called()
+        tui._client.start_sync.assert_not_called()
+        tui._client.stop_sync.assert_not_called()
+
+        if modal == "dialog":
+            assert tui._state.dialog is not None
+            assert tui._state.dialog.action == "stop"
+            assert tui._state.dialog.pkgid == "debian"
+            assert app.layout.has_focus(tui._table_control)
+        elif modal == "help":
+            assert tui._state.show_help is True
+            assert tui._state.dialog is None
+            assert app.layout.has_focus(tui._table_control)
+        else:
+            assert tui._state.filter_input_active is True
+            assert tui._state.filter_text == "jxrsp/"
+            assert tui._state.dialog is None
+            assert app.layout.has_focus(tui._filter_control)
 
     def test_tab_blocked_by_show_help(self):
         # Regression: Tab was only guarded against dialog, not show_help/filter.

@@ -16,24 +16,7 @@ from mirror.sync import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def _reset_registries():
-    with _start_lock:
-        _extra_args.clear()
-        _watchdog_fired.clear()
-    yield
-    with _start_lock:
-        _extra_args.clear()
-        _watchdog_fired.clear()
-
-
-@pytest.fixture(autouse=True)
-def _mock_mirror_log(monkeypatch):
-    monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
+pytestmark = pytest.mark.usefixtures("clean_sync_state", "mock_mirror_log")
 
 
 # ---------------------------------------------------------------------------

@@ -13,82 +13,16 @@ import mirror.sync
 
 
 # ---------------------------------------------------------------------------
-# Config builder helpers (same shape as test_perform_reload_validation.py)
-# ---------------------------------------------------------------------------
-
-def _make_settings(tmp_path: Path) -> dict:
-    return {
-        "logfolder": str(tmp_path / "logs"),
-        "webroot": str(tmp_path / "web"),
-        "statusfile": str(tmp_path / "status.json"),
-        "statfile": str(tmp_path / "stat.json"),
-        "socket_path": str(tmp_path / "mirror.sock"),
-        "uid": 1000,
-        "gid": 1000,
-        "localtimezone": "UTC",
-        "errorcontinuetime": 60,
-        "maintainer": {"name": "Test", "email": "t@t.com"},
-        "logger": {
-            "level": "INFO",
-            "packagelevel": "ERROR",
-            "format": "[%(asctime)s] %(levelname)s # %(message)s",
-            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
-            "fileformat": {
-                "base": str(tmp_path / "logs"),
-                "folder": "{year}/{month}",
-                "filename": "{year}-{month}-{day}.log",
-                "gzip": False,
-            },
-            "packagefileformat": {
-                "base": str(tmp_path / "logs" / "packages"),
-                "folder": "{year}/{month}/{day}",
-                "filename": "{packageid}.{hour}.log",
-                "gzip": False,
-            },
-        },
-        "ftpsync": {
-            "maintainer": "M",
-            "sponsor": "S",
-            "country": "KR",
-            "location": "Seoul",
-            "throughput": "1G",
-        },
-        "plugins": [],
-    }
-
-
-def _make_valid_pkg(pkgid: str) -> dict:
-    return {
-        "id": pkgid,
-        "name": pkgid,
-        "href": f"/{pkgid}",
-        "synctype": "rsync",
-        "syncrate": "PT1H",
-        "link": [],
-        "settings": {
-            "hidden": False,
-            "src": "rsync://src/a",
-            "dst": "/tmp/" + pkgid,
-            "options": {},
-        },
-    }
-
-
-def _valid_config(tmp_path: Path) -> dict:
-    return {
-        "mirrorname": "TestMirror",
-        "hostname": "test.local",
-        "settings": _make_settings(tmp_path),
-        "packages": {"pkg-alpha": _make_valid_pkg("pkg-alpha")},
-    }
-
-
-# ---------------------------------------------------------------------------
 # Shared fixture that resets global state between tests
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def corruption_env(tmp_path, monkeypatch):
+def corruption_env(
+    tmp_path,
+    monkeypatch,
+    reload_config_factory,
+    reload_package_factory,
+):
     """Set up file paths and reset mirror globals before each test."""
     config_path = tmp_path / "config.json"
     stat_path = tmp_path / "stat.json"
@@ -106,6 +40,8 @@ def corruption_env(tmp_path, monkeypatch):
         "config_path": config_path,
         "stat_path": stat_path,
         "status_path": status_path,
+        "valid_config": lambda: reload_config_factory(tmp_path),
+        "make_package": reload_package_factory,
     }
 
 
@@ -139,7 +75,7 @@ def test_load_raises_on_corrupt_stat_json(corruption_env):
     stat_path: Path = corruption_env["stat_path"]
     status_path: Path = corruption_env["status_path"]
 
-    config_path.write_text(json.dumps(_valid_config(corruption_env["tmp_path"])))
+    config_path.write_text(json.dumps(corruption_env["valid_config"]()))
     stat_path.write_text("{garbage}")
     status_path.write_text(json.dumps({}))
 
@@ -159,7 +95,7 @@ def test_load_empty_stat_treated_as_corrupt(corruption_env):
     stat_path: Path = corruption_env["stat_path"]
     status_path: Path = corruption_env["status_path"]
 
-    config_path.write_text(json.dumps(_valid_config(corruption_env["tmp_path"])))
+    config_path.write_text(json.dumps(corruption_env["valid_config"]()))
     stat_path.write_bytes(b"")
     status_path.write_text(json.dumps({}))
 
@@ -179,7 +115,7 @@ def test_load_succeeds_with_corrupt_status_json(corruption_env, caplog):
     stat_path: Path = corruption_env["stat_path"]
     status_path: Path = corruption_env["status_path"]
 
-    config_path.write_text(json.dumps(_valid_config(corruption_env["tmp_path"])))
+    config_path.write_text(json.dumps(corruption_env["valid_config"]()))
     stat_path.write_text(json.dumps({"packages": {}}))
     status_path.write_text("{not_json")
 
@@ -214,7 +150,7 @@ def test_validate_candidate_packages_raises_on_corrupt_stat(corruption_env, monk
     status_path: Path = corruption_env["status_path"]
     tmp_path: Path = corruption_env["tmp_path"]
 
-    cfg = _valid_config(tmp_path)
+    cfg = corruption_env["valid_config"]()
     config_path.write_text(json.dumps(cfg))
     stat_path.write_text(json.dumps({"packages": {}}))
     status_path.write_text(json.dumps({}))
@@ -231,7 +167,7 @@ def test_validate_candidate_packages_raises_on_corrupt_stat(corruption_env, monk
     mirror.packages = mirror.structure.Packages(
         {
             "pkg-alpha": {
-                **_make_valid_pkg("pkg-alpha"),
+                **corruption_env["make_package"]("pkg-alpha"),
                 "status": {"status": "UNKNOWN", "statusinfo": {"errorcount": 0}},
             }
         }

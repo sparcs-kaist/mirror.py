@@ -1,9 +1,12 @@
 """Integration test helpers for mirror.py docker-based test suite."""
 
+import gzip
 import json
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 MIRROR_CONTAINER = "mirror"
@@ -97,6 +100,50 @@ class MirrorStack:
         if isinstance(status_obj, dict):
             return status_obj.get("statusinfo", {}).get("errorcount", 0)
         return 0
+
+    def runtime_package(self, pkgid: str) -> dict:
+        """Return package state directly from the running master daemon.
+
+        Args:
+            pkgid(str): Package identifier.
+
+        Return:
+            package(dict): Package data returned by the master socket RPC.
+        """
+        script = (
+            "import json; "
+            "from mirror.socket.master import get_package; "
+            f"print(json.dumps(get_package({pkgid!r})))"
+        )
+        result = self.docker_exec("python3", "-c", script, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"get_package({pkgid!r}) failed (rc={result.returncode}): "
+                f"stderr={result.stderr!r}"
+            )
+        return json.loads(result.stdout.strip().splitlines()[-1])
+
+    def worker_progress(self, pkgid: str) -> dict:
+        """Return one job's live state directly from the worker daemon.
+
+        Args:
+            pkgid(str): Worker job identifier.
+
+        Return:
+            progress(dict): Worker ``get_progress`` RPC response.
+        """
+        script = (
+            "import json; "
+            "from mirror.socket.worker import get_progress; "
+            f"print(json.dumps(get_progress({pkgid!r})))"
+        )
+        result = self.docker_exec("python3", "-c", script, check=False)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"get_progress({pkgid!r}) failed (rc={result.returncode}): "
+                f"stderr={result.stderr!r}"
+            )
+        return json.loads(result.stdout.strip().splitlines()[-1])
 
     def docker_exec(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         """Run a command inside the mirror container via docker exec.
@@ -273,6 +320,44 @@ class MirrorStack:
             f"(last status: '{actual}', elapsed: {elapsed:.1f}s)"
         )
 
+    def wait_for_new_active_sync(
+        self,
+        pkgid: str,
+        previous_lastsync: float,
+        timeout: float = 60,
+    ) -> float:
+        """Wait for a newly completed successful sync generation.
+
+        Args:
+            pkgid(str): Package identifier.
+            previous_lastsync(float): Timestamp before the requested sync.
+            timeout(float): Maximum seconds to wait.
+
+        Return:
+            lastsync(float): Timestamp written by the new completion.
+
+        Raises:
+            TimeoutError: If no newer ACTIVE generation completes in time.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            package = self.stat_json().get("packages", {}).get(pkgid, {})
+            status = package.get("status", {})
+            status_name = (
+                status.get("status", "UNKNOWN")
+                if isinstance(status, dict)
+                else str(status)
+            )
+            lastsync = package.get("lastsync", 0.0)
+            if status_name == "ACTIVE" and lastsync > previous_lastsync:
+                return lastsync
+            time.sleep(0.2)
+        raise TimeoutError(
+            f"Package '{pkgid}' did not complete a new ACTIVE sync within {timeout}s "
+            f"(status={self.package_status(pkgid)!r}, "
+            f"before={previous_lastsync}, after={self.package_lastsync(pkgid)})"
+        )
+
     def wait_for_master_ready(self, timeout: float = 30) -> None:
         """Poll supervisorctl until master process is RUNNING.
 
@@ -377,3 +462,193 @@ def make_minimal_config(packages: dict) -> dict:
         },
         "packages": packages,
     }
+
+
+def run_fixture_python(
+    container: str,
+    script: str,
+    *args: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run a bounded Python mutation inside a fixture container.
+
+    Args:
+        container(str): Fixture container name.
+        script(str): Python source passed to ``python -c``.
+        *args(str): Positional arguments exposed to the script through ``sys.argv``.
+
+    Return:
+        result(subprocess.CompletedProcess): Completed Docker command.
+    """
+    return subprocess.run(
+        ["docker", "exec", container, "python", "-c", script, *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def latest_package_log_text(mirror_stack: MirrorStack, package_id: str) -> str:
+    """Read the newest completed log for a package.
+
+    Args:
+        mirror_stack(MirrorStack): Running integration stack.
+        package_id(str): Package identifier used to select logs.
+
+    Return:
+        text(str): Uncompressed package log contents.
+    """
+    logs = mirror_stack.read_package_log_dir(package_id)
+    assert logs, f"No package logs found for {package_id}"
+    latest = logs[-1]
+    if latest.suffix == ".gz":
+        with gzip.open(latest, "rt", errors="replace") as stream:
+            return stream.read()
+    return latest.read_text(errors="replace")
+
+
+def _rsync_fixture_exec(*args: str) -> subprocess.CompletedProcess:
+    """Run a bounded command in the rsync fixture container."""
+    return subprocess.run(
+        ["docker", "exec", "rsync-fixture", *args],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+
+def clear_slow_rsync_gate() -> None:
+    """Remove stale slow-rsync gate files before starting a gated job."""
+    _rsync_fixture_exec(
+        "rm",
+        "-f",
+        "/tmp/mirror-slow-rsync.ready",
+        "/tmp/mirror-slow-rsync.release",
+    )
+
+
+def wait_for_slow_rsync_gate(timeout: float = 10) -> None:
+    """Wait until the slow rsync module reaches its pre-transfer gate."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _rsync_fixture_exec(
+            "test", "-e", "/tmp/mirror-slow-rsync.ready"
+        ).returncode == 0:
+            return
+        time.sleep(0.1)
+    raise TimeoutError("slow rsync did not reach the pre-transfer gate")
+
+
+def release_slow_rsync_gate() -> None:
+    """Release the slow rsync gate and remove its coordination files."""
+    ready_path = "/tmp/mirror-slow-rsync.ready"
+    release_path = "/tmp/mirror-slow-rsync.release"
+    _rsync_fixture_exec("touch", release_path)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if _rsync_fixture_exec("test", "-e", ready_path).returncode != 0:
+            break
+        time.sleep(0.1)
+    else:
+        result = _rsync_fixture_exec("cat", ready_path)
+        pid = result.stdout.strip()
+        if pid.isdigit():
+            _rsync_fixture_exec("kill", "-TERM", pid)
+    _rsync_fixture_exec("rm", "-f", ready_path, release_path)
+
+
+@contextmanager
+def temporary_rsync_package(
+    mirror_stack: MirrorStack,
+    pkgid: str,
+    *,
+    slow: bool = False,
+) -> Iterator[str]:
+    """Install a manual-only rsync package for one integration test.
+
+    The package is added only after ``mirror_stack`` has settled its baseline
+    packages. ``PT0S`` prevents background syncs from satisfying assertions
+    intended to observe an explicitly triggered generation.
+
+    Args:
+        mirror_stack(MirrorStack): Running integration stack.
+        pkgid(str): Unique package and worker job identifier.
+        slow(bool): Use the fixture's bounded pre-transfer gate.
+
+    Yields:
+        pkgid(str): The installed package identifier.
+    """
+    config_result = mirror_stack.docker_exec("cat", "/etc/mirror/config.json")
+    original_config = config_result.stdout
+    config = json.loads(original_config)
+    assert pkgid not in config["packages"], f"temporary package already exists: {pkgid}"
+    config["packages"][pkgid] = {
+        "name": pkgid,
+        "id": pkgid,
+        "href": f"/{pkgid}",
+        "synctype": "rsync",
+        "syncrate": "PT0S",
+        "link": [],
+        "settings": {
+            "hidden": False,
+            "src": f"rsync://rsync-fixture/{'slow' if slow else 'data'}",
+            "dst": f"/srv/publish/{pkgid}",
+            "options": {"username": "", "password": ""},
+        },
+    }
+
+    if slow:
+        clear_slow_rsync_gate()
+
+    try:
+        write_container_config("mirror", json.dumps(config, indent=2))
+        reload_result = mirror_stack.docker_exec(
+            "mirror", "config", "reload", check=False
+        )
+        assert reload_result.returncode == 0, (
+            f"failed to install temporary package {pkgid}: "
+            f"stdout={reload_result.stdout!r} stderr={reload_result.stderr!r}"
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if pkgid in mirror_stack.stat_json().get("packages", {}):
+                break
+            time.sleep(0.1)
+        else:
+            raise TimeoutError(f"temporary package {pkgid} did not appear in stat.json")
+        yield pkgid
+    finally:
+        mirror_stack.docker_exec(
+            "python3",
+            "-c",
+            "from mirror.socket.worker import stop_command; "
+            f"stop_command(job_id={pkgid!r})",
+            check=False,
+        )
+        if slow:
+            release_slow_rsync_gate()
+        write_container_config("mirror", original_config)
+        restore_result = mirror_stack.docker_exec(
+            "mirror", "config", "reload", check=False
+        )
+        assert restore_result.returncode == 0, (
+            f"failed to restore config after temporary package {pkgid}: "
+            f"stdout={restore_result.stdout!r} stderr={restore_result.stderr!r}"
+        )
+
+
+def write_container_config(container: str, config_text: str) -> None:
+    """Replace the integration config inside a container.
+
+    Args:
+        container(str): Container whose config should be replaced.
+        config_text(str): Complete JSON config contents.
+    """
+    result = subprocess.run(
+        ["docker", "exec", "-i", container, "tee", "/etc/mirror/config.json"],
+        input=config_text,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"Failed to write config.json: {result.stderr!r}"

@@ -23,12 +23,20 @@ class TestSyncDebmirrorDelegation(unittest.TestCase):
     def setUp(self):
         # Resync mirror submodule attributes with sys.modules in case a prior
         # test replaced them (see tests/test_sync_worker_delegation.py).
-        mirror.sync = sys.modules["mirror.sync"]
-        mirror.socket.worker = sys.modules["mirror.socket.worker"]
+        sync_module = patch.object(mirror, "sync", sys.modules["mirror.sync"])
+        sync_module.start()
+        self.addCleanup(sync_module.stop)
+        worker_module = patch.object(
+            mirror.socket, "worker", sys.modules["mirror.socket.worker"]
+        )
+        worker_module.start()
+        self.addCleanup(worker_module.stop)
 
-        mirror.log = MagicMock()
-        mirror.packages = {}
-        mirror.conf = MagicMock()
+        runtime = patch.multiple(
+            mirror, log=MagicMock(), packages={}, conf=MagicMock(), create=True
+        )
+        runtime.start()
+        self.addCleanup(runtime.stop)
         mirror.conf.uid = 4242
         mirror.conf.gid = 4343
 

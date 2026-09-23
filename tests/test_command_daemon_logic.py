@@ -5,11 +5,7 @@ from unittest.mock import MagicMock, patch
 from mirror.command.daemon import daemon
 import mirror
 
-@pytest.fixture
-def mock_master_server():
-    # Patch at source to avoid shadowing issues
-    with patch("mirror.socket.master.MasterServer") as mock:
-        yield mock
+pytestmark = pytest.mark.usefixtures("mock_worker_check")
 
 @pytest.fixture
 def mock_worker_check():
@@ -17,46 +13,15 @@ def mock_worker_check():
     with patch("mirror.socket.worker.is_worker_running", return_value=True) as mock:
         yield mock
 
-@pytest.fixture
-def mock_signal():
-    with patch("signal.signal") as mock:
-        yield mock
-
-@pytest.fixture
-def mock_sys_exit():
-    with patch("sys.exit") as mock:
-        yield mock
-
-@pytest.fixture
-def mock_dependencies(mock_worker_check):
-    with patch("mirror.config.load"), \
-         patch("mirror.logger.setup_logger"), \
-         patch("mirror.sync.start"):
-        
-        # Setup mirror.packages
-        original_packages = getattr(mirror, "packages", None)
-        original_log = getattr(mirror, "log", None)
-        
-        mirror.packages = {}
-        mirror.log = MagicMock()
-        
-        yield
-        
-        # Restore
-        if original_packages is not None:
-            mirror.packages = original_packages
-        if original_log is not None:
-            mirror.log = original_log
-
-def test_daemon_initialization(mock_master_server, mock_signal, mock_dependencies, mock_sys_exit):
-    server_instance = mock_master_server.return_value
+def test_daemon_initialization(daemon_master_server, mock_signal, daemon_dependencies, mock_sys_exit):
+    server_instance = daemon_master_server.return_value
     
     # Run daemon (break loop with exception)
     with patch("time.sleep", side_effect=Exception("BreakLoop")):
         daemon("config.json")
         
     # Verify Server initialization
-    mock_master_server.assert_called_once()
+    daemon_master_server.assert_called_once()
     server_instance.set_version.assert_called()
     server_instance.start.assert_called()
     
@@ -71,8 +36,8 @@ def test_daemon_initialization(mock_master_server, mock_signal, mock_dependencie
     # Verify exit called (due to exception)
     mock_sys_exit.assert_called_with(1)
 
-def test_daemon_signal_handling(mock_master_server, mock_dependencies):
-    server_instance = mock_master_server.return_value
+def test_daemon_signal_handling(daemon_master_server, daemon_dependencies):
+    server_instance = daemon_master_server.return_value
     
     signal_handler = None
     def capture_signal(sig, handler):
@@ -96,9 +61,9 @@ def test_daemon_signal_handling(mock_master_server, mock_dependencies):
         mock_exit.assert_not_called()
 
 
-def test_daemon_signal_cleanup_runs_from_main_loop(mock_master_server, mock_dependencies):
+def test_daemon_signal_cleanup_runs_from_main_loop(daemon_master_server, daemon_dependencies):
     """SIGTERM should request shutdown; cleanup runs outside the signal handler."""
-    server_instance = mock_master_server.return_value
+    server_instance = daemon_master_server.return_value
     handlers = {}
 
     def capture_signal(sig, handler):
@@ -116,7 +81,7 @@ def test_daemon_signal_cleanup_runs_from_main_loop(mock_master_server, mock_depe
     mock_exit.assert_called_with(0)
 
 
-def test_loop_calls_watchdog_for_syncing_package(mock_master_server, mock_dependencies):
+def test_loop_calls_watchdog_for_syncing_package(daemon_master_server, daemon_dependencies):
     """The daemon loop must call _watchdog_check for a syncing package."""
     import mirror.sync
 

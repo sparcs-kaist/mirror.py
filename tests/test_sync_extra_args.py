@@ -29,9 +29,7 @@ def _reset_registries():
         _extra_args.clear()
 
 
-@pytest.fixture(autouse=True)
-def _mock_mirror_log(monkeypatch):
-    monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
+pytestmark = pytest.mark.usefixtures("mock_mirror_log")
 
 
 def _make_pkg(pkgid: str = "testpkg") -> MagicMock:

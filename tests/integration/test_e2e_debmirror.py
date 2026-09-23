@@ -1,8 +1,6 @@
 """End-to-end debmirror discovery tests against a signed Debian repository."""
 
-import gzip
 import json
-import subprocess
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,21 +9,17 @@ from typing import Any
 
 import pytest
 
+from .helpers import (
+    MIRROR_CONTAINER,
+    latest_package_log_text,
+    run_fixture_python,
+    write_container_config,
+)
+
 
 PACKAGE_ID = "debmirror-test"
 FIXTURE_CONTAINER = "apt-fixture"
 FIXTURE_PATH = Path(__file__).parent / "docker" / "apt-fixture"
-
-
-def _run_fixture_python(script: str, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run a bounded Python mutation inside the debmirror fixture container."""
-    return subprocess.run(
-        ["docker", "exec", FIXTURE_CONTAINER, "python", "-c", script, *args],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
 
 
 def _replace_fixture(version: str) -> None:
@@ -37,7 +31,7 @@ def _replace_fixture(version: str) -> None:
         "shutil.rmtree(target, ignore_errors=True); "
         "shutil.copytree(source, target)"
     )
-    _run_fixture_python(script, version)
+    run_fixture_python(FIXTURE_CONTAINER, script, version)
 
 
 def _set_listing_denied(denied: bool) -> None:
@@ -47,7 +41,7 @@ def _set_listing_denied(denied: bool) -> None:
         "marker = pathlib.Path('/srv/data/deny-dists-listing'); "
         "marker.touch() if sys.argv[1] == '1' else marker.unlink(missing_ok=True)"
     )
-    _run_fixture_python(script, "1" if denied else "0")
+    run_fixture_python(FIXTURE_CONTAINER, script, "1" if denied else "0")
 
 
 def _set_partial_listing(enabled: bool) -> None:
@@ -57,7 +51,7 @@ def _set_partial_listing(enabled: bool) -> None:
         "marker = pathlib.Path('/srv/data/partial-dists-listing'); "
         "marker.touch() if sys.argv[1] == '1' else marker.unlink(missing_ok=True)"
     )
-    _run_fixture_python(script, "1" if enabled else "0")
+    run_fixture_python(FIXTURE_CONTAINER, script, "1" if enabled else "0")
 
 
 def _tamper_metadata() -> None:
@@ -72,7 +66,7 @@ def _tamper_metadata() -> None:
         "inrelease.write_bytes(inrelease.read_bytes().replace("
         "b'Description: Signed', b'Description: Tampered', 1))"
     )
-    _run_fixture_python(script)
+    run_fixture_python(FIXTURE_CONTAINER, script)
 
 
 def _wait_for_completion(
@@ -96,29 +90,6 @@ def _wait_for_completion(
     )
 
 
-def _latest_log_text(mirror_stack: Any) -> str:
-    """Read the newest completed package log as text."""
-    logs = mirror_stack.read_package_log_dir(PACKAGE_ID)
-    assert logs, f"No package logs found for {PACKAGE_ID}"
-    latest = logs[-1]
-    if latest.suffix == ".gz":
-        with gzip.open(latest, "rt", errors="replace") as stream:
-            return stream.read()
-    return latest.read_text(errors="replace")
-
-
-def _write_container_config(config_text: str) -> None:
-    """Replace the integration config inside the mirror container."""
-    result = subprocess.run(
-        ["docker", "exec", "-i", "mirror", "tee", "/etc/mirror/config.json"],
-        input=config_text,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, f"Failed to write config.json: {result.stderr!r}"
-
-
 @contextmanager
 def _package_options(mirror_stack: Any, selections: dict[str, Any]) -> Iterator[None]:
     """Apply temporary debmirror selections through the production reload path."""
@@ -127,7 +98,7 @@ def _package_options(mirror_stack: Any, selections: dict[str, Any]) -> Iterator[
     config = json.loads(original)
     options = config["packages"][PACKAGE_ID]["settings"]["options"]
     options.update(selections)
-    _write_container_config(json.dumps(config, indent=2))
+    write_container_config(MIRROR_CONTAINER, json.dumps(config, indent=2))
     reload_result = mirror_stack.docker_exec("mirror", "config", "reload", check=False)
     assert reload_result.returncode == 0, (
         f"Failed to reload temporary debmirror options: {reload_result.stderr!r}"
@@ -135,7 +106,7 @@ def _package_options(mirror_stack: Any, selections: dict[str, Any]) -> Iterator[
     try:
         yield
     finally:
-        _write_container_config(original)
+        write_container_config(MIRROR_CONTAINER, original)
         reload_result = mirror_stack.docker_exec("mirror", "config", "reload", check=False)
         assert reload_result.returncode == 0, (
             f"Failed to restore debmirror options: {reload_result.stderr!r}"
@@ -185,7 +156,7 @@ def test_debmirror_auto_discovers_and_rediscovers_repository(mirror_stack: Any) 
         assert payload.read_bytes() == _fixture_bytes("v1", relative)
     assert not (destination / "pool/main/m/mirror-source").exists()
     assert not (destination / "dists/stable").exists()
-    first_log = _latest_log_text(mirror_stack)
+    first_log = latest_package_log_text(mirror_stack, PACKAGE_ID)
     assert "dist=allonly,bookworm,bullseye" in first_log
     assert "section=extras,main" in first_log
     assert "arch=amd64,arm64" in first_log
@@ -204,7 +175,7 @@ def test_debmirror_auto_discovers_and_rediscovers_repository(mirror_stack: Any) 
         assert payload.read_bytes() == _fixture_bytes("v2", relative)
     assert not (destination / bookworm_amd64).exists()
     assert not (destination / "pool/main/m/mirror-source").exists()
-    second_log = _latest_log_text(mirror_stack)
+    second_log = latest_package_log_text(mirror_stack, PACKAGE_ID)
     assert "dist=allonly,bookworm,bullseye,trixie" in second_log
     assert "section=extras,main,partner" in second_log
     assert "arch=amd64,arm64,riscv64" in second_log
@@ -258,7 +229,9 @@ def test_debmirror_signature_failure_preserves_mirror_and_recovers(mirror_stack:
     assert mirror_stack.package_errorcount(PACKAGE_ID) > previous_errorcount
     assert payload.read_bytes() == original_payload
     assert index.read_bytes() == original_index
-    assert "signature verification failed" in _latest_log_text(mirror_stack)
+    assert "signature verification failed" in latest_package_log_text(
+        mirror_stack, PACKAGE_ID
+    )
 
     _replace_fixture("v1")
     mirror_stack.trigger_sync(PACKAGE_ID)
@@ -280,7 +253,7 @@ def test_explicit_allonly_dist_bypasses_listing_and_uses_arch_none(
     mirror_stack.trigger_sync(PACKAGE_ID)
     failed_lastsync = _wait_for_completion(mirror_stack, previous_lastsync, "ERROR")
     assert preserved.read_bytes() == preserved_bytes
-    assert "status 403" in _latest_log_text(mirror_stack)
+    assert "status 403" in latest_package_log_text(mirror_stack, PACKAGE_ID)
 
     with _package_options(mirror_stack, {"dist": "allonly"}):
         _clean_destination(mirror_stack)
@@ -290,7 +263,7 @@ def test_explicit_allonly_dist_bypasses_listing_and_uses_arch_none(
         relative = "pool/main/a/allonly-test/allonly-test_1.0_all.deb"
         payload = destination / relative
         assert payload.read_bytes() == _fixture_bytes("v1", relative)
-        log = _latest_log_text(mirror_stack)
+        log = latest_package_log_text(mirror_stack, PACKAGE_ID)
         assert "dist=allonly section=main arch=none" in log
         assert "Returncode: 0" in log
 
@@ -313,7 +286,9 @@ def test_partial_dist_listing_preserves_existing_distributions(
 
     assert release.read_bytes() == release_bytes
     assert shared.read_bytes() == shared_bytes
-    assert "existing distributions are missing" in _latest_log_text(mirror_stack)
+    assert "existing distributions are missing" in latest_package_log_text(
+        mirror_stack, PACKAGE_ID
+    )
 
     _set_partial_listing(False)
     mirror_stack.trigger_sync(PACKAGE_ID)

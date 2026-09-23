@@ -23,32 +23,6 @@ from mirror.command.daemon import (
 # Fixtures (mirror patterns from test_daemon_setup_grace.py)
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def mock_master_server():
-    with patch("mirror.socket.master.MasterServer") as mock:
-        yield mock
-
-
-@pytest.fixture
-def mock_dependencies():
-    with patch("mirror.config.load"), \
-         patch("mirror.logger.setup_logger"), \
-         patch("mirror.sync.start"):
-
-        original_packages = getattr(mirror, "packages", None)
-        original_log = getattr(mirror, "log", None)
-
-        mirror.packages = {}
-        mirror.log = MagicMock()
-
-        yield
-
-        if original_packages is not None:
-            mirror.packages = original_packages
-        if original_log is not None:
-            mirror.log = original_log
-
-
 def _make_syncing_pkg(pkgid: str, timestamp_ms: float) -> MagicMock:
     """Build a Package stub in SYNC status.
 
@@ -115,8 +89,8 @@ def _run_daemon_n_iterations(n: int, extra_patches: list) -> None:
 # ---------------------------------------------------------------------------
 
 def test_first_branch_grace_skips_transient_mismatch(
-    mock_master_server,
-    mock_dependencies,
+    daemon_master_server,
+    daemon_dependencies,
 ):
     """status=SYNC, worker has no job, only one iteration → set_status NOT called.
 
@@ -139,8 +113,8 @@ def test_first_branch_grace_skips_transient_mismatch(
 
 
 def test_first_branch_error_after_persistent_mismatch(
-    mock_master_server,
-    mock_dependencies,
+    daemon_master_server,
+    daemon_dependencies,
 ):
     """status=SYNC, worker absent, mismatch persists > MISMATCH_GRACE_SECONDS → ERROR.
 
@@ -188,8 +162,8 @@ def test_first_branch_error_after_persistent_mismatch(
 
 
 def test_first_branch_skip_when_status_flipped_under_lock(
-    mock_master_server,
-    mock_dependencies,
+    daemon_master_server,
+    daemon_dependencies,
 ):
     """Persistent mismatch, but is_syncing() returns False under the lock → set_status NOT called.
 
@@ -248,8 +222,8 @@ def test_first_branch_skip_when_status_flipped_under_lock(
 
 
 def test_elif_branch_grace_skips_transient(
-    mock_master_server,
-    mock_dependencies,
+    daemon_master_server,
+    daemon_dependencies,
 ):
     """status=ACTIVE, worker has a job, one iteration → set_status NOT called.
 
@@ -270,8 +244,8 @@ def test_elif_branch_grace_skips_transient(
 
 
 def test_elif_branch_sets_sync_after_persistence(
-    mock_master_server,
-    mock_dependencies,
+    daemon_master_server,
+    daemon_dependencies,
 ):
     """status=ACTIVE, worker has a job, mismatch persists > MISMATCH_GRACE_SECONDS → SYNC.
 

@@ -19,32 +19,6 @@ from mirror.command.daemon import MISMATCH_GRACE_SECONDS, SETUP_GRACE_SECONDS, d
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture
-def mock_master_server():
-    with patch("mirror.socket.master.MasterServer") as mock:
-        yield mock
-
-
-@pytest.fixture
-def mock_dependencies():
-    with patch("mirror.config.load"), \
-         patch("mirror.logger.setup_logger"), \
-         patch("mirror.sync.start"):
-
-        original_packages = getattr(mirror, "packages", None)
-        original_log = getattr(mirror, "log", None)
-
-        mirror.packages = {}
-        mirror.log = MagicMock()
-
-        yield
-
-        if original_packages is not None:
-            mirror.packages = original_packages
-        if original_log is not None:
-            mirror.log = original_log
-
-
 def _make_syncing_pkg(pkgid: str, timestamp_ms: float) -> MagicMock:
     """Build a Package stub in SYNC status with a given timestamp.
 
@@ -71,8 +45,8 @@ def _make_syncing_pkg(pkgid: str, timestamp_ms: float) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 def test_grace_period_prevents_error_transition_when_sync_is_recent(
-    mock_master_server,
-    mock_dependencies,
+    daemon_master_server,
+    daemon_dependencies,
 ):
     """A package in SYNC status with timestamp < SETUP_GRACE_SECONDS ago must not become ERROR.
 
@@ -97,8 +71,8 @@ def test_grace_period_prevents_error_transition_when_sync_is_recent(
 
 
 def test_grace_period_triggers_error_transition_when_sync_is_stale(
-    mock_master_server,
-    mock_dependencies,
+    daemon_master_server,
+    daemon_dependencies,
 ):
     """A package in SYNC status with timestamp > SETUP_GRACE_SECONDS ago must become ERROR.
 

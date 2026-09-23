@@ -40,6 +40,13 @@ from mirror.sync.jigdo import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def standalone_hostname(monkeypatch):
+    """Keep standalone host selection independent of preceding daemon tests."""
+    monkeypatch.setattr(mirror, "conf", None, raising=False)
+    monkeypatch.setattr("mirror.sync.jigdo.socket.getfqdn", lambda: "mirror.example")
+
+
 def _make_package(
     pkgid: str = "jigdo",
     src: str = "rsync://mirror.example.com/debian-cd/",

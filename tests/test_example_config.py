@@ -188,6 +188,7 @@ def test_config_roundtrip(setup_example_env):
 
     # 2. Prepare for comparison (packages section of config-example.json)
     expected_packages = expected_content['packages']
+    assert exported_packages.keys() == expected_packages.keys()
 
     # 3. Compare differences
     # Note: For the 'geoul' package, 'options' might be created after loading if not present in the original file.

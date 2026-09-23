@@ -32,17 +32,17 @@ Worker server:
 
 | Module | Responsibility |
 |--------|---------------|
-| `mirror/__main__.py` | CLI entry point (click commands: setup, daemon, worker, crontab) |
+| `mirror/__main__.py` | CLI entry point (setup, daemon, worker, config, plugin, push, tui, standalone, worker-execute; crontab compatibility placeholder) |
 | `mirror/command/` | Command implementations for daemon, worker, setup |
 | `mirror/config/` | JSON config loading, package state persistence |
 | `mirror/structure/` | Dataclasses: Package, Config, PackageSettings, StatusInfo |
 | `mirror/socket/` | Unix socket IPC (protocol, base server/client, master, worker) |
-| `mirror/sync/` | Sync method executors (rsync, ftpsync, lftp, bandersnatch) |
+| `mirror/sync/` | Nine built-in sync method executors and shared sync lifecycle |
 | `mirror/worker/` | Subprocess lifecycle management (create, track, prune) |
 | `mirror/event/` | Priority-based pub/sub event system |
 | `mirror/logger/` | Time-based log rotation, per-package log files, gzip compression |
 | `mirror/toolbox/` | Utilities (ISO 8601 duration parser, permission checks) |
-| `mirror/plugin/` | Dynamic plugin loading (currently disabled) |
+| `mirror/plugin/` | Built-in and external entry-point plugins for sync, events, and status |
 
 ## Socket IPC Protocol
 
@@ -63,6 +63,13 @@ Worker server:
 
 - **rsync**: Incremental sync with optional FFTS pre-check
 - **ftpsync**: Debian archvsync-based FTP mirroring
+- **lftp**: FTP mirroring with regex filters
+- **bandersnatch**: PyPI mirroring using bandersnatch's configuration
+- **local**: Register an existing local directory without fetching
+- **ubuntu**: Two-stage rsync mirroring
+- **jigdo**: Debian CD/DVD image assembly
+- **debmirror**: Debian archive mirroring with signed metadata discovery
+- **apt-mirror2**: Multiple APT repositories under one scheduled job
 
 ## Path Layout
 
@@ -91,9 +98,10 @@ When adding a new persisted field:
 
 - Python >= 3.10, Linux only
 - Package manager: `uv`
-- Dependencies: click, prompt_toolkit, bandersnatch (optional)
+- Dependencies: click, prompt_toolkit, bandersnatch; apt-mirror2 is optional
 - Tests: `uv run pytest tests/`
-- Install for dev: `uv pip install -e .`
+- Install for dev: `uv sync` (includes pytest and pytest-docker)
+- Editor: Node >= 22.12; `npm --prefix docs/editor ci`
 
 ## Commands
 
@@ -101,7 +109,10 @@ When adding a new persisted field:
 mirror setup                      # Provision directories and systemd units
 mirror daemon [--config PATH]     # Run master daemon
 mirror worker [--config PATH]     # Run worker server
-mirror crontab -u USER -c CONFIG  # Generate crontab entries
+mirror config reload             # Reload configuration through the master
+mirror push PACKAGE              # Trigger a configured package
+mirror tui                       # Inspect live package status
+mirror crontab -u USER -c CONFIG  # Compatibility placeholder; no output
 ```
 
 ## Agent Instructions

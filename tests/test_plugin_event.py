@@ -6,36 +6,7 @@ import mirror.plugin
 import mirror.sync
 from mirror.plugin import _register_event, event_plugin
 
-
-# ---------------------------------------------------------------------------
-# Fixture: restore registry after each test
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def _restore_registry():
-    """Snapshot and restore the plug-in registry around each test.
-
-    Rebuilds a clean baseline before snapshotting so that pollution from
-    test_example_config.py (which replaces mirror.sync.methods with a new list)
-    does not corrupt the snapshot.
-    """
-    from mirror.plugin import load_builtin_plugins
-
-    # Rebuild clean baseline before snapshotting
-    mirror.plugin._registry.clear()
-    mirror.plugin._BUILTIN_NAMES.clear()
-    mirror.sync.methods.clear()
-    load_builtin_plugins()
-
-    orig_registry = dict(mirror.plugin._registry)
-    orig_methods = list(mirror.sync.methods)
-    orig_builtins = set(mirror.plugin._BUILTIN_NAMES)
-    yield
-    mirror.plugin._registry.clear()
-    mirror.plugin._registry.update(orig_registry)
-    mirror.sync.methods[:] = orig_methods
-    mirror.plugin._BUILTIN_NAMES.clear()
-    mirror.plugin._BUILTIN_NAMES.update(orig_builtins)
+pytestmark = pytest.mark.usefixtures("clean_plugin_registry")
 
 
 # ---------------------------------------------------------------------------

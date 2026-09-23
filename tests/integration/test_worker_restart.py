@@ -8,6 +8,8 @@ import time
 
 import pytest
 
+from .helpers import temporary_rsync_package
+
 
 @pytest.mark.integration
 def test_worker_restart_recovers(mirror_stack):
@@ -16,15 +18,19 @@ def test_worker_restart_recovers(mirror_stack):
     After worker restarts, master should reconnect and the next triggered sync
     must complete with ACTIVE status.
     """
-    mirror_stack.restart_process("worker")
-    mirror_stack.wait_for_worker_ready(timeout=30)
+    with temporary_rsync_package(
+        mirror_stack, "worker-restart-rsync"
+    ) as pkgid:
+        mirror_stack.restart_process("worker")
+        mirror_stack.wait_for_worker_ready(timeout=30)
 
-    mirror_stack.trigger_sync("rsync-test")
-    mirror_stack.wait_for_status("rsync-test", "ACTIVE", timeout=30)
+        lastsync_before = mirror_stack.package_lastsync(pkgid)
+        mirror_stack.trigger_sync(pkgid)
+        lastsync_after = mirror_stack.wait_for_new_active_sync(
+            pkgid, lastsync_before, timeout=30
+        )
 
-    assert mirror_stack.package_status("rsync-test") == "ACTIVE", (
-        "rsync-test did not reach ACTIVE after worker restart"
-    )
+        assert lastsync_after > lastsync_before
 
 
 @pytest.mark.integration
@@ -34,25 +40,31 @@ def test_master_handles_worker_unavailable(mirror_stack):
     Stops the worker, triggers a sync (expected to error or stay pending), then
     restarts the worker and confirms a subsequent sync completes.
     """
-    mirror_stack.stop_process("worker")
+    with temporary_rsync_package(
+        mirror_stack, "worker-unavailable-rsync"
+    ) as pkgid:
+        mirror_stack.stop_process("worker")
 
-    # Give master a moment to notice the worker is gone.
-    time.sleep(3)
+        # Give master a moment to notice the worker is gone.
+        time.sleep(3)
 
-    # Attempt to trigger a sync while worker is down; may fail gracefully.
-    try:
-        mirror_stack.trigger_sync("rsync-test")
-    except Exception:
-        # Trigger may raise if master cannot reach worker — that is acceptable.
-        pass
+        # The master accepts the request, while worker delegation fails in the
+        # async runner and records an ERROR generation.
+        mirror_stack.trigger_sync(pkgid)
+        mirror_stack.wait_for_status(pkgid, "ERROR", timeout=30)
+        failed_lastsync = mirror_stack.package_lastsync(pkgid)
+        assert failed_lastsync > 0
 
-    mirror_stack.start_process("worker")
-    mirror_stack.wait_for_worker_ready(timeout=30)
+        mirror_stack.start_process("worker")
+        mirror_stack.wait_for_worker_ready(timeout=30)
+        runtime_package = mirror_stack.runtime_package(pkgid)
+        assert runtime_package["status"]["status"] == "ERROR"
 
-    # After worker comes back, a fresh sync must succeed.
-    mirror_stack.trigger_sync("rsync-test")
-    mirror_stack.wait_for_status("rsync-test", "ACTIVE", timeout=30)
-
-    assert mirror_stack.package_status("rsync-test") == "ACTIVE", (
-        "rsync-test did not reach ACTIVE after worker was stopped and restarted"
-    )
+        # After worker comes back, a fresh sync must advance lastsync. Merely
+        # observing the package's old ACTIVE state would not prove recovery.
+        lastsync_before = failed_lastsync
+        mirror_stack.trigger_sync(pkgid)
+        lastsync_after = mirror_stack.wait_for_new_active_sync(
+            pkgid, lastsync_before, timeout=30
+        )
+        assert lastsync_after > lastsync_before

@@ -347,30 +347,65 @@ class TestStandaloneIntegration:
         assert (dst / "file.txt").read_text() == "hello standalone"
         assert (dst / "sub" / "nested.txt").read_text() == "nested"
 
-    def test_no_stat_or_status_json_written(self, tmp_path):
-        """standalone does not write stat.json or status.json in the minimal config dir."""
+    def test_no_stat_or_status_json_written(self, tmp_path, monkeypatch):
+        """standalone does not write configured or process-global state files."""
+        import importlib
+
         import mirror
+        import mirror.config
+        import mirror.sync
+
+        standalone_module = importlib.import_module("mirror.command.standalone")
+
         dst = tmp_path / "dst"
         dst.mkdir()
         state = tmp_path / "state"
         state.mkdir()
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        configured_status_path = config_dir / "status.json"
+        global_status_path = tmp_path / "global-status.json"
+        global_stat_path = tmp_path / "global-stat.json"
+
+        real_build_minimal_config = standalone_module._build_minimal_config
+
+        def build_minimal_config_in_tmp_path():
+            with patch.object(
+                standalone_module.tempfile,
+                "mkdtemp",
+                return_value=str(config_dir),
+            ):
+                return real_build_minimal_config()
+
+        monkeypatch.setattr(
+            standalone_module,
+            "_build_minimal_config",
+            build_minimal_config_in_tmp_path,
+        )
+        monkeypatch.setattr(
+            mirror.config, "STATUS_PATH", global_status_path, raising=False
+        )
+        monkeypatch.setattr(
+            mirror.config, "STAT_DATA_PATH", global_stat_path, raising=False
+        )
+        monkeypatch.setattr(mirror, "conf", object(), raising=False)
+        monkeypatch.setattr(mirror, "packages", object(), raising=False)
+        monkeypatch.setattr(mirror, "STATE_PATH", state)
+        monkeypatch.setattr(mirror.sync, "_standalone_mode", False)
+        monkeypatch.setattr(
+            mirror.sync,
+            "_standalone_result",
+            dict(mirror.sync._standalone_result),
+        )
 
         runner = CliRunner()
-        runner.invoke(main, [
+        result = runner.invoke(main, [
             "standalone", "local",
             "--dst", str(dst),
             "--state-dir", str(state),
         ])
-
-        # The minimal config's temp dir should not contain stat.json.
-        # We check the common locations for any stat.json leakage.
-        stat_candidates = list(tmp_path.rglob("stat.json"))
-        assert not stat_candidates, f"stat.json was written unexpectedly: {stat_candidates}"
-
-        # status.json must not be written either. The minimal config points
-        # webroot/statusfile at a private temp dir; scan both the test tree and
-        # any temp dirs the minimal config could have created.
-        status_candidates = list(tmp_path.rglob("status.json"))
-        assert not status_candidates, (
-            f"status.json was written unexpectedly: {status_candidates}"
-        )
+        assert result.exit_code == 0, result.output
+        assert mirror.conf.statusfile == configured_status_path
+        assert not configured_status_path.exists()
+        assert not global_status_path.exists()
+        assert not global_stat_path.exists()

@@ -6,24 +6,10 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 import mirror
-from mirror.sync import _start_lock, start
+from mirror.sync import start
 import mirror.sync as sync_mod
 
-
-@pytest.fixture(autouse=True)
-def _clear_sync_extras():
-    with _start_lock:
-        sync_mod._extra_args.clear()
-        sync_mod._watchdog_fired.clear()
-    yield
-    with _start_lock:
-        sync_mod._extra_args.clear()
-        sync_mod._watchdog_fired.clear()
-
-
-@pytest.fixture(autouse=True)
-def _mock_mirror_log(monkeypatch):
-    monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
+pytestmark = pytest.mark.usefixtures("clean_sync_state", "mock_mirror_log")
 
 
 def _make_pkg(pkgid: str = "race"):

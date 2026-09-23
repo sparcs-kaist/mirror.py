@@ -1,0 +1,22 @@
+#!/bin/sh
+
+ready_file=/tmp/mirror-slow-rsync.ready
+release_file=/tmp/mirror-slow-rsync.release
+remaining=600
+
+cleanup() {
+    rm -f "$ready_file"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+printf '%s\n' "$$" > "$ready_file"
+while [ "$remaining" -gt 0 ]; do
+    if [ -e "$release_file" ]; then
+        exit 0
+    fi
+    sleep 0.1
+    remaining=$((remaining - 1))
+done
+
+exit 1

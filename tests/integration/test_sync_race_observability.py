@@ -13,6 +13,12 @@ import time
 
 import pytest
 
+from .helpers import (
+    release_slow_rsync_gate,
+    temporary_rsync_package,
+    wait_for_slow_rsync_gate,
+)
+
 
 # ---------------------------------------------------------------------------
 # Module constants
@@ -115,9 +121,10 @@ def test_clean_completion_emits_no_race_lines(mirror_stack):
 
     offset = _master_log_tail_offset(mirror_stack)
     errorcount_before = mirror_stack.package_errorcount(pkgid)
+    lastsync_before = mirror_stack.package_lastsync(pkgid)
 
     mirror_stack.trigger_sync(pkgid)
-    mirror_stack.wait_for_status(pkgid, "ACTIVE", timeout=60)
+    mirror_stack.wait_for_new_active_sync(pkgid, lastsync_before, timeout=60)
 
     time.sleep(POST_COMPLETION_OBSERVATION_SECONDS)
 
@@ -189,6 +196,10 @@ def test_multi_package_concurrent_completion(mirror_stack):
             pkgid: mirror_stack.package_errorcount(pkgid)
             for pkgid in race_pkgids
         }
+        lastsync_before = {
+            pkgid: mirror_stack.package_lastsync(pkgid)
+            for pkgid in race_pkgids
+        }
 
         # Trigger all 6 syncs concurrently.
         with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
@@ -200,7 +211,9 @@ def test_multi_package_concurrent_completion(mirror_stack):
                 f.result()
 
         for pkgid in race_pkgids:
-            mirror_stack.wait_for_status(pkgid, "ACTIVE", timeout=90)
+            mirror_stack.wait_for_new_active_sync(
+                pkgid, lastsync_before[pkgid], timeout=90
+            )
 
         time.sleep(POST_COMPLETION_OBSERVATION_SECONDS)
 
@@ -244,43 +257,77 @@ def test_get_progress_hammer_during_sync(mirror_stack):
     finishing. Verifies that no race-trigger log lines appear after the
     observation window elapses.
     """
-    pkgid = "rsync-test"
+    with temporary_rsync_package(
+        mirror_stack, "rsync-progress-hammer", slow=True
+    ) as pkgid:
+        offset = _master_log_tail_offset(mirror_stack)
+        errorcount_before = mirror_stack.package_errorcount(pkgid)
+        lastsync_before = mirror_stack.package_lastsync(pkgid)
 
-    offset = _master_log_tail_offset(mirror_stack)
-    errorcount_before = mirror_stack.package_errorcount(pkgid)
+        mirror_stack.trigger_sync(pkgid)
+        wait_for_slow_rsync_gate()
+        assert mirror_stack.worker_progress(pkgid)["syncing"] is True
 
-    mirror_stack.trigger_sync(pkgid)
+        stop_event = threading.Event()
+        hammer_deadline = time.monotonic() + 30
+        count_lock = threading.Lock()
+        successful_rpc_count = 0
+        running_probe_count = 0
 
-    stop_event = threading.Event()
-    hammer_deadline = time.monotonic() + 70
+        def _hammer():
+            nonlocal successful_rpc_count, running_probe_count
+            while not stop_event.is_set() and time.monotonic() < hammer_deadline:
+                result = mirror_stack.docker_exec(
+                    "python", "-c",
+                    "from mirror.socket.worker import is_worker_running; "
+                    f"print(is_worker_running({pkgid!r}))",
+                    check=False,
+                )
+                if result.returncode != 0:
+                    continue
+                output = result.stdout.strip().splitlines()
+                with count_lock:
+                    successful_rpc_count += 1
+                    if output and output[-1] == "True":
+                        running_probe_count += 1
 
-    def _hammer():
-        while not stop_event.is_set() and time.monotonic() < hammer_deadline:
-            mirror_stack.docker_exec(
-                "python", "-c",
-                "from mirror.socket.worker import is_worker_running; "
-                "print(is_worker_running('rsync-test'))",
-                check=False,
-            )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
+            futures = [executor.submit(_hammer) for _ in range(16)]
+            try:
+                probe_deadline = time.monotonic() + 10
+                while time.monotonic() < probe_deadline:
+                    with count_lock:
+                        if running_probe_count >= 16:
+                            break
+                    time.sleep(0.1)
+                with count_lock:
+                    observed_running_probes = running_probe_count
+                assert observed_running_probes >= 16, (
+                    "hammer did not complete enough successful probes while "
+                    f"the gated job was running: {observed_running_probes}"
+                )
+                assert mirror_stack.worker_progress(pkgid)["syncing"] is True
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-        futures = [executor.submit(_hammer) for _ in range(16)]
-        try:
-            mirror_stack.wait_for_status(pkgid, "ACTIVE", timeout=60)
-        finally:
-            stop_event.set()
+                release_slow_rsync_gate()
+                mirror_stack.wait_for_new_active_sync(
+                    pkgid, lastsync_before, timeout=30
+                )
+            finally:
+                release_slow_rsync_gate()
+                stop_event.set()
+
+        for future in futures:
+            future.result()
+
+        with count_lock:
+            assert successful_rpc_count >= 16
 
         time.sleep(POST_COMPLETION_OBSERVATION_SECONDS)
-        # ThreadPoolExecutor.__exit__ joins all workers.
+        log_slice = _read_master_log_slice(mirror_stack, offset)
+        _assert_no_race_lines(log_slice)
 
-    for f in futures:
-        f.result()
-
-    log_slice = _read_master_log_slice(mirror_stack, offset)
-    _assert_no_race_lines(log_slice)
-
-    assert mirror_stack.package_errorcount(pkgid) == errorcount_before, (
-        f"errorcount changed after hammer test: "
-        f"before={errorcount_before}, "
-        f"after={mirror_stack.package_errorcount(pkgid)}"
-    )
+        assert mirror_stack.package_errorcount(pkgid) == errorcount_before, (
+            f"errorcount changed after hammer test: "
+            f"before={errorcount_before}, "
+            f"after={mirror_stack.package_errorcount(pkgid)}"
+        )

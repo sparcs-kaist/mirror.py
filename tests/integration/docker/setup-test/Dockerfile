@@ -6,8 +6,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rsync lftp git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir bandersnatch==6.5.0
-
 COPY dist/mirror_py-*.whl /tmp/
 RUN python3 -m pip install --no-cache-dir /tmp/mirror_py-*.whl
 

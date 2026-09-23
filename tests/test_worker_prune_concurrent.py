@@ -1,67 +1,36 @@
 """Concurrency tests for prune_finished: exactly-once notification and collision-safe re-insert."""
-import os
+import multiprocessing
 import threading
 import time
-from contextlib import contextmanager
 from unittest.mock import patch
-
-import mirror.socket.worker as _original_worker_mod
 
 from mirror.worker import process
 
 
-class _FinishedFakePopen:
-    def __init__(self, *args, **kwargs):
-        self.pid = 1
-        self.returncode = 0
-        self.stdin = None
-        self.stdout = None
-        self.stderr = None
+class _FinishedJob:
+    """Minimal finished job used in the isolated concurrency check."""
 
-    def poll(self):
-        return 0
+    _notify_attempts = 0
+    returncode = 0
+    is_running = False
 
-    def terminate(self):
+    def reap(self) -> None:
         pass
 
-    def wait(self, timeout=None):
-        return 0
 
+def _run_concurrent_prune(connection) -> None:
+    """Exercise concurrent pruning in a child so a deadlock cannot hang pytest."""
+    import mirror.socket.worker as worker_module
 
-def _setup_fresh_job(job_id: str) -> process.Job:
-    """Create a finished job in _jobs with completely clean state."""
-    with process._jobs_lock:
-        process._jobs.pop(job_id, None)
-
-    with patch("mirror.worker.process.subprocess.Popen", _FinishedFakePopen):
-        return process.create(job_id, ["true"], {}, os.getuid(), os.getgid(), 0)
-
-
-@contextmanager
-def _patch_notification(fn):
-    """Patch send_finished_notification on all possible module locations."""
-    import mirror.socket
-
-    current_worker = getattr(mirror.socket, "worker", _original_worker_mod)
-    if not hasattr(current_worker, "send_finished_notification"):
-        current_worker = _original_worker_mod
-
-    if _original_worker_mod is current_worker:
-        with patch.object(_original_worker_mod, "send_finished_notification", fn):
-            yield
-    else:
-        with patch.object(_original_worker_mod, "send_finished_notification", fn):
-            with patch.object(current_worker, "send_finished_notification", fn):
-                yield
-
-
-def test_concurrent_prune_notifies_once():
-    """N threads calling prune_finished simultaneously must notify exactly once per wid."""
     wid = "conc_test"
-    _setup_fresh_job(wid)
+    with process._jobs_lock:
+        process._jobs.clear()
+        process._jobs[wid] = _FinishedJob()
 
-    call_args = []
+    call_args: list[str] = []
     call_lock = threading.Lock()
+    thread_errors: list[str] = []
+    error_lock = threading.Lock()
 
     def _slow_notify(job_id, success, returncode):
         time.sleep(0.05)
@@ -71,33 +40,86 @@ def test_concurrent_prune_notifies_once():
     barrier = threading.Barrier(10)
 
     def _worker():
-        barrier.wait()
-        process.prune_finished()
+        try:
+            barrier.wait(timeout=2.0)
+            process.prune_finished()
+        except BaseException as exc:
+            with error_lock:
+                thread_errors.append(repr(exc))
 
     try:
-        with _patch_notification(_slow_notify):
-            threads = [threading.Thread(target=_worker) for _ in range(10)]
+        with patch.object(worker_module, "send_finished_notification", _slow_notify):
+            threads = [threading.Thread(target=_worker, daemon=True) for _ in range(10)]
             for t in threads:
                 t.start()
-            for t in threads:
-                t.join(timeout=5)
 
-        wid_calls = [a for a in call_args if a == wid]
-        assert len(wid_calls) == 1, (
-            f"Expected exactly 1 notification for {wid}, got {len(wid_calls)}"
+            deadline = time.monotonic() + 4.0
+            for t in threads:
+                t.join(timeout=max(0.0, deadline - time.monotonic()))
+
+        alive = sum(t.is_alive() for t in threads)
+        if alive:
+            connection.send({"alive": alive, "errors": thread_errors})
+            return
+
+        with process._jobs_lock:
+            job_remains = wid in process._jobs
+        connection.send(
+            {
+                "alive": 0,
+                "errors": thread_errors,
+                "calls": call_args,
+                "job_remains": job_remains,
+            }
         )
     finally:
-        with process._jobs_lock:
-            process._jobs.pop(wid, None)
+        connection.close()
 
 
-def test_collision_safe_reinsert():
+def test_concurrent_prune_notifies_once():
+    """N threads calling prune_finished simultaneously must notify exactly once per wid."""
+    context = multiprocessing.get_context("spawn")
+    receive, send = context.Pipe(duplex=False)
+    child = context.Process(target=_run_concurrent_prune, args=(send,))
+    child.start()
+    send.close()
+    child.join(timeout=6.0)
+
+    try:
+        if child.is_alive():
+            child.terminate()
+            child.join(timeout=2.0)
+            if child.is_alive():
+                child.kill()
+                child.join(timeout=2.0)
+            raise AssertionError("concurrent prune child process deadlocked")
+
+        assert child.exitcode == 0, f"concurrent prune child exited with {child.exitcode}"
+        assert receive.poll(timeout=1.0), "concurrent prune child returned no result"
+        result = receive.recv()
+        assert result["alive"] == 0, f"prune threads did not finish: {result}"
+        assert result["errors"] == [], f"prune thread failed: {result['errors']}"
+        assert result["calls"] == ["conc_test"]
+        assert result["job_remains"] is False
+    finally:
+        receive.close()
+        if child.is_alive():
+            child.kill()
+            child.join(timeout=2.0)
+        if not child.is_alive():
+            child.close()
+
+
+def test_collision_safe_reinsert(
+    finished_job_factory,
+    patch_worker_notification,
+):
     """When notification fails and a new job J2 occupies the wid, J1 must not overwrite J2."""
     wid = "coll_test"
-    j1 = _setup_fresh_job(wid)
+    j1 = finished_job_factory(wid)
     j1._notify_attempts = 0
 
-    j2 = _setup_fresh_job("coll_test_j2_placeholder")
+    j2 = finished_job_factory("coll_test_j2_placeholder")
     with process._jobs_lock:
         process._jobs.pop("coll_test_j2_placeholder", None)
 
@@ -107,7 +129,7 @@ def test_collision_safe_reinsert():
         raise ConnectionError("no client")
 
     try:
-        with _patch_notification(_inject_and_raise):
+        with patch_worker_notification(_inject_and_raise):
             with patch("mirror.worker.process.logger") as mock_logger:
                 process.prune_finished()
 

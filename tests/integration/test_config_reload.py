@@ -13,6 +13,8 @@ import time
 
 import pytest
 
+from .helpers import write_container_config
+
 
 # Runtime fields that background auto-sync mutates independently of config reload.
 _VOLATILE_PKG_FIELDS = {"status", "lastsync", "timestamp", "statusinfo"}
@@ -51,12 +53,7 @@ def test_add_remove_package_via_master_restart(mirror_stack):
     4. Assert 'rsync-extra' appears in stat.json within 30s.
     5. Remove the package, restart master again, assert it disappears.
     """
-    # Read current config from the container.
-    result = mirror_stack.docker_exec(
-        "cat", "/etc/mirror/config.json",
-    )
-    assert result.returncode == 0, f"Failed to read config.json: {result.stderr}"
-    config = json.loads(result.stdout)
+    config = _read_config(mirror_stack)
 
     # Add rsync-extra package.
     config["packages"]["rsync-extra"] = {
@@ -74,18 +71,7 @@ def test_add_remove_package_via_master_restart(mirror_stack):
         },
     }
 
-    new_config_json = json.dumps(config, indent=2)
-
-    # Write it back via docker exec tee.
-    import subprocess
-    write_result = subprocess.run(
-        ["docker", "exec", "-i", "mirror", "tee", "/etc/mirror/config.json"],
-        input=new_config_json.encode(),
-        capture_output=True,
-    )
-    assert write_result.returncode == 0, (
-        f"Failed to write new config.json: {write_result.stderr.decode()}"
-    )
+    _write_config(config)
 
     mirror_stack.restart_process("master")
     mirror_stack.wait_for_master_ready(timeout=30)
@@ -108,16 +94,7 @@ def test_add_remove_package_via_master_restart(mirror_stack):
 
     # Remove rsync-extra and verify disappearance.
     del config["packages"]["rsync-extra"]
-    new_config_json = json.dumps(config, indent=2)
-
-    write_result = subprocess.run(
-        ["docker", "exec", "-i", "mirror", "tee", "/etc/mirror/config.json"],
-        input=new_config_json.encode(),
-        capture_output=True,
-    )
-    assert write_result.returncode == 0, (
-        f"Failed to restore config.json: {write_result.stderr.decode()}"
-    )
+    _write_config(config)
 
     mirror_stack.restart_process("master")
     mirror_stack.wait_for_master_ready(timeout=30)
@@ -157,6 +134,21 @@ _RSYNC_EXTRA_PKG = {
     },
 }
 
+_RSYNC_SLOW_PKG = {
+    "name": "rsync-slow",
+    "id": "rsync-slow",
+    "href": "/rsync-slow",
+    "synctype": "rsync",
+    "syncrate": "PT0S",
+    "link": [],
+    "settings": {
+        "hidden": False,
+        "src": "rsync://rsync-fixture/slow",
+        "dst": "/srv/publish/rsync-slow",
+        "options": {"username": "", "password": ""},
+    },
+}
+
 
 def _write_config(config: dict) -> None:
     """Write a config dict to /etc/mirror/config.json inside the container via docker exec tee.
@@ -164,15 +156,7 @@ def _write_config(config: dict) -> None:
     Args:
         config(dict): Configuration dictionary to serialize and write.
     """
-    config_json = json.dumps(config, indent=2)
-    result = subprocess.run(
-        ["docker", "exec", "-i", "mirror", "tee", "/etc/mirror/config.json"],
-        input=config_json.encode(),
-        capture_output=True,
-    )
-    assert result.returncode == 0, (
-        f"Failed to write config.json: {result.stderr.decode()!r}"
-    )
+    write_container_config("mirror", json.dumps(config, indent=2))
 
 
 def _read_config(mirror_stack) -> dict:
@@ -256,6 +240,82 @@ def _read_master_log(mirror_stack) -> str:
         "journalctl", "-u", "mirror.service", "--no-pager", "-n", "200", check=False
     )
     return result.stdout if result.returncode == 0 else ""
+
+
+def _fixture_exec(*args: str, check: bool = False) -> subprocess.CompletedProcess:
+    """Run a command inside the rsync fixture container."""
+    return subprocess.run(
+        ["docker", "exec", "rsync-fixture", *args],
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+
+
+def _wait_for_slow_gate(timeout: float = 10) -> None:
+    """Wait until the slow rsync module reaches its bounded pre-transfer gate."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = _fixture_exec("test", "-e", "/tmp/mirror-slow-rsync.ready")
+        if result.returncode == 0:
+            return
+        time.sleep(0.1)
+    raise TimeoutError("slow rsync did not reach the pre-transfer gate")
+
+
+def _release_slow_gate() -> None:
+    """Release the gate and wait for its hook process to clean up readiness."""
+    ready_path = "/tmp/mirror-slow-rsync.ready"
+    release_path = "/tmp/mirror-slow-rsync.release"
+    _fixture_exec("touch", release_path)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if _fixture_exec("test", "-e", ready_path).returncode != 0:
+            break
+        time.sleep(0.1)
+    else:
+        result = _fixture_exec("cat", ready_path)
+        pid = result.stdout.strip()
+        if pid.isdigit():
+            _fixture_exec("kill", "-TERM", pid)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if _fixture_exec("test", "-e", ready_path).returncode != 0:
+                    break
+                time.sleep(0.1)
+            else:
+                _fixture_exec("kill", "-KILL", pid)
+    _fixture_exec("rm", "-f", ready_path, release_path)
+
+
+def _worker_progress(mirror_stack, pkgid: str) -> dict:
+    """Read one job's live progress from the real worker socket."""
+    script = (
+        "import json\n"
+        "from mirror.socket.worker import get_progress\n"
+        f"print(json.dumps(get_progress({pkgid!r})))\n"
+    )
+    result = mirror_stack.docker_exec("python3", "-c", script, check=False)
+    assert result.returncode == 0, (
+        f"worker progress RPC failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def _reload_result(mirror_stack) -> dict:
+    """Request reload through the master RPC and return its complete result."""
+    script = (
+        "import json\n"
+        "from pathlib import Path\n"
+        "from mirror.socket.master import reload\n"
+        "socket_path = Path('/var/run/mirror/master.sock.path').read_text().strip()\n"
+        "print(json.dumps(reload(socket_path=socket_path)))\n"
+    )
+    result = mirror_stack.docker_exec("python3", "-c", script, check=False)
+    assert result.returncode == 0, (
+        f"reload RPC failed: stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    return json.loads(result.stdout.strip().splitlines()[-1])
 
 
 # ---------------------------------------------------------------------------
@@ -478,12 +538,7 @@ def test_malformed_config_no_state_change(mirror_stack):
     original_config = _read_config(mirror_stack)
 
     # Write malformed config.
-    garbage_result = subprocess.run(
-        ["docker", "exec", "-i", "mirror", "tee", "/etc/mirror/config.json"],
-        input=b"not valid json {{{",
-        capture_output=True,
-    )
-    assert garbage_result.returncode == 0, "Failed to write garbage config.json"
+    write_container_config("mirror", "not valid json {{{")
 
     try:
         result = _cli_reload(mirror_stack)
@@ -493,10 +548,13 @@ def test_malformed_config_no_state_change(mirror_stack):
         )
 
         stat_after = mirror_stack.docker_exec("cat", "/var/lib/mirror/stat.json", check=False)
-        if stat_after.returncode == 0:
-            assert _config_invariant(json.loads(stat_after.stdout)) == stat_snapshot, (
-                "package definitions changed after malformed-config reload; expected no change"
-            )
+        assert stat_after.returncode == 0, (
+            "stat.json became unreadable after malformed-config reload: "
+            f"stderr={stat_after.stderr!r}"
+        )
+        assert _config_invariant(json.loads(stat_after.stdout)) == stat_snapshot, (
+            "package definitions changed after malformed-config reload; expected no change"
+        )
 
     finally:
         # Restore original config and verify daemon is still functional.
@@ -548,26 +606,75 @@ def test_concurrent_cli_reloads(mirror_stack):
 
 
 @pytest.mark.integration
-@pytest.mark.skip(
-    reason=(
-        "Requires a reliably slow sync fixture to guarantee the package is "
-        "in-flight when the removal reload fires. The current rsync-fixture does "
-        "not support bandwidth throttling via package settings, and injecting a "
-        "sleep into the sync runner is not available at runtime without a custom "
-        "fixture. TODO: add a 'slow-rsync' docker service that throttles to "
-        "~10 KB/s and update this test to use it."
-    )
-)
 def test_in_flight_package_killed_on_remove(mirror_stack):
     """Removing a package while its sync is in-flight kills the subprocess.
 
-    Goals:
-    1. Add a package configured for a slow rsync sync.
-    2. Trigger sync and verify SYNC status.
-    3. Remove the package from config, run ``mirror config reload``.
-    4. Assert ``killed_inflight`` in reload result contains the pkgid.
-    5. Assert stat.json no longer contains the pkgid.
-    6. Assert master log shows kill and resilient on_sync_done messages.
+    The fixture's pre-transfer hook publishes a readiness file and waits for a
+    release file for at most 60 seconds. This makes the remove reload race-free
+    while still bounding a failed test's lifetime.
     """
-    # This test is skipped; see reason above.
-    pass
+    pkgid = "rsync-slow"
+    original_config = _read_config(mirror_stack)
+    _fixture_exec(
+        "rm",
+        "-f",
+        "/tmp/mirror-slow-rsync.ready",
+        "/tmp/mirror-slow-rsync.release",
+    )
+
+    try:
+        config = _read_config(mirror_stack)
+        config["packages"][pkgid] = _RSYNC_SLOW_PKG.copy()
+        _write_config(config)
+        add_result = _reload_result(mirror_stack)
+        assert add_result["status"] == "ok"
+        assert pkgid in add_result["added"]
+
+        mirror_stack.trigger_sync(pkgid)
+        _wait_for_slow_gate()
+
+        progress = _worker_progress(mirror_stack, pkgid)
+        assert progress["syncing"] is True
+        worker_pid = progress["info"]["pid"]
+        assert isinstance(worker_pid, int) and worker_pid > 0
+        assert mirror_stack.docker_exec(
+            "kill", "-0", str(worker_pid), check=False
+        ).returncode == 0
+
+        config = _read_config(mirror_stack)
+        config["packages"].pop(pkgid)
+        _write_config(config)
+        remove_result = _reload_result(mirror_stack)
+
+        assert remove_result["status"] == "ok"
+        assert pkgid in remove_result["removed"]
+        assert pkgid in remove_result["killed_inflight"]
+        assert pkgid not in remove_result["killed_timeout"]
+        assert _poll_stat_for_pkg(mirror_stack, pkgid, present=False, timeout=5)
+
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if mirror_stack.docker_exec(
+                "kill", "-0", str(worker_pid), check=False
+            ).returncode != 0:
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail(f"worker process {worker_pid} survived package removal")
+
+        responsive = _cli_reload(mirror_stack)
+        assert responsive.returncode == 0, (
+            "master stopped responding after in-flight package removal: "
+            f"stderr={responsive.stderr!r}"
+        )
+    finally:
+        _release_slow_gate()
+        mirror_stack.docker_exec(
+            "python3",
+            "-c",
+            "from mirror.socket.worker import stop_command; "
+            "stop_command(job_id='rsync-slow')",
+            check=False,
+        )
+        _write_config(original_config)
+        _cli_reload(mirror_stack)

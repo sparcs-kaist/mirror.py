@@ -13,16 +13,6 @@ def mock_server():
         yield mock
 
 @pytest.fixture
-def mock_signal():
-    with patch("signal.signal") as mock:
-        yield mock
-
-@pytest.fixture
-def mock_sys_exit():
-    with patch("sys.exit") as mock:
-        yield mock
-
-@pytest.fixture
 def mock_logging():
     with patch("logging.basicConfig") as mock_basic:
         with patch("logging.getLogger") as mock_get:

@@ -109,7 +109,7 @@ def test_execute_delegates_static_worker_wrapper(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(mirror.socket.worker, "execute_command", execute_command)
     monkeypatch.setattr(mirror.sync, "get_extra_args", lambda pkgid: {"TOKEN": "value"})
     monkeypatch.setattr(mirror.sync, "on_sync_done", MagicMock())
-    mirror.conf = MagicMock(uid=123, gid=456)
+    monkeypatch.setattr(mirror, "conf", MagicMock(uid=123, gid=456), raising=False)
 
     mirror.sync.apt_mirror2.execute(package, logger)
 
@@ -259,7 +259,7 @@ def test_run_payload_rejects_existing_destination_symlink(
 def test_terminate_child_escalates_after_two_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
     process = MagicMock()
     process.wait.side_effect = [mirror.sync.apt_mirror2.subprocess.TimeoutExpired("apt", 2), 0]
-    mirror.sync.apt_mirror2._ACTIVE_PROCESS = process
+    monkeypatch.setattr(mirror.sync.apt_mirror2, "_ACTIVE_PROCESS", process)
 
     with pytest.raises(SystemExit, match="143"):
         mirror.sync.apt_mirror2._terminate_child(signal.SIGTERM, None)

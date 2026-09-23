@@ -16,49 +16,6 @@ import mirror.sync
 # Shared config builders
 # ---------------------------------------------------------------------------
 
-def _make_settings(tmp_path: Path, **overrides) -> dict:
-    base = {
-        "logfolder": str(tmp_path / "logs"),
-        "webroot": str(tmp_path / "web"),
-        "statusfile": str(tmp_path / "status.json"),
-        "statfile": str(tmp_path / "stat.json"),
-        "socket_path": str(tmp_path / "mirror.sock"),
-        "uid": 1000,
-        "gid": 1000,
-        "localtimezone": "UTC",
-        "errorcontinuetime": 60,
-        "maintainer": {"name": "Test", "email": "t@t.com"},
-        "logger": {
-            "level": "INFO",
-            "packagelevel": "ERROR",
-            "format": "[%(asctime)s] %(levelname)s # %(message)s",
-            "packageformat": "[%(asctime)s][{package}] %(levelname)s # %(message)s",
-            "fileformat": {
-                "base": str(tmp_path / "logs"),
-                "folder": "{year}/{month}",
-                "filename": "{year}-{month}-{day}.log",
-                "gzip": False,
-            },
-            "packagefileformat": {
-                "base": str(tmp_path / "logs" / "packages"),
-                "folder": "{year}/{month}/{day}",
-                "filename": "{packageid}.{hour}.log",
-                "gzip": False,
-            },
-        },
-        "ftpsync": {
-            "maintainer": "M",
-            "sponsor": "S",
-            "country": "KR",
-            "location": "Seoul",
-            "throughput": "1G",
-        },
-        "plugins": [],
-    }
-    base.update(overrides)
-    return base
-
-
 def _make_pkg_entry(pkgid: str, src: str = "rsync://src/a", syncrate: str = "PT1H") -> dict:
     return {
         "id": pkgid,
@@ -76,13 +33,17 @@ def _make_pkg_entry(pkgid: str, src: str = "rsync://src/a", syncrate: str = "PT1
     }
 
 
-def _make_config(tmp_path: Path, packages: dict, **settings_overrides) -> dict:
-    return {
-        "mirrorname": "TestMirror",
-        "hostname": "test.local",
-        "settings": _make_settings(tmp_path, **settings_overrides),
-        "packages": packages,
-    }
+@pytest.fixture
+def make_config(reload_settings_factory):
+    def build_config(tmp_path: Path, packages: dict, **settings_overrides) -> dict:
+        return {
+            "mirrorname": "TestMirror",
+            "hostname": "test.local",
+            "settings": reload_settings_factory(tmp_path, **settings_overrides),
+            "packages": packages,
+        }
+
+    return build_config
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +51,7 @@ def _make_config(tmp_path: Path, packages: dict, **settings_overrides) -> dict:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def reload_env(tmp_path, monkeypatch):
+def reload_env(tmp_path, monkeypatch, make_config):
     """Initialize mirror.config global state with a single known package."""
     # Restore mirror.toolbox to the real implementation in case a previous test
     # replaced it with a mock (e.g. test_example_config.py does this globally).
@@ -108,7 +69,7 @@ def reload_env(tmp_path, monkeypatch):
 
     # Seed one package in the running state.
     initial_pkgs = {"pkg-one": _make_pkg_entry("pkg-one")}
-    initial_cfg = _make_config(tmp_path, initial_pkgs)
+    initial_cfg = make_config(tmp_path, initial_pkgs)
     config_path.write_text(json.dumps(initial_cfg))
     stat_path.write_text(json.dumps({"packages": {}}))
     status_path.write_text(json.dumps({}))
@@ -142,6 +103,7 @@ def reload_env(tmp_path, monkeypatch):
         "status_path": status_path,
         "initial_cfg": initial_cfg,
         "initial_pkgs": initial_pkgs,
+        "make_config": make_config,
     }
 
     # Clean up sync state.
@@ -156,7 +118,7 @@ def reload_env(tmp_path, monkeypatch):
 
 def _write_config(env: dict, packages: dict, **settings_overrides) -> None:
     tmp_path = env["tmp_path"]
-    new_cfg = _make_config(tmp_path, packages, **settings_overrides)
+    new_cfg = env["make_config"](tmp_path, packages, **settings_overrides)
     env["config_path"].write_text(json.dumps(new_cfg))
 
 
@@ -306,7 +268,7 @@ def test_perform_reload_plugin_change_warns_and_ignores(reload_env):
     registry_before = dict(mirror.plugin._registry)
 
     # Write config with a non-empty plugins dict (different from current empty state).
-    new_cfg = _make_config(
+    new_cfg = reload_env["make_config"](
         reload_env["tmp_path"],
         reload_env["initial_pkgs"],
     )

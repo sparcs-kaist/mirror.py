@@ -31,15 +31,15 @@ def _network_available() -> bool:
         return False
 
 
-requires_git_remote = pytest.mark.skipif(
-    shutil.which("git") is None or not _network_available(),
-    reason="git unavailable or archvsync remote unreachable",
-)
+def _require_git_remote() -> None:
+    """Skip at test execution time when the live clone prerequisite is absent."""
+    if shutil.which("git") is None or not _network_available():
+        pytest.skip("git unavailable or archvsync remote unreachable")
 
 
-@requires_git_remote
 def test_clone_archvsync_fetches_usable_tree(tmp_path):
     """_clone_archvsync clones a tree containing an executable bin/ftpsync."""
+    _require_git_remote()
     ok = ftpsync_mod._clone_archvsync(tmp_path)
     assert ok, "_clone_archvsync reported failure against the real remote"
 
@@ -51,7 +51,6 @@ def test_clone_archvsync_fetches_usable_tree(tmp_path):
     assert "getopts T:" in content, "cloned ftpsync does not accept the -T INFO_TRIGGER flag"
 
 
-@requires_git_remote
 def test_setup_ftpsync_uses_clone_path_end_to_end(tmp_path, monkeypatch):
     """setup_ftpsync, with git present, provisions via clone and is consumable.
 
@@ -59,6 +58,7 @@ def test_setup_ftpsync_uses_clone_path_end_to_end(tmp_path, monkeypatch):
     setup_ftpsync entry point and produces an executable bin/ftpsync plus a
     written ftpsync.conf.
     """
+    _require_git_remote()
     from unittest.mock import MagicMock
 
     import mirror

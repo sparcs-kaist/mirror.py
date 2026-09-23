@@ -16,6 +16,8 @@ import mirror
 import mirror.structure
 import mirror.sync
 
+pytestmark = pytest.mark.usefixtures("stub_mirror_event")
+
 
 def _make_package() -> mirror.structure.Package:
     settings = mirror.structure.PackageSettings(hidden=False, src="x", dst="y", options={})
@@ -29,11 +31,6 @@ def _make_package() -> mirror.structure.Package:
         link=[],
         settings=settings,
     )
-
-
-@pytest.fixture(autouse=True)
-def _stub_event(monkeypatch):
-    monkeypatch.setattr("mirror.event.post_event", lambda *a, **kw: None)
 
 
 def test_active_sets_lastsuccesslog():
@@ -143,5 +140,4 @@ def test_on_sync_done_records_post_compression_path(tmp_path, monkeypatch):
         f"Expected post-compression path; got {pkg.statusinfo.lastsuccesslog!r}"
     )
     assert pkg.statusinfo.lastsuccesslog != str(pre_path)
-
 

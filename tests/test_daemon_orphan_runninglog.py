@@ -22,32 +22,6 @@ from mirror.command.daemon import (
 )
 
 
-@pytest.fixture
-def mock_master_server():
-    with patch("mirror.socket.master.MasterServer") as mock:
-        yield mock
-
-
-@pytest.fixture
-def mock_dependencies():
-    with patch("mirror.config.load"), \
-         patch("mirror.logger.setup_logger"), \
-         patch("mirror.sync.start"):
-
-        original_packages = getattr(mirror, "packages", None)
-        original_log = getattr(mirror, "log", None)
-
-        mirror.packages = {}
-        mirror.log = MagicMock()
-
-        yield
-
-        if original_packages is not None:
-            mirror.packages = original_packages
-        if original_log is not None:
-            mirror.log = original_log
-
-
 def _make_orphan_pkg(pkgid: str, stale_ms: float, runninglog: str) -> MagicMock:
     """Build a Package stub stuck in SYNC with a runninglog path set.
 
@@ -72,8 +46,8 @@ def _make_orphan_pkg(pkgid: str, stale_ms: float, runninglog: str) -> MagicMock:
 
 
 def test_daemon_orphan_error_clears_runninglog_and_reattaches(
-    mock_master_server,
-    mock_dependencies,
+    daemon_master_server,
+    daemon_dependencies,
 ):
     """Orphan SYNC package: reattach logger, close it, clear runninglog, set ERROR.
 
