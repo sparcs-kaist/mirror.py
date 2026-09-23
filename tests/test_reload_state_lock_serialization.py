@@ -32,15 +32,29 @@ def lock_env(tmp_path, monkeypatch, reload_config_factory, reload_package_factor
     monkeypatch.setattr(mirror.config, "SOCKET_PATH", str(tmp_path / "mirror.sock"), raising=False)
     monkeypatch.setattr(mirror, "log", MagicMock(), raising=False)
 
-    mirror.conf = mirror.structure.Config.load_from_dict(initial_cfg)
-    mirror.packages = mirror.structure.Packages(
-        {
-            "pkg-lock": {
-                **reload_package_factory("pkg-lock"),
-                "status": {"status": "UNKNOWN", "statusinfo": {"errorcount": 0, "lastsync": 0.0}},
-            }
-        }
+    monkeypatch.setattr(
+        mirror,
+        "conf",
+        mirror.structure.Config.load_from_dict(initial_cfg),
+        raising=False,
     )
+    monkeypatch.setattr(
+        mirror,
+        "packages",
+        mirror.structure.Packages(
+            {
+                "pkg-lock": {
+                    **reload_package_factory("pkg-lock"),
+                    "status": {
+                        "status": "UNKNOWN",
+                        "statusinfo": {"errorcount": 0, "lastsync": 0.0},
+                    },
+                }
+            }
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(mirror, "status", getattr(mirror, "status", {}), raising=False)
 
     with mirror.sync._start_lock:
         mirror.sync._extra_args.clear()
@@ -122,32 +136,35 @@ def test_perform_reload_and_on_sync_done_are_serialized(
     reload_config_factory,
 ):
     """on_sync_done blocks while _reload_state_lock is held inside _perform_reload."""
-    # We intercept the lock acquisition inside _load_from_dict to pause mid-reload
-    # and measure that on_sync_done blocks for that duration.
-    lock = mirror.config._reload_state_lock
-
     reload_locked = threading.Event()
     reload_release = threading.Event()
     on_done_started = threading.Event()
     on_done_done = threading.Event()
 
     timeline: list[str] = []
+    thread_errors: list[BaseException] = []
+    thread_errors_lock = threading.Lock()
 
-    # Patch _load_from_dict to pause while holding the lock.
-    original_load_from_dict = mirror.config._load_from_dict
+    # Pause a real _load_from_dict call at its first filesystem write. This
+    # point is inside _load_from_dict's lock, but the patched helper does not
+    # acquire that lock itself. Removing the loader's lock must therefore make
+    # this test fail instead of leaving a mock to provide the synchronization.
+    original_atomic_write_json = mirror.config._atomic_write_json
 
-    def _patched_load_from_dict(config_dict, *, source_path=None, load_plugins=True):
-        with lock:
+    def _blocking_atomic_write_json(*args, **kwargs):
+        try:
             timeline.append("reload_inside_lock")
             reload_locked.set()
-            # Hold until signalled.
-            reload_release.wait(timeout=5.0)
+            if not reload_release.wait(timeout=5.0):
+                raise TimeoutError("reload test did not release atomic write")
             timeline.append("reload_releasing")
-        # Call the real implementation AFTER the extra lock block exits
-        # so the global state actually updates (prevents assertion errors
-        # in _perform_reload's own lock usage which also calls _load_from_dict).
+            return original_atomic_write_json(*args, **kwargs)
+        except BaseException as exc:
+            with thread_errors_lock:
+                thread_errors.append(exc)
+            raise
 
-    monkeypatch.setattr(mirror.config, "_load_from_dict", _patched_load_from_dict)
+    monkeypatch.setattr(mirror.config, "_atomic_write_json", _blocking_atomic_write_json)
 
     # Write a valid (no-change) config so _perform_reload reaches _load_from_dict.
     env = lock_env
@@ -161,34 +178,46 @@ def test_perform_reload_and_on_sync_done_are_serialized(
     monkeypatch.setattr(mirror.logger, "get", lambda name: None)
 
     def _reload_worker():
-        mirror.config._perform_reload()
+        try:
+            result = mirror.config._perform_reload()
+            if result["status"] != "ok":
+                raise AssertionError(f"reload failed: {result}")
+        except BaseException as exc:
+            with thread_errors_lock:
+                thread_errors.append(exc)
 
     def _on_done_worker():
-        on_done_started.set()
-        mirror.sync.on_sync_done("some-pkg", success=True, returncode=0)
-        timeline.append("on_sync_done_done")
-        on_done_done.set()
+        try:
+            on_done_started.set()
+            mirror.sync.on_sync_done("some-pkg", success=True, returncode=0)
+            timeline.append("on_sync_done_done")
+            on_done_done.set()
+        except BaseException as exc:
+            with thread_errors_lock:
+                thread_errors.append(exc)
 
     reload_thread = threading.Thread(target=_reload_worker, daemon=True)
-    reload_thread.start()
-
-    # Wait until _perform_reload has entered the lock.
-    assert reload_locked.wait(timeout=3.0), "_perform_reload did not enter lock"
-
     on_done_thread = threading.Thread(target=_on_done_worker, daemon=True)
-    on_done_thread.start()
-    assert on_done_started.wait(timeout=2.0)
+    try:
+        reload_thread.start()
 
-    # Give on_sync_done time to try (and be blocked by) the lock.
-    time.sleep(0.1)
-    assert "on_sync_done_done" not in timeline, "on_sync_done should be blocked by reload's lock"
+        assert reload_locked.wait(timeout=3.0), "_perform_reload did not reach its atomic write"
 
-    # Release the reload lock.
-    reload_release.set()
-    reload_thread.join(timeout=3.0)
+        on_done_thread.start()
+        assert on_done_started.wait(timeout=2.0)
 
-    # on_sync_done should now complete.
-    assert on_done_done.wait(timeout=3.0), "on_sync_done did not complete after reload released lock"
-    on_done_thread.join(timeout=2.0)
+        time.sleep(0.1)
+        assert "on_sync_done_done" not in timeline, (
+            "on_sync_done should be blocked by reload's lock"
+        )
+    finally:
+        reload_release.set()
+        reload_thread.join(timeout=3.0)
+        if on_done_thread.ident is not None:
+            on_done_thread.join(timeout=3.0)
 
+    assert not reload_thread.is_alive(), "reload thread did not finish"
+    assert not on_done_thread.is_alive(), "on_sync_done thread did not finish"
+    assert not thread_errors, f"worker thread failed: {thread_errors!r}"
+    assert on_done_done.is_set(), "on_sync_done did not complete after reload released lock"
     assert timeline.index("reload_releasing") < timeline.index("on_sync_done_done")

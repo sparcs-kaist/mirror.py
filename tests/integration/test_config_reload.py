@@ -548,10 +548,13 @@ def test_malformed_config_no_state_change(mirror_stack):
         )
 
         stat_after = mirror_stack.docker_exec("cat", "/var/lib/mirror/stat.json", check=False)
-        if stat_after.returncode == 0:
-            assert _config_invariant(json.loads(stat_after.stdout)) == stat_snapshot, (
-                "package definitions changed after malformed-config reload; expected no change"
-            )
+        assert stat_after.returncode == 0, (
+            "stat.json became unreadable after malformed-config reload: "
+            f"stderr={stat_after.stderr!r}"
+        )
+        assert _config_invariant(json.loads(stat_after.stdout)) == stat_snapshot, (
+            "package definitions changed after malformed-config reload; expected no change"
+        )
 
     finally:
         # Restore original config and verify daemon is still functional.

@@ -262,30 +262,6 @@ class TestWorkerServer:
             finally:
                 server.stop()
 
-        def test_worker_start_sync(self):
-            """Test start_sync command"""
-            with tempfile.TemporaryDirectory() as tmpdir:
-                socket_path = Path(tmpdir) / "worker.sock"
-
-                server = WorkerServer(socket_path)
-                server.start()
-                time.sleep(0.1)
-
-                try:
-                    with WorkerClient(socket_path) as client:
-                        result = client.start_sync(
-                            job_id="test-job-start",
-                            sync_method="test",
-                            commandline=["ls"],
-                            env={},
-                            uid=os.getuid(),
-                            gid=os.getgid()
-                        )
-                        assert result["job_id"] == "test-job-start"
-                        assert result["status"] == "started"
-                finally:
-                    server.stop()
-
     def test_worker_status(self):
         """Test status command"""
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,4 +1,5 @@
 import datetime
+import gzip
 import logging
 import shutil
 from pathlib import Path
@@ -73,46 +74,46 @@ def test_minute_rotation():
         if test_base.exists():
             shutil.rmtree(test_base)
 
-def test_gzip_rotation():
-    test_base = Path("test_logs_gzip")
-    if test_base.exists():
-        shutil.rmtree(test_base)
-    test_base.mkdir()
-
+def test_gzip_rotation(tmp_path: Path) -> None:
     handler = DynamicGzipRotatingFileHandler(
-        base_path=test_base,
+        base_path=tmp_path,
         folder_template="logs",
         filename_template="test-{minute}.log",
         gzip_enabled=True
     )
     
-    logger = logging.getLogger("test_gzip")
+    logger = logging.Logger("test_gzip", level=logging.INFO)
     logger.addHandler(handler)
     
     try:
-        now = datetime.datetime.now()
-        logger.info("Message 1")
+        record = logger.makeRecord(logger.name, logging.INFO, __file__, 0, "Message 1", (), None)
+        logger.handle(record)
+        now = datetime.datetime.fromtimestamp(record.created)
         old_path = Path(handler.baseFilename)
+        original_content = old_path.read_bytes()
+        assert original_content == b"Message 1\n"
         
         # Rotate by 1 minute
         future_time = now + datetime.timedelta(minutes=1)
         record = logger.makeRecord(logger.name, logging.INFO, "test.py", 0, "Message 2", (), None)
         record.created = future_time.timestamp()
-        handler.emit(record)
+        logger.handle(record)
         
         # Check if old file was gzipped
         gzip_path = old_path.with_suffix(old_path.suffix + ".gz")
-        print(f"Checking for gzip file: {gzip_path}")
         assert gzip_path.exists(), "Old log file should be gzipped"
+        with gzip.open(gzip_path, "rb") as compressed:
+            assert compressed.read() == original_content
         assert not old_path.exists(), "Old uncompressed log file should be removed"
-        
-        print("Gzip rotation test passed!")
+        assert Path(handler.baseFilename).read_bytes() == b"Message 2\n"
 
     finally:
         handler.close()
-        if test_base.exists():
-            shutil.rmtree(test_base)
+        logger.removeHandler(handler)
 
 if __name__ == "__main__":
+    from tempfile import TemporaryDirectory
+
     test_minute_rotation()
-    test_gzip_rotation()
+    with TemporaryDirectory() as directory:
+        test_gzip_rotation(Path(directory))

@@ -4,33 +4,53 @@ import time
 
 import pytest
 
+from .helpers import temporary_rsync_package
+
 
 @pytest.mark.integration
 def test_lastsync_survives_master_worker_restart(mirror_stack):
     """lastsync is preserved in stat.json after restarting both master and worker.
 
-    Steps:
-    1. Wait for rsync-test to complete successfully.
-    2. Read lastsync from stat.json.
-    3. Restart master and worker.
-    4. Re-read stat.json and assert lastsync >= captured value (not zeroed).
+    A PT0S package cannot auto-sync after restart, so exact timestamp equality
+    proves restoration rather than allowing a replacement sync to hide loss.
     """
-    mirror_stack.wait_for_status("rsync-test", "ACTIVE", timeout=30)
+    with temporary_rsync_package(
+        mirror_stack, "state-persistence-rsync"
+    ) as pkgid:
+        mirror_stack.trigger_sync(pkgid)
+        lastsync_before = mirror_stack.wait_for_new_active_sync(
+            pkgid, previous_lastsync=0.0, timeout=30
+        )
 
-    lastsync_before = mirror_stack.package_lastsync("rsync-test")
-    assert lastsync_before > 0, (
-        f"Expected lastsync > 0 after ACTIVE sync, got {lastsync_before}"
-    )
+        stat_before = mirror_stack.stat_json()["packages"][pkgid]
+        assert stat_before["lastsync"] == lastsync_before
 
-    mirror_stack.restart_process("worker")
-    mirror_stack.restart_process("master")
-    mirror_stack.wait_for_master_ready(timeout=30)
+        # Stop in dependency order, then start worker and wait for its socket
+        # before bringing master back up.
+        mirror_stack.stop_process("master")
+        mirror_stack.stop_process("worker")
+        mirror_stack.start_process("worker")
+        mirror_stack.wait_for_worker_ready(timeout=30)
+        mirror_stack.start_process("master")
+        mirror_stack.wait_for_master_ready(timeout=30)
 
-    # Give master a moment to load stat.json.
-    time.sleep(2)
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                runtime_package = mirror_stack.runtime_package(pkgid)
+                break
+            except RuntimeError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.2)
 
-    lastsync_after = mirror_stack.package_lastsync("rsync-test")
-    assert lastsync_after >= lastsync_before, (
-        f"lastsync regressed after restart: before={lastsync_before}, after={lastsync_after}. "
-        "Stat file was not persisted correctly."
-    )
+        observation_deadline = time.monotonic() + 3
+        while time.monotonic() < observation_deadline:
+            stat_package = mirror_stack.stat_json()["packages"][pkgid]
+            runtime_package = mirror_stack.runtime_package(pkgid)
+            assert stat_package["status"]["status"] == "ACTIVE"
+            assert runtime_package["status"]["status"] == "ACTIVE"
+            assert stat_package["lastsync"] == lastsync_before
+            assert runtime_package["lastsync"] == lastsync_before
+            assert mirror_stack.worker_progress(pkgid)["syncing"] is False
+            time.sleep(0.2)
