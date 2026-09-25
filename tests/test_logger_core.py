@@ -37,6 +37,12 @@ def test_create_logger_replaces_existing_package_handlers(tmp_path, monkeypatch)
     assert sum(isinstance(handler, logging.FileHandler) for handler in second.handlers) == 1
     assert len(second.handlers) == 2
 
+    monkeypatch.setattr(second, "level", logging.INFO)
+    with patch.object(logging.getLogger("mirror").handlers[0], "emit") as parent_emit:
+        second.info("Package log stays local")
+    parent_emit.assert_not_called()
+    assert "Package log stays local" in mirror.logger.get_log_path(second).read_text()
+
     mirror.logger.close_logger(second, compress=False)
 
 

@@ -59,6 +59,11 @@ def test_reattach_adds_safe_filehandler_for_valid_path(tmp_path, monkeypatch):
     assert isinstance(file_handlers[0], SafeAppendFileHandler)
     assert file_handlers[0].baseFilename == str(log_file)
 
+    with patch.object(logging.getLogger("mirror").handlers[0], "emit") as parent_emit:
+        pkg_logger.info("Reattached log stays local")
+    parent_emit.assert_not_called()
+    assert "Reattached log stays local" in log_file.read_text()
+
     for handler in pkg_logger.handlers[:]:
         handler.close()
         pkg_logger.removeHandler(handler)
