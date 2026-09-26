@@ -1184,7 +1184,7 @@ wheels = [
 
 [[package]]
 name = "mirror-py"
-version = "1.4.0"
+version = "1.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "bandersnatch", version = "6.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
