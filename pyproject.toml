@@ -12,7 +12,7 @@ authors = [
 ]
 keywords = ["mirror", "rsync", "ftpsync", "debian", "daemon"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: No Input/Output (Daemon)",
     "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",
@@ -30,7 +30,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sparcs-kaist/mirror.py"
+Homepage = "https://mirror-py.sparcs.org/"
+Documentation = "https://mirror-py.sparcs.org/"
 Repository = "https://github.com/sparcs-kaist/mirror.py"
 Issues = "https://github.com/sparcs-kaist/mirror.py/issues"
 
