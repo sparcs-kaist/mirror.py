@@ -17,12 +17,13 @@ dependencies. Integration images install the local wheel and its `apt-mirror2`
 extra, so Python tool versions follow project metadata rather than separate pins.
 
 Dependency updates retain Python 3.10 and Node 22.12 compatibility. Bandersnatch
-6.5.0, Sphinx 8.1.3, and MyST Parser 4.0.1 are pinned to the latest releases that
-support Python 3.10. Resolve Python and npm lockfiles when updating dependencies,
+uses environment markers: 6.5.0 on Python 3.10, 6.6.0 on Python 3.11, and 8.0.0
+on Python 3.12 and later. Sphinx 8.1.3 and MyST Parser 4.0.1 remain pinned for
+Python 3.10 support. Resolve Python and npm lockfiles when updating dependencies,
 then run the unit, integration, editor, and documentation checks below.
-Runtime setuptools is limited to 81.x because bandersnatch 6.5 imports
-`pkg_resources`, which setuptools 82 removed. Isolated package builds use the
-current setuptools build backend independently.
+Runtime setuptools is limited to 81.x only on Python 3.10 because bandersnatch
+6.5 imports `pkg_resources`, which setuptools 82 removed. Isolated package builds
+use the current setuptools build backend independently.
 
 Run the unit test suite:
 
