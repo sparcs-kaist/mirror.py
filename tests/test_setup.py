@@ -4,6 +4,8 @@ import os
 import stat
 import types
 import importlib
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,7 @@ setup_mod = importlib.import_module("mirror.command.setup")
 
 
 def _redirect_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr(setup_mod, "_BASH_COMPLETION_PATH", tmp_path / "share/bash-completion/completions/mirror")
     monkeypatch.setattr(setup_mod, "_CONFIG_PATH", tmp_path / "etc/mirror/config.json")
     monkeypatch.setattr(setup_mod, "_SYSTEMD_PATH", tmp_path / "etc/systemd/system")
     (tmp_path / "etc/systemd/system").mkdir(parents=True, exist_ok=True)
@@ -26,6 +29,7 @@ def _redirect_paths(monkeypatch, tmp_path):
 
 
 def _patch_happy_path(monkeypatch):
+    monkeypatch.setattr(setup_mod.BashComplete, "_check_version", staticmethod(lambda: None))
     monkeypatch.setattr(setup_mod.os, "geteuid", lambda: 0)
     monkeypatch.setattr(setup_mod.platform, "system", lambda: "Linux")
     monkeypatch.setattr(setup_mod, "command_exists", lambda b: True)
@@ -48,6 +52,7 @@ def test_setup_aborts_when_not_root(monkeypatch, tmp_path):
 
     config_path = tmp_path / "etc/mirror/config.json"
     assert not config_path.exists()
+    assert not setup_mod._BASH_COMPLETION_PATH.exists()
     for d in [
         tmp_path / "var/run/mirror",
         tmp_path / "var/lib/mirror",
@@ -66,6 +71,7 @@ def test_setup_aborts_when_not_linux(monkeypatch, tmp_path):
 
     config_path = tmp_path / "etc/mirror/config.json"
     assert not config_path.exists()
+    assert not setup_mod._BASH_COMPLETION_PATH.exists()
     for d in [
         tmp_path / "var/run/mirror",
         tmp_path / "var/lib/mirror",
@@ -89,6 +95,7 @@ def test_setup_fails_on_missing_required_binary(monkeypatch, tmp_path, capsys, m
 
     config_path = tmp_path / "etc/mirror/config.json"
     assert not config_path.exists()
+    assert not setup_mod._BASH_COMPLETION_PATH.exists()
     for d in setup_mod._DIRECTORIES:
         assert not d.exists()
 
@@ -150,6 +157,7 @@ def test_setup_aborts_before_writes_for_invalid_mirror_path(monkeypatch, tmp_pat
     assert "Setup aborted" in capsys.readouterr().out
     assert not calls
     assert not setup_mod._CONFIG_PATH.exists()
+    assert not setup_mod._BASH_COMPLETION_PATH.exists()
     assert all(not path.exists() for path in setup_mod._DIRECTORIES)
     for name in ["mirror.service", "mirror-worker.service"]:
         assert (setup_mod._SYSTEMD_PATH / name).read_text() == "existing unit"
@@ -336,3 +344,96 @@ def test_next_steps_edit_config_before_enable_when_fresh(monkeypatch, tmp_path, 
     assert edit_pos != -1, out
     assert enable_pos != -1, out
     assert edit_pos < enable_pos, "edit-config guidance must precede enable/start"
+
+
+def test_setup_installs_completion_with_restrictive_umask(monkeypatch, tmp_path):
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+    previous_umask = os.umask(0o077)
+    try:
+        setup_mod.setup()
+    finally:
+        os.umask(previous_umask)
+
+    path = setup_mod._BASH_COMPLETION_PATH
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o755
+    assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o755
+    assert '_MIRROR_COMPLETE=bash_complete' in path.read_text()
+
+
+def test_completion_refresh_replaces_symlink_without_writing_target(monkeypatch, tmp_path):
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+    setup_mod.setup()
+    path = setup_mod._BASH_COMPLETION_PATH
+    source = path.read_text()
+    target = tmp_path / 'unrelated'
+    target.write_text('preserve me')
+    path.unlink()
+    path.symlink_to(target)
+
+    setup_mod.setup()
+
+    assert not path.is_symlink()
+    assert path.read_text() == source
+    assert target.read_text() == 'preserve me'
+    assert not list(path.parent.glob('.mirror-*'))
+
+
+def test_completion_failure_preserves_existing_file_and_setup(monkeypatch, tmp_path, capsys):
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+    path = setup_mod._BASH_COMPLETION_PATH
+    path.parent.mkdir(parents=True)
+    path.write_text('existing completion')
+
+    def fail_replace(self, target):
+        raise PermissionError('completion replacement denied')
+
+    monkeypatch.setattr(Path, 'replace', fail_replace)
+    setup_mod.setup()
+
+    assert path.read_text() == 'existing completion'
+    assert not list(path.parent.glob('.mirror-*'))
+    assert setup_mod._CONFIG_PATH.exists()
+    output = capsys.readouterr().out
+    assert 'Warning: Bash completion installation failed' in output
+    assert 'systemctl enable' in output
+
+
+@pytest.mark.parametrize(('words', 'index', 'expected'), [
+    ('mirror t', 1, 'tui'),
+    ('mirror daemon --co', 2, '--config'),
+    ('mirror config re', 2, 'reload'),
+])
+def test_generated_completion_in_bash(monkeypatch, tmp_path, words, index, expected):
+    _redirect_paths(monkeypatch, tmp_path)
+    setup_mod._install_bash_completion()
+    executable_dir = Path(sys.executable).parent
+    env = dict(os.environ, PATH=f'{executable_dir}:{os.environ["PATH"]}')
+    path = setup_mod._BASH_COMPLETION_PATH
+    subprocess.run(['bash', '-n', str(path)], check=True)
+    result = subprocess.run(
+        ['bash', '--noprofile', '--norc', '-c',
+         'source "$1"; read -ra COMP_WORDS <<< "$2"; COMP_CWORD=$3; '
+         '_mirror_completion mirror; printf "%s\\n" "${COMPREPLY[@]}"',
+         'completion-test', str(path), words, str(index)],
+        env=env, capture_output=True, text=True, check=True,
+    )
+    assert result.stdout.splitlines() == [expected]
+
+
+def test_completion_import_failure_does_not_block_setup(monkeypatch, tmp_path, capsys):
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+    monkeypatch.setitem(sys.modules, 'mirror.__main__', None)
+
+    setup_mod.setup()
+
+    assert setup_mod._CONFIG_PATH.exists()
+    assert (setup_mod._SYSTEMD_PATH / 'mirror.service').exists()
+    assert not setup_mod._BASH_COMPLETION_PATH.exists()
+    output = capsys.readouterr().out
+    assert 'Warning: Bash completion installation failed' in output
+    assert 'systemctl enable' in output

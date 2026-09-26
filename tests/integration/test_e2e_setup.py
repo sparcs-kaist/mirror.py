@@ -112,6 +112,26 @@ test -d /var/run/mirror
 test -d /var/lib/mirror
 test -f /etc/systemd/system/mirror.service
 test -f /etc/systemd/system/mirror-worker.service
+test -f /usr/local/share/bash-completion/completions/mirror
+bash --noprofile --norc <<'BASH'
+source /usr/share/bash-completion/bash_completion
+_completion_loader mirror
+COMP_WORDS=(mirror t)
+COMP_CWORD=1
+COMPREPLY=()
+_mirror_completion mirror
+test "${COMPREPLY[*]}" = tui || exit 1
+COMP_WORDS=(mirror daemon --co)
+COMP_CWORD=2
+COMPREPLY=()
+_mirror_completion mirror
+test "${COMPREPLY[*]}" = --config || exit 1
+COMP_WORDS=(mirror config re)
+COMP_CWORD=2
+COMPREPLY=()
+_mirror_completion mirror
+test "${COMPREPLY[*]}" = reload || exit 1
+BASH
 systemctl cat mirror.service > /dev/null
 systemctl cat mirror-worker.service > /dev/null
 python3 - <<'PY'

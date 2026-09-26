@@ -7,14 +7,34 @@
 
 ## Installing a release
 
-Releases are available on [PyPI](https://pypi.org/project/mirror.py/). Install
-into a Python environment using [uv](https://github.com/astral-sh/uv):
+Releases are available on [PyPI](https://pypi.org/project/mirror.py/). For a
+daemon host, install the package globally so the `mirror` command is available
+to root and systemd provisioning:
 
 ```bash
-uv venv --python 3.10
-source .venv/bin/activate
-uv pip install mirror.py
+sudo python3 -m pip install mirror.py
+sudo mirror --version
 ```
+
+For `apt-mirror2` support, install the optional extra globally as well:
+
+```bash
+sudo python3 -m pip install 'mirror.py[apt-mirror2]'
+```
+
+Some distributions mark their system Python as externally managed and reject
+global pip installs. Do not override that protection. Create a dedicated
+virtual environment instead and expose its `mirror` command while provisioning:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install mirror.py
+sudo env "PATH=$PATH" mirror setup
+```
+
+Setup records the resolved executable path in the systemd units, so the
+virtual environment does not need to remain active when the services start.
 
 ## Installing from source
 
@@ -56,16 +76,25 @@ Before running the daemon or worker, run the setup command once to create the
 required directories and install the systemd unit files:
 
 ```bash
-sudo env "PATH=$PATH" mirror setup
+sudo mirror setup
 ```
 
 Setup checks for `rsync`, `lftp`, and `bandersnatch` even if your selected sync
 method does not use all three. Install these before running setup. Setup finds
 `mirror` on its current `PATH` and writes its absolute path into both systemd
-units. Keep the virtual environment on `PATH` when invoking setup, as shown
-above. If `mirror` cannot be found, setup aborts before writing files.
+units. The recommended global installation therefore requires `mirror` to be
+on root's `PATH`; verify this with `sudo mirror --version`. For a virtual
+environment, keep it on `PATH` when invoking setup, as shown above. If `mirror`
+cannot be found, setup aborts before writing files.
 Sync subprocesses still need their tools available on the service's `PATH`;
 setup does not copy the shell's `PATH` into the units.
+
+Setup also installs Click's Bash completion script at
+`/usr/local/share/bash-completion/completions/mirror`. It does not install the
+distribution's `bash-completion` package or edit user shell startup files.
+Completion requires Bash 4.4 or later with `bash-completion` installed and
+enabled. Open a new shell after setup; `mirror t` followed by Tab completes to
+`mirror tui`, and `mirror daemon --` followed by Tab twice lists command options.
 
 See [State files](../guide/state-files.md) for the full path layout that
 `mirror setup` creates.
@@ -89,7 +118,9 @@ tools that correspond to the sync methods you intend to use.
 
 `bandersnatch` is listed as a direct Python dependency in `pyproject.toml` and
 is installed automatically. Install system tools as needed (for example,
-`apt install rsync lftp debmirror`). For `apt-mirror2`, install the Python extra:
+`apt install rsync lftp debmirror`). For a release installation, install the
+`apt-mirror2` Python extra globally as shown above. For a source development
+environment, use:
 
 ```bash
 uv pip install -e ".[apt-mirror2]"

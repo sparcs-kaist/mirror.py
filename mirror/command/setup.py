@@ -3,9 +3,11 @@ import os
 import platform
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from prompt_toolkit.shortcuts import print_formatted_text
+from click.shell_completion import BashComplete
 
 from mirror.config.config import DEFAULT_CONFIG
 from mirror.toolbox import command_exists
@@ -26,6 +28,7 @@ _RUN_DIRECTORY_MODE = 0o700
 
 _CONFIG_PATH = Path("/etc/mirror/config.json")
 _SYSTEMD_PATH = Path("/etc/systemd/system")
+_BASH_COMPLETION_PATH = Path("/usr/local/share/bash-completion/completions/mirror")
 
 _MIRROR_SERVICE = """[Unit]
 Description=Mirror Daemon
@@ -159,6 +162,38 @@ def _reload_systemd() -> None:
         )
 
 
+def _install_bash_completion() -> None:
+    """Install shared Bash completion without blocking service provisioning."""
+    temporary_path = None
+    try:
+        # Import after CLI initialization to avoid the command package import cycle.
+        from mirror.__main__ import main
+
+        source = BashComplete(main, {}, "mirror", "_MIRROR_COMPLETE").source()
+        directory = _BASH_COMPLETION_PATH.parent
+        for parent in reversed((directory, *directory.parents)):
+            if not parent.exists():
+                parent.mkdir(mode=0o755)
+                parent.chmod(0o755)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=directory, prefix=".mirror-", delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(source)
+            temporary.write("\n")
+            os.fchmod(temporary.fileno(), 0o644)
+        temporary_path.replace(_BASH_COMPLETION_PATH)
+        print_formatted_text(f"Bash completion installed at {_BASH_COMPLETION_PATH}.")
+    except Exception as error:
+        print_formatted_text(f"Warning: Bash completion installation failed: {error}")
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError as error:
+                print_formatted_text(f"Warning: Bash completion cleanup failed: {error}")
+
+
 def _print_next_steps(config_written: bool) -> None:
     """Print post-setup instructions for the operator."""
     if config_written:
@@ -190,6 +225,7 @@ def setup() -> None:
         config_written = _write_default_config_if_absent()
         _write_systemd_units(mirror_executable)
         _reload_systemd()
+        _install_bash_completion()
         _print_next_steps(config_written)
     except Exception as e:
         print_formatted_text(f"An error occurred during setup: {e}")

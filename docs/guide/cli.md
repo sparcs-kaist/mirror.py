@@ -25,10 +25,22 @@ Provision a Linux host for the daemon and worker. This command must run as
 root. It verifies the required `rsync`, `lftp`, and `bandersnatch` executables,
 creates the runtime, state, log, web, and configuration directories, and writes
 the `mirror.service` and `mirror-worker.service` systemd units. It also runs
-`systemctl daemon-reload` when `systemctl` is available.
+`systemctl daemon-reload` when `systemctl` is available. The `mirror` executable
+must be on root's `PATH`; the recommended global installation satisfies this
+when `sudo mirror --version` succeeds.
 
 If `/etc/mirror/config.json` does not exist, `setup` creates it from the built-in
 default. An existing configuration is preserved.
+
+Setup installs Bash completion at
+`/usr/local/share/bash-completion/completions/mirror`. Completion requires Bash
+4.4 or later and the distribution's `bash-completion` package to be installed
+and enabled. Setup does not install that package or edit per-user shell startup
+files. Open a new shell after setup; `mirror t` followed by Tab completes to
+`mirror tui`, and completion also covers command options such as
+`mirror daemon --config`. Running setup again refreshes the installed completion
+script. If completion installation fails, setup prints a warning and continues
+without blocking the rest of host provisioning.
 
 ### mirror daemon
 
