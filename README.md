@@ -44,9 +44,28 @@ selection rules, and signature verification requirements.
 
 ## Installation
 
-Requires **Linux** and **Python 3.10 or later**. Development uses `uv`.
+Requires **Linux** and **Python 3.10 or later**.
 
-From a source checkout:
+### Install from PyPI
+
+Install [mirror.py](https://pypi.org/project/mirror.py/) in a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install mirror.py
+mirror --version
+```
+
+For `apt-mirror2` support, install the optional extra in the same environment:
+
+```bash
+python -m pip install 'mirror.py[apt-mirror2]'
+```
+
+### Install from source
+
+For development or features not yet released on PyPI, use `uv`:
 
 ```bash
 git clone https://github.com/sparcs-kaist/mirror.py.git
@@ -56,8 +75,13 @@ source .venv/bin/activate
 mirror --version
 ```
 
-For a published release, follow the [installation guide](https://mirror-py.sparcs.org/getting-started/installation.html).
-This README describes the source tree; an installed release may differ.
+To include `apt-mirror2` in a source installation, run
+`uv sync --extra apt-mirror2`. This README describes the source tree; an
+installed release may differ. See the
+[installation guide](https://mirror-py.sparcs.org/getting-started/installation.html)
+for more details.
+
+### System dependencies
 
 Install the system tools required by your chosen sync methods. `mirror setup`
 checks for **all three** of `rsync`, `lftp`, and `bandersnatch`.
@@ -66,12 +90,6 @@ Ubuntu, install the other two with:
 
 ```bash
 sudo apt install rsync lftp
-```
-
-For `apt-mirror2`, also install its optional Python dependency:
-
-```bash
-uv sync --extra apt-mirror2
 ```
 
 Signed APT repositories require the relevant verification tools and trusted
@@ -131,34 +149,25 @@ configuration files; it does not connect to or configure the daemon directly.
 
 ### 3. Start the worker and master
 
-For a foreground run, activate the same virtual environment in each terminal.
-Start the worker in one terminal:
+Use the systemd units installed by `mirror setup`. Enable both services at
+boot, start them, and check their status:
 
 ```bash
-sudo env "PATH=$PATH" mirror worker
+sudo systemctl enable --now mirror-worker.service mirror.service
+sudo systemctl status mirror-worker.service mirror.service
 ```
 
-Start the master in another:
-
-```bash
-sudo env "PATH=$PATH" mirror daemon
-```
-
-Both read `/etc/mirror/config.json` by default and accept `--config PATH`.
-The master schedules syncs and communicates with the worker over Unix sockets.
-
-For persistent operation, use the generated systemd units. Before enabling
-services, set each unit's `ExecStart` to the absolute path of your installed
-`mirror` executable and ensure the service environment can find its sync tools.
-See [installation](https://mirror-py.sparcs.org/getting-started/installation.html) for deployment details.
+Both services read `/etc/mirror/config.json`. The master schedules syncs and
+communicates with the worker over Unix sockets. See
+[installation](https://mirror-py.sparcs.org/getting-started/installation.html)
+for deployment details.
 
 ### 4. Inspect and control syncs
 
-Run these from another terminal with the environment active:
+With the virtual environment active, run:
 
 ```bash
 sudo env "PATH=$PATH" mirror tui
-sudo env "PATH=$PATH" mirror push repository
 sudo env "PATH=$PATH" mirror config reload
 ```
 
@@ -212,3 +221,5 @@ Report bugs and feature requests through
 ## License
 
 [Apache License 2.0](LICENSE). Maintained by [SPARCS](https://sparcs.org/) at KAIST.
+
+Contact: [ftp@ftp.kaist.ac.kr](mailto:ftp@ftp.kaist.ac.kr).
