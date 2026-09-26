@@ -1,267 +1,214 @@
-# Mirror.PY
+# mirror.py
 
-Mirror.PY is a Linux master-worker daemon that mirrors remote repositories to a
-local server, with scheduled syncs, per-package logs, and web status output.
-It supports rsync, ftpsync, lftp, bandersnatch, local, ubuntu, jigdo, debmirror,
-and apt-mirror2 sync methods.
+A Linux daemon for maintaining local mirrors of remote package repositories.
+Schedule synchronization, track each repository, and inspect logs through one
+master-worker service.
 
-## Debian repositories with debmirror
+[Getting started](https://mirror-py.sparcs.org/getting-started/quickstart.html) ·
+[Configuration](https://mirror-py.sparcs.org/guide/configuration.html) ·
+[CLI reference](https://mirror-py.sparcs.org/guide/cli.html) ·
+[Documentation](https://mirror-py.sparcs.org/)
 
-The `debmirror` sync method uses the repository root in `settings.src` and the
-local mirror root in `settings.dst`. No separate debmirror configuration file
-is required. Install the `debmirror` executable and provide the repository's
-trusted public keyring when signature verification is enabled (the default).
-All implementation lives in `mirror/sync/debmirror.py`. Each worker run creates
-an empty config in a private temporary directory to prevent loading system or
-user debmirror configuration, then removes it when debmirror exits or the run
-is terminated normally.
+## Features
 
-The `dist`, `section`, and `arch` options each accept a string, a comma-separated
-string, or a list of strings. An omitted option is discovered on every sync:
+- **Scheduled and push-triggered syncs.** Configure intervals per repository,
+  retry failed jobs, or trigger a sync from the command line.
+- **Separate scheduling and execution.** The master manages schedules and state;
+  the worker runs subprocesses with configured UID/GID and keeps active jobs
+  running when the master restarts.
+- **Status and logs.** Inspect packages with the terminal UI, keep per-run logs
+  with gzip compression, and publish status as JSON.
+- **Configuration reloads.** Apply supported configuration changes to the running
+  daemon without restarting it.
+- **Standalone execution.** Run a single sync in the foreground without starting
+  the daemon and worker services.
+- **Extensible plugins.** Add sync methods, event handlers, and status fields
+  through Python entry points.
 
-- `dist`: distributions directly below the repository's `dists/` directory,
-  including updates and backports. Directory listing must be available;
-  otherwise specify `dist` explicitly.
-- `section`: all `Components` in the selected distributions' Release metadata.
-- `arch`: all binary `Architectures`, including architecture-independent
-  packages. This does not enable source packages.
+## Supported sync methods
 
-`source` defaults to `false`; set it to `true` to also download source packages.
-Explicit selections and package filters still restrict what is downloaded.
-Empty or null selections are invalid; omit the key to enable discovery.
+| Method | Purpose | Backend |
+| --- | --- | --- |
+| [rsync](https://mirror-py.sparcs.org/sync-methods/rsync.html) | Incremental file mirroring, with an optional upstream timestamp check | `rsync` |
+| [ftpsync](https://mirror-py.sparcs.org/sync-methods/ftpsync.html) | Debian archive mirroring | Debian archvsync |
+| [lftp](https://mirror-py.sparcs.org/sync-methods/lftp.html) | FTP mirroring with include/exclude filters | `lftp` |
+| [bandersnatch](https://mirror-py.sparcs.org/sync-methods/bandersnatch.html) | PyPI package mirroring | `bandersnatch` |
+| [local](https://mirror-py.sparcs.org/sync-methods/local.html) | Register an existing directory without copying files | No external tool |
+| [ubuntu](https://mirror-py.sparcs.org/sync-methods/ubuntu.html) | Two-stage Ubuntu archive mirroring | `rsync` |
+| [jigdo](https://mirror-py.sparcs.org/sync-methods/jigdo.html) | Reconstruct Debian CD/DVD images from jigdo metadata and a package mirror | `jigdo-mirror`, `jigdo-file`, and supporting tools |
+| [debmirror](https://mirror-py.sparcs.org/sync-methods/debmirror.html) | Mirror a Debian-style archive with signed metadata discovery | `debmirror` |
+| [apt-mirror2](https://mirror-py.sparcs.org/sync-methods/apt-mirror2.html) | Mirror multiple regular or flat APT repositories under one scheduled job | Python `apt-mirror` via the optional extra |
 
-For example, these settings discover all binary distributions, components, and
-architectures, using a public keyring installed at the specified path:
+See each method's documentation for prerequisites, configuration examples,
+selection rules, and signature verification requirements.
 
-```json
-{
-  "src": "http://download.proxmox.com/debian/pve/",
-  "dst": "/srv/ftp/pve",
-  "options": {
-    "keyring": "/path/to/proxmox-keyring.gpg",
-    "rsync_extra": "none"
-  }
-}
-```
+## Installation
 
-To restrict that mirror, add selections such as `"dist": ["bookworm"]`,
-`"section": ["pve-no-subscription"]`, or `"arch": ["amd64"]` independently.
-Discovery prefers `InRelease`, falling back to `Release` only when it is absent.
-Signature, metadata, or listing errors fail the sync instead of falling back to
-debmirror's built-in selections. Automatic discovery deduplicates aliases with
-identical Release contents. The installed debmirror must still support the
-repository layout; this feature does not add support for InRelease-only archives.
+Requires **Linux** and **Python 3.10 or later**. Development uses `uv`.
 
-Automatic distribution discovery refuses to remove an existing distribution
-when it disappears from the listing, protecting the mirror from partial
-directory responses. To intentionally narrow the mirror, specify `dist`.
-Discovery limits each metadata response to 16 MiB and the candidate list to
-1,024 distributions. Its total time limit is 300 seconds or the configured
-`timeout`, whichever is greater; individual requests also use `timeout`.
-
-## Multiple APT repositories with apt-mirror2
-
-The `apt-mirror2` sync method groups several HTTP, HTTPS, or FTP repositories
-under one package, schedule, log, and status. Both regular Debian repositories
-and flat repositories are supported. Install the optional dependency in the
-same Python environment as mirror.py, plus GnuPG (`gpg` and `gpgv`) for signed
-repositories:
+From a source checkout:
 
 ```bash
-pip install 'mirror.py[apt-mirror2]'
-# From a source checkout:
+git clone https://github.com/sparcs-kaist/mirror.py.git
+cd mirror.py
+uv sync
+source .venv/bin/activate
+mirror --version
+```
+
+For a published release, follow the [installation guide](https://mirror-py.sparcs.org/getting-started/installation.html).
+This README describes the source tree; an installed release may differ.
+
+Install the system tools required by your chosen sync methods. `mirror setup`
+checks for **all three** of `rsync`, `lftp`, and `bandersnatch`.
+Bandersnatch is installed with the Python package. For example, on Debian or
+Ubuntu, install the other two with:
+
+```bash
+sudo apt install rsync lftp
+```
+
+For `apt-mirror2`, also install its optional Python dependency:
+
+```bash
 uv sync --extra apt-mirror2
 ```
 
-This extra pins the Python apt-mirror2 implementation (`apt-mirror==16`). The
-worker invokes `python -m apt_mirror`, not the unrelated Perl `apt-mirror` binary.
-Other sync methods do not require this extra.
+Signed APT repositories require the relevant verification tools and trusted
+keyrings described in the [debmirror](https://mirror-py.sparcs.org/sync-methods/debmirror.html) and
+[apt-mirror2](https://mirror-py.sparcs.org/sync-methods/apt-mirror2.html) guides.
 
-`settings.src` is a display URL; `settings.dst` is the absolute local root.
-The required, non-empty `options.config` list supplies actual source URLs and
-non-overlapping relative destination directories:
+## Quickstart
 
-```json
-{
-  "src": "https://repo.example/cuda/",
-  "dst": "/srv/ftp/cuda",
-  "options": {
-    "source": false,
-    "nthreads": 8,
-    "limit_rate": "20m",
-    "config": [
-      {
-        "src": "https://repo.example/cuda/ubuntu2404/x86_64/",
-        "dst": "ubuntu2404/x86_64/",
-        "dist": ["./"],
-        "keyring": ["/usr/share/keyrings/cuda-ubuntu2404.gpg"]
-      },
-      {
-        "src": "https://repo.example/cuda/ubuntu2604/x86_64/",
-        "dst": "ubuntu2604/x86_64/",
-        "dist": ["./"],
-        "keyring": ["/usr/share/keyrings/cuda-ubuntu2604.gpg"]
-      }
-    ]
-  }
-}
-```
+### 1. Provision the host
 
-The CUDA URLs and keyring filenames in `config-example.json` are illustrative;
-check repository availability and install the appropriate keys before use.
-Files are stored directly below each mapped destination without an extra
-hostname directory. Duplicate source URLs and overlapping destinations are
-rejected. Destinations must be non-empty subdirectories, not `.` or absolute
-paths, and must stay inside `settings.dst` after resolving symlinks.
-Existing symlinks within a destination path and credentials in source URLs
-are rejected.
-
-### Selections and verification
-
-Each item accepts `dist`, `section`, and `arch` as strings, comma-separated
-strings, or lists. Empty selections are invalid. For regular repositories,
-omitted selections are discovered from `dists/` listings and Release metadata.
-Automatic selection refuses to remove existing distributions missing from a
-new listing; specify `dist` explicitly to intentionally narrow the mirror.
-
-For flat repositories, use `dist: ["./"]` for indexes at the source URL or
-paths such as `["x64/", "all/"]` for explicit subdirectories. When `dist` is
-omitted, Release checksums for direct `Packages` indexes identify a flat
-repository; otherwise discovery looks under `dists/`. Source-only flat indexes
-also identify a flat repository when `source` is enabled. Subdirectories are
-not searched recursively. Flat indexes include all binary architectures;
-explicit `arch` or `section` values are rejected because apt-mirror2 does not
-apply those filters to flat repositories.
-
-`source` defaults to `false` and can be overridden per item. `check_gpg`
-defaults to `true` per item and requires a local `keyring` path or list of paths.
-Only that item's keys are trusted; system keyrings and other items' keys are
-not used. Keys are not downloaded automatically. Discovery verifies metadata
-before using it, and apt-mirror2 verifies it again before mirroring. Missing or
-invalid signatures fail the sync. Unsigned repositories require explicit
-`check_gpg: false`. The pinned apt-mirror2 v16 still requires Release metadata,
-even when signature verification is disabled; repositories containing only
-Packages without Release metadata are rejected before native execution.
-
-Discovery prefers InRelease, falling back to Release and Release.gpg only when
-InRelease is absent (HTTP 404/410). For FTP, only an InRelease RETR response of
-550 permits a fallback attempt; the replacement metadata and required signature
-must still succeed. A present but invalid signature never triggers fallback.
-Discovery limits metadata to 16 MiB, distributions to 1,024, listing links to
-4,096, each network operation to 30 seconds, and each item's discovery to 300
-seconds. HTTPS downgrade redirects are rejected.
-
-### Downloads and cleanup
-
-`nthreads` defaults to 8 and controls concurrency for the whole package.
-`limit_rate` is an optional aggregate bytes-per-second limit: a positive integer
-or a string with a `k` or `m` suffix. When a limit is supplied, native slow-rate
-protection is disabled so it does not conflict with the chosen cap. Without a
-limit, downloads are uncapped and native slow-rate protection remains enabled.
-The native limiter uses a 60-second bucket, so short bursts can exceed the
-configured per-second rate.
-
-Native file hash verification remains enabled. Files considered unchanged by
-apt-mirror2 are not necessarily rehashed on each run. Cleanup is automatic for
-each successful repository, with native deletion-count and deletion-size
-protection ratios of 0.4. Exceeding a ratio skips cleanup and emits a warning;
-it does not turn native success into failure. Failed repositories skip metadata
-publication and cleanup. One failed repository makes the package `ERROR`, but
-other repositories may complete: there is no package-wide rollback. Discovery
-failure stops the job before native mirroring begins.
-
-The worker creates a private temporary directory under the destination root
-for its config and working files, and removes it on success, failure, or handled
-termination. Runtime never writes the user's mirror.py configuration. Raw
-apt-mirror2 configuration, external config files, and other native options are
-not exposed by this adapter.
-
-## Plug-ins
-
-mirror.py supports pip-installable plug-ins via Python entry points. There are
-three plug-in categories:
-
-- **sync** — implement a new synctype (alongside the built-in `rsync`,
-  `ftpsync`, `lftp`, `bandersnatch`, `local`, `ubuntu`, `jigdo`, `debmirror`,
-  `apt-mirror2`).
-- **event** — subscribe to mirror events to drive notifications, custom logs,
-  external integrations.
-- **status** — contribute extra fields into `stat.json` and the web status JSON.
-
-See [`docs/PLUGINS.md`](docs/PLUGINS.md) for the author guide and API
-reference, and [`examples/mirror-plugin-echo/`](examples/mirror-plugin-echo/)
-for a runnable worked example.
-
-## Debian CD jigdo sync
-
-The `jigdo` sync method mirrors the Debian CD metadata from the official
-`rsync://cdimage.debian.org/debian-cd/` tree and reconstructs selected images
-from a Debian package mirror. It requires `rsync`, `jigdo-file`,
-`jigdo-mirror`, `grep`, `wget`, and `gzip`.
-
-The default image filter matches CD and DVD images 1 through 3 for `amd64`,
-`i386`, `sparc`, and `source`, then excludes `kfreebsd`:
-
-```text
-include: .*i386-(CD|DVD)-[1-3].iso.*|.*amd64-(CD|DVD)-[1-3].iso.*|.*sparc-(CD|DVD)-[1-3].iso.*|.*source-(CD|DVD)-[1-3].iso.*
-exclude: .*kfreebsd.*
-```
-
-These defaults deliberately narrow the previous behavior, which selected all
-images. Both filters are POSIX extended regular expressions. The include
-filter is applied first and the exclude filter removes matches afterward.
-
-Run a standalone sync with:
+With the virtual environment active:
 
 ```bash
-mirror worker-execute jigdo \
-  --src rsync://cdimage.debian.org/debian-cd/ \
-  --dst /srv/mirror/debian-cd \
-  --jigdo-file 'jigdo-file' \
-  --debian-mirror https://ftp.kaist.ac.kr/debian/
+sudo env "PATH=$PATH" mirror setup
 ```
 
-`--jigdo-include` and `--jigdo-exclude` override the filters and may each be
-specified once. `--jigdo-file` accepts the command and its arguments as a
-literal value; shell variables are not expanded. A production mirror can use
-a nearby local package mirror such as `file:/srv/mirror/debian` for
-`--debian-mirror`.
+Setup creates the configuration, state, socket, log, and web directories, and
+installs `mirror.service` and `mirror-worker.service`. It creates
+`/etc/mirror/config.json` only when that file does not already exist.
 
-For daemon operation, configure a package in `config.json`:
+### 2. Configure a repository
+
+Edit `/etc/mirror/config.json`. Set the mirror identity, maintainer details,
+local timezone, and the non-root `settings.uid` / `settings.gid` used by sync
+subprocesses. Replace the empty `packages` object with entries for your mirrors.
+For example, this is a `packages` value for an rsync mirror:
 
 ```json
 {
-  "packages": {
-    "debian-cd": {
-      "id": "debian-cd",
-      "name": "Debian CD",
-      "href": "/debian-cd",
-      "synctype": "jigdo",
-      "syncrate": "PT6H",
-      "link": [
-        {
-          "rel": "HOME",
-          "href": "https://www.debian.org/CD/"
-        }
-      ],
-      "settings": {
-        "hidden": false,
-        "src": "rsync://cdimage.debian.org/debian-cd/",
-        "dst": "/srv/mirror/debian-cd",
-        "options": {
-          "jigdo_file": "jigdo-file",
-          "debian_mirror": "file:/srv/mirror/debian",
-          "jigdo_include": ".*amd64-(CD|DVD)-[1-3].iso.*",
-          "jigdo_exclude": ".*kfreebsd.*"
-        }
-      }
+  "repository": {
+    "id": "repository",
+    "name": "Example repository",
+    "href": "/repository",
+    "synctype": "rsync",
+    "syncrate": "PT6H",
+    "link": [],
+    "settings": {
+      "hidden": false,
+      "src": "rsync://upstream.example.org/repository/",
+      "dst": "/srv/mirror/repository",
+      "options": {}
     }
   }
 }
 ```
 
-The destination keeps the official Debian CD layout, including the same
-version, architecture, and ISO-set directories and the `current` symlink. For
-example, generated images are stored as
-`<dst>/<version>/amd64/iso-dvd/debian-<version>-amd64-DVD-1.iso` through
-`DVD-3.iso` when all three match the available jigdo metadata.
+Replace the placeholder upstream with your actual source. `PT6H` means every
+six hours. Create the destination directory and grant the configured UID/GID
+write access before starting the services. Sync methods can delete obsolete
+files, so use a directory dedicated to the mirror.
+
+The [quickstart guide](https://mirror-py.sparcs.org/getting-started/quickstart.html) provides a full
+configuration. See the [configuration reference](config.md) and
+[example configuration](config-example.json) for more options. The
+[browser configuration editor](https://mirror-py.sparcs.org/guide/config-editor.html) can also generate
+configuration files; it does not connect to or configure the daemon directly.
+
+### 3. Start the worker and master
+
+For a foreground run, activate the same virtual environment in each terminal.
+Start the worker in one terminal:
+
+```bash
+sudo env "PATH=$PATH" mirror worker
+```
+
+Start the master in another:
+
+```bash
+sudo env "PATH=$PATH" mirror daemon
+```
+
+Both read `/etc/mirror/config.json` by default and accept `--config PATH`.
+The master schedules syncs and communicates with the worker over Unix sockets.
+
+For persistent operation, use the generated systemd units. Before enabling
+services, set each unit's `ExecStart` to the absolute path of your installed
+`mirror` executable and ensure the service environment can find its sync tools.
+See [installation](https://mirror-py.sparcs.org/getting-started/installation.html) for deployment details.
+
+### 4. Inspect and control syncs
+
+Run these from another terminal with the environment active:
+
+```bash
+sudo env "PATH=$PATH" mirror tui
+sudo env "PATH=$PATH" mirror push repository
+sudo env "PATH=$PATH" mirror config reload
+```
+
+The TUI shows package status and logs. `push` requests an immediate sync;
+`config reload` applies supported changes after you edit the configuration.
+Settings that require a restart are reported as warnings.
+
+For one-off jobs, use `mirror standalone SYNCTYPE`. See the
+[CLI reference](https://mirror-py.sparcs.org/guide/cli.html) for arguments, options, and TUI key bindings.
+
+## Configuration, state, and serving files
+
+| Default path | Contents |
+| --- | --- |
+| `/etc/mirror/config.json` | Operator-managed configuration; read-only during daemon and worker runtime |
+| `/var/lib/mirror/stat.json` | Persisted package status and sync history fields |
+| `/var/run/mirror/` | Unix sockets and runtime metadata |
+| `/var/log/mirror/` | Daemon and per-package logs |
+| `/var/www/mirror/status.json` | Generated web status |
+
+Repository files are stored in each package's `settings.dst`. Configure your
+own HTTP, FTP, or rsync server to publish those files and, if needed, the status
+JSON. mirror.py handles synchronization and status generation; serving the
+mirror is a separate deployment step.
+
+See [state files](https://mirror-py.sparcs.org/guide/state-files.html),
+[architecture](https://mirror-py.sparcs.org/architecture/overview.html), and
+[troubleshooting](https://mirror-py.sparcs.org/guide/troubleshooting.html) for operational details.
+
+## Development
+
+```bash
+uv sync
+uv run pytest
+uv run pytest -m integration -v
+```
+
+The default pytest run excludes integration tests. The integration suite needs
+Docker with Compose and builds containers using the current source tree. Run
+the suites sequentially; see the [integration guide](tests/integration/README.md)
+for host requirements and fixture behavior.
+
+For documentation and configuration editor builds, see
+[Contributing](https://mirror-py.sparcs.org/contributing/index.html). For extensions, see the
+[plugin author guide](https://mirror-py.sparcs.org/plugins/index.html) and the
+[example plugin](examples/mirror-plugin-echo/).
+
+Report bugs and feature requests through
+[GitHub Issues](https://github.com/sparcs-kaist/mirror.py/issues).
+
+## License
+
+[Apache License 2.0](LICENSE). Maintained by [SPARCS](https://sparcs.org/) at KAIST.
