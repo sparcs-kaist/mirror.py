@@ -29,6 +29,7 @@ def _patch_happy_path(monkeypatch):
     monkeypatch.setattr(setup_mod.os, "geteuid", lambda: 0)
     monkeypatch.setattr(setup_mod.platform, "system", lambda: "Linux")
     monkeypatch.setattr(setup_mod, "command_exists", lambda b: True)
+    monkeypatch.setattr(setup_mod.shutil, "which", lambda b: "/opt/mirror/bin/mirror")
     monkeypatch.setattr(
         setup_mod.subprocess,
         "run",
@@ -108,6 +109,50 @@ def test_setup_warns_on_missing_optional_git(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr()
     assert "git" in captured.out
     assert "bundled fallback" in captured.out
+
+
+@pytest.mark.parametrize("directory", ["bin", 'mirror space$HOME%h"\\/bin'])
+def test_setup_uses_executable_from_relative_path(monkeypatch, tmp_path, directory):
+    which = setup_mod.shutil.which
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+    monkeypatch.setattr(setup_mod.shutil, "which", which)
+    target = tmp_path / "launcher"
+    target.write_text("#!/bin/sh\nexit 0\n")
+    target.chmod(0o755)
+    executable = tmp_path / directory / "mirror"
+    executable.parent.mkdir(parents=True)
+    executable.symlink_to(target)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", directory)
+
+    setup_mod.setup()
+
+    escaped_directory = directory.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    for unit, command in [("mirror.service", "daemon"), ("mirror-worker.service", "worker")]:
+        content = (setup_mod._SYSTEMD_PATH / unit).read_text()
+        assert f'ExecStart="{tmp_path}/{escaped_directory}/mirror" {command} --config /etc/mirror/config.json' in content
+        assert str(target) not in content
+
+
+@pytest.mark.parametrize("executable", [None, "/tmp/bad\npath/mirror"])
+def test_setup_aborts_before_writes_for_invalid_mirror_path(monkeypatch, tmp_path, capsys, executable):
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+    monkeypatch.setattr(setup_mod.shutil, "which", lambda b: executable)
+    calls = []
+    monkeypatch.setattr(setup_mod.subprocess, "run", lambda *a, **kw: calls.append(a))
+    for name in ["mirror.service", "mirror-worker.service"]:
+        (setup_mod._SYSTEMD_PATH / name).write_text("existing unit")
+
+    setup_mod.setup()
+
+    assert "Setup aborted" in capsys.readouterr().out
+    assert not calls
+    assert not setup_mod._CONFIG_PATH.exists()
+    assert all(not path.exists() for path in setup_mod._DIRECTORIES)
+    for name in ["mirror.service", "mirror-worker.service"]:
+        assert (setup_mod._SYSTEMD_PATH / name).read_text() == "existing unit"
 
 
 def test_setup_skips_existing_config(monkeypatch, tmp_path, capsys):

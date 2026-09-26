@@ -1,6 +1,7 @@
 import json
 import os
 import platform
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -32,7 +33,7 @@ Wants=mirror-worker.service
 After=network.target mirror-worker.service
 
 [Service]
-ExecStart=mirror daemon --config /etc/mirror/config.json
+ExecStart={mirror_executable} daemon --config /etc/mirror/config.json
 Restart=always
 User=root
 Group=root
@@ -46,7 +47,7 @@ Description=Mirror Worker
 After=network.target
 
 [Service]
-ExecStart=mirror worker --config /etc/mirror/config.json
+ExecStart={mirror_executable} worker --config /etc/mirror/config.json
 Restart=always
 User=root
 Group=root
@@ -110,10 +111,29 @@ def _write_default_config_if_absent() -> bool:
     return True
 
 
-def _write_systemd_units() -> None:
+def _find_mirror_executable() -> str | None:
+    """Find and quote the CLI path for systemd without resolving symlinks."""
+    executable = shutil.which("mirror")
+    if executable is None:
+        print_formatted_text("Setup aborted: 'mirror' executable not found on PATH.")
+        return None
+    executable = os.path.abspath(executable)
+    if any(ord(char) < 32 or ord(char) == 127 for char in executable):
+        print_formatted_text("Setup aborted: 'mirror' executable path contains control characters.")
+        return None
+    # Systemd interprets quotes, backslashes, and percent specifiers in ExecStart.
+    executable = executable.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
+    return f'"{executable}"'
+
+
+def _write_systemd_units(mirror_executable: str) -> None:
     """Write mirror.service and mirror-worker.service unit files."""
-    (_SYSTEMD_PATH / "mirror.service").write_text(_MIRROR_SERVICE)
-    (_SYSTEMD_PATH / "mirror-worker.service").write_text(_MIRROR_WORKER_SERVICE)
+    (_SYSTEMD_PATH / "mirror.service").write_text(
+        _MIRROR_SERVICE.format(mirror_executable=mirror_executable)
+    )
+    (_SYSTEMD_PATH / "mirror-worker.service").write_text(
+        _MIRROR_WORKER_SERVICE.format(mirror_executable=mirror_executable)
+    )
 
 
 def _reload_systemd() -> None:
@@ -162,10 +182,13 @@ def setup() -> None:
         return
     if not _check_required_binaries():
         return
+    mirror_executable = _find_mirror_executable()
+    if mirror_executable is None:
+        return
     try:
         _ensure_directories()
         config_written = _write_default_config_if_absent()
-        _write_systemd_units()
+        _write_systemd_units(mirror_executable)
         _reload_systemd()
         _print_next_steps(config_written)
     except Exception as e:

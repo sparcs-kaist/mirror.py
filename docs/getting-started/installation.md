@@ -60,9 +60,12 @@ sudo env "PATH=$PATH" mirror setup
 ```
 
 Setup checks for `rsync`, `lftp`, and `bandersnatch` even if your selected sync
-method does not use all three. Install these before running setup. The generated
-systemd units also need an executable path that resolves to your installed `mirror`
-command; for a virtual environment, set `ExecStart` to its absolute path.
+method does not use all three. Install these before running setup. Setup finds
+`mirror` on its current `PATH` and writes its absolute path into both systemd
+units. Keep the virtual environment on `PATH` when invoking setup, as shown
+above. If `mirror` cannot be found, setup aborts before writing files.
+Sync subprocesses still need their tools available on the service's `PATH`;
+setup does not copy the shell's `PATH` into the units.
 
 See [State files](../guide/state-files.md) for the full path layout that
 `mirror setup` creates.

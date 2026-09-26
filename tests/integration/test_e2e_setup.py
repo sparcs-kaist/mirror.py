@@ -7,11 +7,12 @@ to boot, then runs `mirror setup` and verifies real behavior — including
 that `systemctl daemon-reload` is actually picked up by the running
 systemd instance.
 
-Three scenarios:
+Scenarios:
     1. Clean container -> directories, units, sanitized config all present;
        systemctl shows the units after daemon-reload.
     2. Pre-existing /etc/mirror/config.json -> setup preserves it.
     3. Missing required binary -> setup aborts before writing anything.
+    4. Launcher discovered on PATH -> systemd starts it with special path characters.
 """
 
 import subprocess
@@ -136,6 +137,36 @@ PY
     enable_pos = result.stdout.find("systemctl enable")
     assert edit_pos != -1 and enable_pos != -1, result.stdout
     assert edit_pos < enable_pos, "edit-config must precede enable/start"
+
+
+@pytest.mark.integration
+def test_setup_uses_discovered_executable_in_systemd(systemd_container: str) -> None:
+    """Systemd starts the discovered launcher even with special path characters."""
+    script = r"""
+set -euo pipefail
+launcher_dir='/opt/mirror space$HOME%h/bin'
+mkdir -p "$launcher_dir"
+ln -s "$(command -v mirror)" "$launcher_dir/mirror"
+export PATH="$launcher_dir:$PATH"
+mirror setup
+systemctl show mirror.service mirror-worker.service --property=ExecStart > /tmp/mirror-execstart
+python3 - <<'PY'
+from pathlib import Path
+units = Path('/tmp/mirror-execstart').read_text()
+assert units.count('path=/opt/mirror space$HOME%h/bin/mirror ;') == 2, units
+PY
+systemctl start mirror-worker.service
+systemctl is-active --quiet mirror-worker.service
+for attempt in {1..30}; do
+    if test -S /var/run/mirror/worker.sock; then
+        exit 0
+    fi
+    sleep 1
+done
+exit 1
+"""
+    result = _exec(systemd_container, script)
+    assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
 
 
 @pytest.mark.integration
