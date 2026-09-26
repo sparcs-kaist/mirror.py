@@ -27,6 +27,7 @@ services:
 
   lftp-fixture:
     container_name: lftp-fixture
+    init: true
     build:
       context: docker/lftp-fixture
     expose:
