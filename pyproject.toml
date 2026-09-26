@@ -22,11 +22,13 @@ classifiers = [
     "Topic :: System :: Software Distribution",
 ]
 dependencies = [
-    "bandersnatch==6.5.0",
+    "bandersnatch==6.5.0; python_version < '3.11'",
+    "bandersnatch==6.6.0; python_version == '3.11'",
+    "bandersnatch==8.0.0; python_version >= '3.12'",
     "click==8.5.0",
     "prompt-toolkit>=3.0.53",
-    # Bandersnatch 6.5 imports pkg_resources, removed in setuptools 82.
-    "setuptools>=81,<82",
+    # Python 3.10 uses bandersnatch 6.5, which still imports pkg_resources.
+    "setuptools>=81,<82; python_version < '3.11'",
 ]
 
 [project.urls]

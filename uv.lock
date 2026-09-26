@@ -1,6 +1,11 @@
 version = 1
 revision = 3
 requires-python = ">=3.10"
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version < '3.11'",
+]
 
 [[package]]
 name = "aiofile"
@@ -187,8 +192,8 @@ name = "aiohttp-xmlrpc"
 version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohttp" },
-    { name = "lxml" },
+    { name = "aiohttp", marker = "python_full_version < '3.12'" },
+    { name = "lxml", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b1/45/753cc4f9f220ad25ae970ca76737b54906ffc25dddc3e152383fb9bbbcde/aiohttp-xmlrpc-1.5.0.tar.gz", hash = "sha256:85b7659e91161a7c82280eeb0a2e9f06e95f858df1a4f6f68c737b675664dbed", size = 10325, upload-time = "2022-01-11T11:16:26.869Z" }
 wheels = [
@@ -287,18 +292,62 @@ wheels = [
 name = "bandersnatch"
 version = "6.5.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.11'",
+]
 dependencies = [
-    { name = "aiohttp" },
-    { name = "aiohttp-socks" },
-    { name = "aiohttp-xmlrpc" },
-    { name = "filelock" },
-    { name = "humanfriendly" },
-    { name = "packaging" },
-    { name = "setuptools" },
+    { name = "aiohttp", marker = "python_full_version < '3.11'" },
+    { name = "aiohttp-socks", marker = "python_full_version < '3.11'" },
+    { name = "aiohttp-xmlrpc", marker = "python_full_version < '3.11'" },
+    { name = "filelock", marker = "python_full_version < '3.11'" },
+    { name = "humanfriendly", marker = "python_full_version < '3.11'" },
+    { name = "packaging", marker = "python_full_version < '3.11'" },
+    { name = "setuptools", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ba/bc/d287ae91f235852fd139edc17271da47702a5f6b6e111e6dea0f670455ce/bandersnatch-6.5.0.tar.gz", hash = "sha256:561ec7c17f7565a804199585e0a456974f9d7c1710ca888439b01e4acee7d3a4", size = 90098, upload-time = "2023-11-12T21:07:21.292Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0d/cd/1f3d86a754f8ab4c671da9f2bc17167c67a2f8d6f99098c18d6d7e4e053a/bandersnatch-6.5.0-py3-none-any.whl", hash = "sha256:f257df14759395226d3e54cb4c3414064ef9c7081199fb7b537e33def25e82d5", size = 107022, upload-time = "2023-11-12T21:07:19.446Z" },
+]
+
+[[package]]
+name = "bandersnatch"
+version = "6.6.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version == '3.11.*'",
+]
+dependencies = [
+    { name = "aiohttp", marker = "python_full_version == '3.11.*'" },
+    { name = "aiohttp-socks", marker = "python_full_version == '3.11.*'" },
+    { name = "aiohttp-xmlrpc", marker = "python_full_version == '3.11.*'" },
+    { name = "filelock", marker = "python_full_version == '3.11.*'" },
+    { name = "humanfriendly", marker = "python_full_version == '3.11.*'" },
+    { name = "importlib-metadata", marker = "python_full_version == '3.11.*'" },
+    { name = "packaging", marker = "python_full_version == '3.11.*'" },
+    { name = "setuptools", marker = "python_full_version == '3.11.*'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b7/ac/c5d52d77ec1d9b1c3573c9719b58be287fc30b2232aa676278431eaee35e/bandersnatch-6.6.0.tar.gz", hash = "sha256:7477c41daadb89e3b7b8f6a42135968f0742a9c196bddf8e915fdf6883f17a94", size = 95826, upload-time = "2024-12-24T05:38:49.463Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/72/79756e87b9641bdac636382bc2d322a4fd7dd181ec790bb62bc67e2b9c38/bandersnatch-6.6.0-py3-none-any.whl", hash = "sha256:5e5b7cbc1097cfd8657b24331ff1ef11ef4aa06f08578ab2f3deec9bfdaa4e5a", size = 113781, upload-time = "2024-12-24T05:38:45.89Z" },
+]
+
+[[package]]
+name = "bandersnatch"
+version = "8.0.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+]
+dependencies = [
+    { name = "aiohttp", marker = "python_full_version >= '3.12'" },
+    { name = "aiohttp-socks", marker = "python_full_version >= '3.12'" },
+    { name = "filelock", marker = "python_full_version >= '3.12'" },
+    { name = "humanfriendly", marker = "python_full_version >= '3.12'" },
+    { name = "packaging", marker = "python_full_version >= '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/15/7a/9c248c3d3974fcdeb79235283971ab317c82299776962fdd4af2814b6016/bandersnatch-8.0.0.tar.gz", hash = "sha256:eefb1a27e4b1982ba701cf97b2ff1dfba32937fc44fe4fb95a34b4482dc9609c", size = 110171, upload-time = "2026-07-20T15:55:27.497Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/36/dcca434a350e4a8be2f5f9df1fbbb6f0f763a344294f36fe740a2df64731/bandersnatch-8.0.0-py3-none-any.whl", hash = "sha256:9912868cdb3db857439c771900ab694acbf83fe7375816c380004ddc26b67fb2", size = 127505, upload-time = "2026-07-20T15:55:26.328Z" },
 ]
 
 [[package]]
@@ -587,7 +636,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -826,6 +875,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fb/5e/513ff06670c84e7b9887c1fdf61b2d42b4f574a831f2f1d2222023049d8a/imagesize-2.0.1.tar.gz", hash = "sha256:b2ba6a4dea487a7ebcd53248d3476aca449d30db12a2dde5e0c5ca9624fd77e5", size = 1883774, upload-time = "2026-08-24T12:35:19.13Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/01/f9/575c8d760eae1fc99651b7cc5efd96ad5379ca4d6b53750b0fb4fe983f34/imagesize-2.0.1-py3-none-any.whl", hash = "sha256:ea0c9a0384df69ed86a943a15cde37d0360b82491b3910dc2215e202e62b5b02", size = 14794, upload-time = "2026-08-24T12:35:12.548Z" },
+]
+
+[[package]]
+name = "importlib-metadata"
+version = "9.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "zipp", marker = "python_full_version == '3.11.*'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6f/7e/1e7e8dc30634b93ebb3d58a3dea569ad146e656218d3960ab04f62047b29/importlib_metadata-9.0.1.tar.gz", hash = "sha256:ab830580bc0ef3db61ce8fae716389e5462b67e033018bab6d8f80ef17172f99", size = 59124, upload-time = "2026-08-28T15:30:34.646Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/55/ecca97ae19075f1fac62def77731e7f535e6c1fb8f92ff08160c5e6dade8/importlib_metadata-9.0.1-py3-none-any.whl", hash = "sha256:bba5600596a7e21f3eef53281cf28d6a5195634d2f2b78ff9501a3272c6eaab0", size = 27920, upload-time = "2026-08-28T15:30:33.433Z" },
 ]
 
 [[package]]
@@ -1126,10 +1187,12 @@ name = "mirror-py"
 version = "1.4.0"
 source = { editable = "." }
 dependencies = [
-    { name = "bandersnatch" },
+    { name = "bandersnatch", version = "6.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "bandersnatch", version = "6.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "bandersnatch", version = "8.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "click" },
     { name = "prompt-toolkit" },
-    { name = "setuptools" },
+    { name = "setuptools", marker = "python_full_version < '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -1151,10 +1214,12 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "apt-mirror", marker = "extra == 'apt-mirror2'", specifier = "==16" },
-    { name = "bandersnatch", specifier = "==6.5.0" },
+    { name = "bandersnatch", marker = "python_full_version < '3.11'", specifier = "==6.5.0" },
+    { name = "bandersnatch", marker = "python_full_version == '3.11.*'", specifier = "==6.6.0" },
+    { name = "bandersnatch", marker = "python_full_version >= '3.12'", specifier = "==8.0.0" },
     { name = "click", specifier = "==8.5.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.53" },
-    { name = "setuptools", specifier = ">=81,<82" },
+    { name = "setuptools", marker = "python_full_version < '3.11'", specifier = ">=81,<82" },
 ]
 provides-extras = ["apt-mirror2"]
 
@@ -2060,4 +2125,13 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/38/02/eef443559563ef8f2e10469387b8b1e97cb5efee95b288a56da60801f7ee/yarl-1.25.1-cp315-cp315t-win_amd64.whl", hash = "sha256:b13b88747769537f3d32e89e3a735da10c0a9e35d7322928c701b5f93d3afffd", size = 106811, upload-time = "2026-09-15T19:34:54.935Z" },
     { url = "https://files.pythonhosted.org/packages/88/91/41e284ca2cf5211e05dae031d126a3668aea88fa759df56e7e35c6ad25ba/yarl-1.25.1-cp315-cp315t-win_arm64.whl", hash = "sha256:783dd1467083f4d3f7722ad6a313f24c173e7571372738fcb7a6e6d1ba48df25", size = 101804, upload-time = "2026-09-15T19:34:57.231Z" },
     { url = "https://files.pythonhosted.org/packages/54/22/318c7980066769c6bcd9221ed2248294f5698811da099013098c670565ed/yarl-1.25.1-py3-none-any.whl", hash = "sha256:681c758b0490f9e96b78e5fa8e8dc6e648e9185bb6eaebe73183c33ea0c445f3", size = 63617, upload-time = "2026-09-15T19:34:59.616Z" },
+]
+
+[[package]]
+name = "zipp"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/d8/eab98a517c14134c0b2eb4e2387bc5f457334293ec5d2dd3857ec2966802/zipp-4.1.0.tar.gz", hash = "sha256:4cb57381f544315db7688e976e922a2b18cdb513d21cc194eb42232ba2a3e602", size = 26214, upload-time = "2026-05-18T20:08:57.967Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3a/13/547360d81e6d88d58492968ffda9f9542854f11310ee556fef14260cc886/zipp-4.1.0-py3-none-any.whl", hash = "sha256:25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f", size = 10238, upload-time = "2026-05-18T20:08:57.045Z" },
 ]
