@@ -9,9 +9,20 @@ then run the setup command once as root. It creates `/etc/mirror/`, `/var/lib/mi
 `/var/run/mirror/`, `/var/log/mirror/`, and `/var/www/mirror/`, and installs the
 systemd unit files.
 
+The commands below assume the recommended global installation. For a source or
+virtual-environment installation, activate the environment and run every root
+CLI command through it, for example `sudo env "PATH=$PATH" mirror setup`. Use
+the same prefix for manual `worker`, `daemon`, and `tui` calls below.
+
 ```bash
-sudo env "PATH=$PATH" mirror setup
+sudo mirror setup
 ```
+
+Setup also installs Bash completion at
+`/usr/local/share/bash-completion/completions/mirror`. It requires Bash 4.4 or
+later and an installed, enabled `bash-completion` package; setup does not
+install that package or edit shell startup files. Open a new shell after setup,
+then type `mirror t` and press Tab to complete `mirror tui`.
 
 ## 2. Create the configuration file
 
@@ -103,7 +114,7 @@ The worker server spawns and monitors the actual sync subprocesses. Start it in
 one terminal (or as a systemd unit):
 
 ```bash
-sudo env "PATH=$PATH" mirror worker
+sudo mirror worker
 ```
 
 By default it reads `/etc/mirror/config.json`. Pass `--config` to use a
@@ -115,7 +126,7 @@ The master daemon schedules syncs and delegates them to the worker. Start it in
 a second terminal:
 
 ```bash
-sudo env "PATH=$PATH" mirror daemon
+sudo mirror daemon
 ```
 
 The daemon connects to the worker via Unix domain sockets under
@@ -135,7 +146,7 @@ to users.
 **TUI**: Run the real-time status terminal UI:
 
 ```bash
-sudo env "PATH=$PATH" mirror tui
+sudo mirror tui
 ```
 
 ## Next steps

@@ -48,20 +48,24 @@ Requires **Linux** and **Python 3.10 or later**.
 
 ### Install from PyPI
 
-Install [mirror.py](https://pypi.org/project/mirror.py/) in a virtual environment:
+Install [mirror.py](https://pypi.org/project/mirror.py/) globally so the
+`mirror` command is available to root and systemd provisioning:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install mirror.py
-mirror --version
+sudo python3 -m pip install mirror.py
+sudo mirror --version
 ```
 
-For `apt-mirror2` support, install the optional extra in the same environment:
+For `apt-mirror2` support, install the optional extra globally as well:
 
 ```bash
-python -m pip install 'mirror.py[apt-mirror2]'
+sudo python3 -m pip install 'mirror.py[apt-mirror2]'
 ```
+
+Some distributions mark their system Python as externally managed and reject
+global pip installs. In that case, use the virtual-environment alternative in
+the [installation guide](https://mirror-py.sparcs.org/getting-started/installation.html)
+instead of overriding that protection.
 
 ### Install from source
 
@@ -100,15 +104,23 @@ keyrings described in the [debmirror](https://mirror-py.sparcs.org/sync-methods/
 
 ### 1. Provision the host
 
-With the virtual environment active:
+The commands below assume the recommended global installation. For a source or
+virtual-environment installation, activate the environment and run every root
+CLI command through it, for example `sudo env "PATH=$PATH" mirror setup`. Use
+the same prefix for manual `worker`, `daemon`, `tui`, and `config reload` calls.
 
 ```bash
-sudo env "PATH=$PATH" mirror setup
+sudo mirror setup
 ```
 
 Setup creates the configuration, state, socket, log, and web directories, and
 installs `mirror.service` and `mirror-worker.service`. It creates
-`/etc/mirror/config.json` only when that file does not already exist.
+`/etc/mirror/config.json` only when that file does not already exist. It also
+installs Bash completion at
+`/usr/local/share/bash-completion/completions/mirror`. Completion requires Bash
+4.4 or later and the distribution's `bash-completion` package to be installed
+and enabled; setup does not install that package or edit per-user shell files.
+Open a new shell, then type `mirror t` and press Tab to complete `mirror tui`.
 
 ### 2. Configure a repository
 
@@ -164,11 +176,9 @@ for deployment details.
 
 ### 4. Inspect and control syncs
 
-With the virtual environment active, run:
-
 ```bash
-sudo env "PATH=$PATH" mirror tui
-sudo env "PATH=$PATH" mirror config reload
+sudo mirror tui
+sudo mirror config reload
 ```
 
 The TUI shows package status and logs. `push` requests an immediate sync;
