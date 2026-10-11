@@ -1,10 +1,11 @@
 """State persistence test: lastsync timestamp survives master + worker restart."""
 
+import json
 import time
 
 import pytest
 
-from .helpers import temporary_rsync_package
+from .helpers import temporary_rsync_package, write_container_config
 
 
 @pytest.mark.integration
@@ -17,6 +18,10 @@ def test_lastsync_survives_master_worker_restart(mirror_stack):
     with temporary_rsync_package(
         mirror_stack, "state-persistence-rsync"
     ) as pkgid:
+        config = json.loads(mirror_stack.docker_exec("cat", "/etc/mirror/config.json").stdout)
+        config["packages"][pkgid]["settings"]["options"]["password"] = "synthetic-state-secret"
+        write_container_config("mirror", json.dumps(config))
+        mirror_stack.docker_exec("mirror", "config", "reload")
         mirror_stack.trigger_sync(pkgid)
         lastsync_before = mirror_stack.wait_for_new_active_sync(
             pkgid, previous_lastsync=0.0, timeout=30
@@ -24,6 +29,10 @@ def test_lastsync_survives_master_worker_restart(mirror_stack):
 
         stat_before = mirror_stack.stat_json()["packages"][pkgid]
         assert stat_before["lastsync"] == lastsync_before
+        assert set(stat_before) == {"status", "lastsync", "timestamp"}
+        assert "settings" not in mirror_stack.runtime_package(pkgid)
+        assert "synthetic-state-secret" not in mirror_stack.docker_exec("cat", "/var/lib/mirror/stat.json").stdout
+        assert mirror_stack.docker_exec("stat", "-c", "%a", "/var/lib/mirror/stat.json").stdout.strip() == "600"
 
         # Stop in dependency order, then start worker and wait for its socket
         # before bringing master back up.
@@ -52,5 +61,7 @@ def test_lastsync_survives_master_worker_restart(mirror_stack):
             assert runtime_package["status"]["status"] == "ACTIVE"
             assert stat_package["lastsync"] == lastsync_before
             assert runtime_package["lastsync"] == lastsync_before
+            assert "settings" not in stat_package
+            assert "settings" not in runtime_package
             assert mirror_stack.worker_progress(pkgid)["syncing"] is False
             time.sleep(0.2)

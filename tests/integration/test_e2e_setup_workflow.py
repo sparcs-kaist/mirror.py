@@ -180,7 +180,7 @@ def test_full_operator_workflow_setup_to_first_sync(operator_container) -> None:
         stat_path = host_tmp / "state" / "stat.json"
         if stat_path.exists():
             try:
-                data = json.loads(stat_path.read_text())
+                data = json.loads(_exec(name, "cat", "/var/lib/mirror/stat.json").stdout)
                 final_status = (
                     data.get("packages", {})
                     .get("rsync-test", {})

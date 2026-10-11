@@ -189,6 +189,20 @@ def test_perform_reload_detects_modified_package(reload_env):
     assert "pkg-one" in result["modified"]
 
 
+def test_perform_reload_detects_password_change_without_persisting_it(reload_env):
+    """Credential changes apply in memory but never enter runtime state."""
+    modified = _make_pkg_entry("pkg-one")
+    modified["settings"]["options"]["password"] = "new-secret"
+    _write_config(reload_env, {"pkg-one": modified})
+
+    result = mirror.config._perform_reload()
+
+    assert result["status"] == "ok"
+    assert "pkg-one" in result["modified"]
+    assert mirror.packages.get("pkg-one").settings.options["password"] == "new-secret"
+    assert "new-secret" not in reload_env["stat_path"].read_text()
+
+
 def test_perform_reload_detects_disabled_flip(reload_env):
     """Flipping only the disabled flag must be reported in result['modified']."""
     flipped = {"pkg-one": {**_make_pkg_entry("pkg-one"), "disabled": True}}

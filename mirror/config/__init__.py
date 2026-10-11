@@ -88,10 +88,12 @@ def _merge_package_config_with_stat(pkg_config: dict, existing_stat: dict | None
 
 
 def _to_stat_package_dict(package_data: dict) -> dict:
-    """Return package data without config-only fields persisted to stat.json."""
-    stat_data = package_data.copy()
-    stat_data.pop("disabled", None)
-    return stat_data
+    """Return only runtime package fields persisted to stat.json."""
+    return {
+        field: package_data[field]
+        for field in ("status", "lastsync", "timestamp")
+        if field in package_data
+    }
 
 
 # --- Loading Functions ---
@@ -184,7 +186,7 @@ def _load_from_dict(config_dict: dict, *, source_path: Path | None = None, load_
             },
         }
         try:
-            _atomic_write_json(STAT_DATA_PATH, full_stat_to_save, mode=0o644)
+            _atomic_write_json(STAT_DATA_PATH, full_stat_to_save, mode=0o600)
         except Exception as e:
             mirror.log.error(f"Failed to save merged stat data to {STAT_DATA_PATH}: {e}")
             raise
@@ -572,7 +574,6 @@ def save_stat_data():
                         mirror.log.warning(f"Status plug-in {plugin_name} extend_stat_fields failed: {e}")
                 if plugin_extras:
                     pkg_dict["status"]["statusinfo"]["plugins"] = plugin_extras
-            # Strip config-only fields (e.g. disabled) before writing stat.json.
             packages_dict[pkg_id] = _to_stat_package_dict(pkg_dict)
 
         full_stat = {
@@ -589,7 +590,7 @@ def save_stat_data():
                 mirror.log.warning(f"Stat transform from plug-in '{plugin_name}' failed: {e}")
 
         try:
-            _atomic_write_json(STAT_DATA_PATH, full_stat, mode=0o644)
+            _atomic_write_json(STAT_DATA_PATH, full_stat, mode=0o600)
         except Exception as e:
             mirror.log.error(f"Failed to save stat data to {STAT_DATA_PATH}: {e}")
 
@@ -619,8 +620,8 @@ def _write_status_outputs() -> None:
     """Write each plug-in-declared status output file.
 
     Outputs are written world-readable (0o644), matching mirror.py's own
-    status.json and stat.json, so consumers running as a different user
-    (e.g. a web server) can read them.
+    status.json, so consumers running as a different user (e.g. a web server)
+    can read them.
 
     Per-plug-in isolation: failures are logged via mirror.log.warning and
     other outputs proceed.

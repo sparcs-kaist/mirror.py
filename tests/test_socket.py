@@ -1,4 +1,5 @@
 import pytest
+import json
 import queue
 import stat
 import tempfile
@@ -10,7 +11,7 @@ import os
 from pathlib import Path
 
 import mirror
-from mirror.structure import Config
+from mirror.structure import Config, Package, PackageSettings
 
 # Use normal imports — earlier code used a `_load_module` helper that
 # overwrote `sys.modules['mirror.socket.*']`, causing contamination for
@@ -52,6 +53,7 @@ class TestHandshake:
                 server_info = client.connect()
 
                 assert server_info.app_name == APP_NAME
+                assert server_info.protocol_version == 3
                 assert server_info.protocol_version == PROTOCOL_VERSION
                 assert server_info.role == "master"
                 assert server_info.is_server == True
@@ -143,8 +145,24 @@ class TestMasterServer:
         with tempfile.TemporaryDirectory() as tmpdir:
             socket_path = Path(tmpdir) / "master.sock"
 
-            pkg = MagicMock()
-            pkg.to_dict.return_value = {"id": "test-pkg", "name": "Test Package"}
+            pkg = Package(
+                pkgid="test-pkg",
+                name="Test Package",
+                status="ACTIVE",
+                href="/test-pkg",
+                synctype="rsync",
+                syncrate=3600,
+                link=[Package.Link(rel="self", href="/test-pkg")],
+                settings=PackageSettings(
+                    hidden=False,
+                    src="rsync://user@example.invalid/repo",
+                    dst="/srv/mirror/test-pkg",
+                    options={"password": "rpc-test-secret"},
+                ),
+                lastsync=123.0,
+                disabled=False,
+                timestamp=456.0,
+            )
 
             mock_packages = MagicMock()
             mock_packages.values.return_value = [pkg]
@@ -162,7 +180,23 @@ class TestMasterServer:
                     assert "packages" in result
                     assert isinstance(result["packages"], list)
                     assert len(result["packages"]) == 1
-                    assert result["packages"][0]["id"] == "test-pkg"
+                    response = result["packages"][0]
+                    assert set(response) == {
+                        "id",
+                        "name",
+                        "href",
+                        "synctype",
+                        "syncrate",
+                        "link",
+                        "disabled",
+                        "lastsync",
+                        "timestamp",
+                        "status",
+                    }
+                    assert response["id"] == "test-pkg"
+                    assert response["syncrate"] == "PT1H"
+                    assert "settings" not in response
+                    assert "rpc-test-secret" not in json.dumps(response)
             finally:
                 server.stop()
                 mirror.packages = original
@@ -178,7 +212,7 @@ class TestMasterServer:
             pkg = MagicMock()
             pkg.is_disabled.return_value = False
             pkg.is_syncing.return_value = False
-            pkg.to_dict.return_value = {"id": "pkg1", "name": "Package 1"}
+            pkg.to_status_dict.return_value = {"id": "pkg1", "name": "Package 1"}
 
             mock_packages = MagicMock()
             mock_packages.get.return_value = pkg
@@ -241,6 +275,50 @@ class TestMasterServer:
                     mirror.socket.worker = original_worker_attr
                 else:
                     delattr(mirror.socket, 'worker')
+
+    def test_master_get_package_omits_settings(self):
+        """get_package returns status fields without sync credentials."""
+        import mirror
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            socket_path = Path(tmpdir) / "master.sock"
+            pkg = Package(
+                pkgid="private",
+                name="Private",
+                status="ERROR",
+                href="/private",
+                synctype="lftp",
+                syncrate=-1,
+                link=[],
+                settings=PackageSettings(
+                    hidden=True,
+                    src="ftp://user@example.invalid/repo",
+                    dst="/srv/mirror/private",
+                    options={"password": "get-package-secret"},
+                ),
+            )
+            pkg.statusinfo.runninglog = "/var/log/mirror/packages/private.log"
+
+            original = getattr(mirror, "packages", None)
+            mirror.packages = type("Packages", (), {"get": lambda self, key: pkg})()
+            server = MasterServer(socket_path)
+            server.start()
+            time.sleep(0.1)
+
+            try:
+                with MasterClient(socket_path) as client:
+                    response = client.get_package("private")
+            finally:
+                server.stop()
+                mirror.packages = original
+
+            assert response["syncrate"] == "PUSH"
+            assert response["status"]["status"] == "ERROR"
+            assert response["status"]["statusinfo"]["runninglog"].endswith(
+                "private.log"
+            )
+            assert "settings" not in response
+            assert "get-package-secret" not in json.dumps(response)
 
 
 class TestWorkerServer:

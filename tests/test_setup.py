@@ -171,10 +171,14 @@ def test_setup_skips_existing_config(monkeypatch, tmp_path, capsys):
     config_path.parent.mkdir(parents=True, exist_ok=True)
     sentinel_content = '{"sentinel": true}'
     config_path.write_text(sentinel_content)
+    config_path.chmod(0o644)
+    original_owner = (config_path.stat().st_uid, config_path.stat().st_gid)
 
     setup_mod.setup()
 
     assert config_path.read_text() == sentinel_content
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+    assert (config_path.stat().st_uid, config_path.stat().st_gid) == original_owner
     captured = capsys.readouterr()
     assert "skipping config write" in captured.out.lower()
 
@@ -191,6 +195,79 @@ def test_setup_writes_default_config_when_absent(monkeypatch, tmp_path):
     assert isinstance(loaded, dict)
     assert loaded["packages"] == {}
     assert "plugins" not in loaded["settings"]
+
+
+@pytest.mark.parametrize("umask", [0o022, 0o077, 0o777])
+def test_config_is_private_from_creation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, umask: int) -> None:
+    config_path = tmp_path / "config.json"
+    monkeypatch.setattr(setup_mod, "_CONFIG_PATH", config_path)
+    original_open = os.open
+    creation_modes = []
+
+    def inspect_open(path, flags: int, mode: int = 0o777) -> int:
+        fd = original_open(path, flags, mode)
+        creation_modes.append(stat.S_IMODE(os.fstat(fd).st_mode))
+        return fd
+
+    monkeypatch.setattr(setup_mod.os, "open", inspect_open)
+    previous_umask = os.umask(umask)
+    try:
+        assert setup_mod._write_default_config_if_absent() is True
+    finally:
+        os.umask(previous_umask)
+
+    assert creation_modes == [0o600 & ~umask]
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
+    assert json.loads(config_path.read_text()) == setup_mod.DEFAULT_CONFIG
+
+
+@pytest.mark.parametrize("target_type", ["symlink", "dangling_symlink", "directory", "fifo"])
+def test_setup_rejects_non_regular_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture, target_type: str) -> None:
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+    config_path = setup_mod._CONFIG_PATH
+    config_path.parent.mkdir(parents=True)
+    target = tmp_path / "target.json"
+    if target_type == "symlink":
+        target.write_text('{"password": "synthetic-secret"}')
+        target.chmod(0o644)
+        config_path.symlink_to(target)
+    elif target_type == "dangling_symlink":
+        config_path.symlink_to(target)
+    elif target_type == "directory":
+        config_path.mkdir()
+    else:
+        os.mkfifo(config_path, 0o644)
+
+    setup_mod.setup()
+
+    assert "An error occurred during setup" in capsys.readouterr().out
+    assert not (setup_mod._SYSTEMD_PATH / "mirror.service").exists()
+    if target_type == "symlink":
+        assert target.read_text() == '{"password": "synthetic-secret"}'
+        assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    elif target_type == "dangling_symlink":
+        assert not target.exists()
+
+
+def test_setup_reports_config_permission_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    _redirect_paths(monkeypatch, tmp_path)
+    _patch_happy_path(monkeypatch)
+    config_path = setup_mod._CONFIG_PATH
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text('{"sentinel": true}')
+    config_path.chmod(0o644)
+
+    def fail_chmod(fd: int, mode: int) -> None:
+        raise PermissionError("cannot protect config")
+
+    monkeypatch.setattr(setup_mod.os, "fchmod", fail_chmod)
+    setup_mod.setup()
+
+    assert "cannot protect config" in capsys.readouterr().out
+    assert config_path.read_text() == '{"sentinel": true}'
+    assert stat.S_IMODE(config_path.stat().st_mode) == 0o644
+    assert not (setup_mod._SYSTEMD_PATH / "mirror.service").exists()
 
 
 def test_setup_creates_all_directories(monkeypatch, tmp_path):
