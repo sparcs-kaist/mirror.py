@@ -1,5 +1,6 @@
 import pytest
 import queue
+import socket
 import stat
 import tempfile
 import threading
@@ -835,6 +836,169 @@ def test_recv_message_reports_connection_closed_mid_frame(wire_data, message):
         receiver.close()
 
 
+@pytest.mark.parametrize("length", [0, _protocol_module.MAX_MESSAGE_SIZE + 1])
+def test_recv_message_rejects_invalid_size_before_body(length):
+    """Invalid frame sizes must be rejected without waiting for a body."""
+    import struct
+
+    sender, receiver = _protocol_module.socket.socketpair()
+    sender.sendall(struct.pack(">I", length))
+    try:
+        with pytest.raises(_protocol_module.ProtocolError, match="Message size"):
+            _protocol_module.recv_message(receiver, timeout=0.2)
+    finally:
+        sender.close()
+        receiver.close()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"\xff",
+        b"{invalid-json}",
+        b"[]",
+    ],
+)
+def test_recv_message_rejects_invalid_payload(body):
+    """UTF-8, JSON, and top-level mapping validation happen at the boundary."""
+    import struct
+
+    sender, receiver = _protocol_module.socket.socketpair()
+    sender.sendall(struct.pack(">I", len(body)) + body)
+    try:
+        with pytest.raises(_protocol_module.ProtocolError):
+            _protocol_module.recv_message(receiver, timeout=0.2)
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_send_message_rejects_oversize_payload():
+    """send_message must reject a JSON body larger than the frame limit."""
+    sender, receiver = _protocol_module.socket.socketpair()
+    payload = {"value": "x" * _protocol_module.MAX_MESSAGE_SIZE}
+    try:
+        with pytest.raises(_protocol_module.ProtocolError, match="Message size"):
+            _protocol_module.send_message(sender, payload)
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_message_size_boundary_round_trip(monkeypatch):
+    """A body exactly at the configured size limit remains valid."""
+    limit = 64
+    monkeypatch.setattr(_protocol_module, "MAX_MESSAGE_SIZE", limit)
+    empty_size = len(_protocol_module.json.dumps({"value": ""}).encode("utf-8"))
+    payload = {"value": "x" * (limit - empty_size)}
+    sender, receiver = _protocol_module.socket.socketpair()
+    try:
+        _protocol_module.send_message(sender, payload)
+        assert _protocol_module.recv_message(receiver, timeout=1.0) == payload
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_recv_message_idle_wait_starts_deadline_on_first_byte(monkeypatch):
+    """An idle persistent connection remains valid until a frame starts."""
+    sender, receiver = _protocol_module.socket.socketpair()
+    monkeypatch.setattr(_protocol_module, "MESSAGE_TIMEOUT", 0.05)
+    received = {}
+
+    def receive():
+        received["message"] = _protocol_module.recv_message(receiver)
+
+    thread = threading.Thread(target=receive, daemon=True)
+    thread.start()
+    time.sleep(0.1)
+    assert thread.is_alive()
+    _protocol_module.send_message(sender, {"ready": True})
+    thread.join(timeout=1.0)
+    try:
+        assert received == {"message": {"ready": True}}
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_recv_message_uses_absolute_frame_deadline(monkeypatch):
+    """Small fragments cannot extend the total frame read deadline."""
+    import struct
+
+    sender, receiver = _protocol_module.socket.socketpair()
+    monkeypatch.setattr(_protocol_module, "MESSAGE_TIMEOUT", 0.05)
+    body = b'{"slow":true}'
+    frame = struct.pack(">I", len(body)) + body
+
+    def send_slowly():
+        try:
+            for byte in frame:
+                sender.sendall(bytes([byte]))
+                time.sleep(0.02)
+        except OSError:
+            pass
+
+    thread = threading.Thread(target=send_slowly, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(_protocol_module.socket.timeout):
+            _protocol_module.recv_message(receiver)
+    finally:
+        sender.close()
+        receiver.close()
+        thread.join(timeout=1.0)
+
+
+def test_send_message_times_out_when_peer_does_not_read():
+    """A peer that stops reading cannot block a sender indefinitely."""
+    sender, receiver = _protocol_module.socket.socketpair()
+    payload = {"value": "x" * (_protocol_module.MAX_MESSAGE_SIZE // 2)}
+    try:
+        with pytest.raises(_protocol_module.socket.timeout):
+            _protocol_module.send_message(sender, payload, timeout=0.05)
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_protocol_io_preserves_socket_timeout():
+    """Protocol reads and writes must not mutate socket timeout state."""
+    sender, receiver = _protocol_module.socket.socketpair()
+    sender.settimeout(2.0)
+    receiver.settimeout(3.0)
+    try:
+        _protocol_module.send_message(sender, {"ok": True})
+        assert _protocol_module.recv_message(receiver, timeout=1.0) == {"ok": True}
+        assert sender.gettimeout() == 2.0
+        assert receiver.gettimeout() == 3.0
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_protocol_supports_file_descriptors_above_select_limit():
+    """Readiness polling must support daemon sockets whose fd exceeds 1023."""
+    import fcntl
+
+    sender, receiver = _protocol_module.socket.socketpair()
+    try:
+        try:
+            high_fd = fcntl.fcntl(receiver.fileno(), fcntl.F_DUPFD, 1024)
+        except OSError as exc:
+            pytest.skip(f"Cannot allocate a high file descriptor: {exc}")
+        high_receiver = _protocol_module.socket.socket(fileno=high_fd)
+        receiver.close()
+        try:
+            _protocol_module.send_message(sender, {"high": True})
+            assert _protocol_module.recv_message(high_receiver, timeout=1.0) == {"high": True}
+        finally:
+            high_receiver.close()
+    finally:
+        sender.close()
+        receiver.close()
+
+
 def test_send_command_serialized_under_concurrent_callers(tmp_path):
     """Concurrent send_command calls from one BaseClient must not mismatch responses."""
     import threading
@@ -883,6 +1047,51 @@ def test_send_command_serialized_under_concurrent_callers(tmp_path):
         server.stop()
 
 
+def test_server_serializes_broadcasts_with_rpc_responses(tmp_path):
+    """Notifications and RPC responses must never interleave on one stream."""
+    class RecordingClient(BaseClient):
+        def __init__(self, socket_path):
+            super().__init__(socket_path, role="cli")
+            self.notifications = []
+
+        def handle_notification(self, data):
+            self.notifications.append(data)
+
+    server = MasterServer(tmp_path / "broadcast.sock")
+    server.start()
+    client = RecordingClient(server.socket_path)
+    client.connect()
+    errors = []
+
+    def broadcast_many():
+        try:
+            for index in range(20):
+                server.broadcast({
+                    "type": "notification",
+                    "event": "test",
+                    "index": index,
+                    "padding": "x" * 32768,
+                })
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=broadcast_many, daemon=True)
+    thread.start()
+    try:
+        for _ in range(20):
+            assert client.send_command("ping") == {"message": "pong"}
+        thread.join(timeout=5.0)
+        deadline = time.monotonic() + 2.0
+        while len(client.notifications) < 20 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not errors
+        assert len(client.notifications) == 20
+        assert client.is_connected
+    finally:
+        client.disconnect()
+        server.stop()
+
+
 def test_send_command_does_not_hold_send_lock_while_waiting(monkeypatch):
     """A waiting RPC must not block another caller from sending its command."""
     client = BaseClient("/tmp/not-used.sock", role="cli")
@@ -892,7 +1101,7 @@ def test_send_command_does_not_hold_send_lock_while_waiting(monkeypatch):
     first_sent = threading.Event()
     second_sent = threading.Event()
 
-    def fake_send_message(sock, data):
+    def fake_send_message(sock, data, timeout=None):
         sent_ids.append(data["request_id"])
         if len(sent_ids) == 1:
             first_sent.set()
@@ -966,7 +1175,7 @@ def test_stale_late_response_is_dropped(monkeypatch):
     client._sock = object()
     sent_ids = []
 
-    def fake_send_message(sock, data):
+    def fake_send_message(sock, data, timeout=None):
         sent_ids.append(data["request_id"])
 
     monkeypatch.setattr(_base_module, "send_message", fake_send_message)
@@ -977,7 +1186,7 @@ def test_stale_late_response_is_dropped(monkeypatch):
     old_id = sent_ids[0]
     assert client._route_response({"status": 200, "data": "late", "request_id": old_id}) is False
 
-    def respond_current(sock, data):
+    def respond_current(sock, data, timeout=None):
         sent_ids.append(data["request_id"])
         request_id = data["request_id"]
         with client._pending_lock:
@@ -1028,7 +1237,7 @@ def test_listener_disconnect_wakes_pending_requests_quickly(monkeypatch):
     errors = []
     ready = threading.Event()
 
-    def fake_send_message(sock, data):
+    def fake_send_message(sock, data, timeout=None):
         ready.set()
 
     monkeypatch.setattr(_base_module, "send_message", fake_send_message)
@@ -1047,6 +1256,178 @@ def test_listener_disconnect_wakes_pending_requests_quickly(monkeypatch):
     thread.join(timeout=1.0)
 
     assert errors and isinstance(errors[0], ConnectionError)
+
+
+def test_listener_protocol_error_closes_socket_and_wakes_pending():
+    """A corrupt frame poisons the client connection and wakes RPC waiters."""
+    import struct
+
+    sender, receiver = _protocol_module.socket.socketpair()
+    client = BaseClient("/tmp/not-used.sock", role="cli")
+    client._connected = True
+    client._sock = receiver
+    response_queue = queue.Queue(maxsize=1)
+    with client._pending_lock:
+        client._pending_responses["pending"] = response_queue
+
+    thread = threading.Thread(target=client._listen_loop, daemon=True)
+    thread.start()
+    sender.sendall(struct.pack(">I", 2) + b"[]")
+    thread.join(timeout=1.0)
+    try:
+        assert not client.is_connected
+        assert client._sock is None
+        assert response_queue.get_nowait() is _base_module._CONNECTION_ERROR_SENTINEL
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_send_failure_poisons_client_connection(monkeypatch):
+    """A failed frame send closes the socket because the stream may be desynchronized."""
+    sender, receiver = _protocol_module.socket.socketpair()
+    client = BaseClient("/tmp/not-used.sock", role="cli")
+    client._connected = True
+    client._sock = sender
+
+    def fail_send(sock, data, timeout=None):
+        raise socket.timeout("timed out")
+
+    monkeypatch.setattr(_base_module, "send_message", fail_send)
+    try:
+        with pytest.raises(ConnectionError, match="Failed to send"):
+            client.send_command("ping")
+        assert not client.is_connected
+        assert client._sock is None
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def test_server_connection_cap_rejects_and_recovers_pending_slot(tmp_path, monkeypatch):
+    """Pending handshakes count toward the cap and their slots are reusable."""
+    monkeypatch.setattr(_base_module, "MAX_CONNECTIONS", 2)
+    server = MasterServer(tmp_path / "limited.sock")
+    server.start()
+    pending = []
+    try:
+        for _ in range(2):
+            raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            raw.connect(str(server.socket_path))
+            _protocol_module.recv_message(raw, timeout=1.0)
+            pending.append(raw)
+
+        rejected = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        rejected.settimeout(1.0)
+        rejected.connect(str(server.socket_path))
+        try:
+            assert rejected.recv(1) == b""
+        finally:
+            rejected.close()
+
+        pending.pop().close()
+        deadline = time.monotonic() + 2.0
+        while True:
+            client = MasterClient(server.socket_path)
+            try:
+                client.connect()
+                break
+            except (ConnectionError, OSError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
+        try:
+            assert client.ping() == {"message": "pong"}
+        finally:
+            client.disconnect()
+    finally:
+        for raw in pending:
+            raw.close()
+        server.stop()
+
+
+def test_server_stop_closes_pending_handshake(tmp_path):
+    """Stopping a server closes clients still waiting in the handshake."""
+    server = MasterServer(tmp_path / "pending-stop.sock")
+    server.start()
+    raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    raw.settimeout(1.0)
+    raw.connect(str(server.socket_path))
+    _protocol_module.recv_message(raw, timeout=1.0)
+    server.stop()
+    try:
+        assert raw.recv(1) == b""
+    finally:
+        raw.close()
+
+
+def test_server_send_timeout_releases_connection_slot(tmp_path, monkeypatch):
+    """A client that does not read a response is closed and releases its slot."""
+    monkeypatch.setattr(_base_module, "MAX_CONNECTIONS", 1)
+    monkeypatch.setattr(_base_module, "MESSAGE_TIMEOUT", 0.05)
+    server = MasterServer(tmp_path / "blocked-send.sock")
+    server.register_handler("large", lambda: {"padding": "x" * (4 * 1024 * 1024)})
+    server.start()
+    raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    raw.connect(str(server.socket_path))
+    try:
+        _protocol_module.recv_message(raw, timeout=1.0)
+        _protocol_module.send_message(raw, {
+            "status": 200,
+            "message": "Handshake",
+            "data": {"info": {
+                "app_name": APP_NAME,
+                "app_version": "raw",
+                "protocol_version": PROTOCOL_VERSION,
+                "is_server": False,
+                "role": "cli",
+            }},
+        })
+        _protocol_module.recv_message(raw, timeout=1.0)
+        _protocol_module.send_message(raw, {
+            "command": "large",
+            "kwargs": None,
+            "request_id": "large-response",
+        })
+
+        deadline = time.monotonic() + 2.0
+        while server.client_count and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert server.client_count == 0
+
+        with MasterClient(server.socket_path) as client:
+            assert client.ping() == {"message": "pong"}
+    finally:
+        raw.close()
+        server.stop()
+
+
+def test_handler_thread_start_failure_releases_slot(tmp_path, monkeypatch):
+    """Failure to start a handler thread must not consume a connection slot."""
+    monkeypatch.setattr(_base_module, "MAX_CONNECTIONS", 1)
+    server = MasterServer(tmp_path / "thread-start.sock")
+    server.start()
+    original_start = threading.Thread.start
+    failed = False
+
+    def fail_once(thread):
+        nonlocal failed
+        if not failed and getattr(thread, "_target", None) == server._serve_connection:
+            failed = True
+            raise RuntimeError("cannot start thread")
+        return original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", fail_once)
+    raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    raw.settimeout(1.0)
+    raw.connect(str(server.socket_path))
+    try:
+        assert raw.recv(1) == b""
+        with MasterClient(server.socket_path) as client:
+            assert client.ping() == {"message": "pong"}
+    finally:
+        raw.close()
+        server.stop()
 
 
 def test_protocol_version_mismatch_rejected_by_handshake(tmp_path):

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -426,7 +429,27 @@ def test_main_runs_resolved_native_command(monkeypatch: pytest.MonkeyPatch) -> N
         discovery.main()
 
     assert stopped.value.code == 7
-    run_native.assert_called_once_with(resolved)
+    discovery.resolve_command.assert_called_once_with(native, None)
+    run_native.assert_called_once_with(resolved, None)
+
+
+def test_main_pops_ftp_password_and_passes_it_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
+    native = ["debmirror", "--method", "ftp", "--host", "repo.example", "--root", "debian",
+              "--dist", "bookworm", "--section", "main", "--arch", "amd64", "/mirror"]
+    monkeypatch.setenv(discovery._FTP_PASSWORD_ENV, "secret")
+    monkeypatch.setattr(discovery.sys, "argv", ["debmirror", "--", *native])
+    monkeypatch.setattr(discovery.signal, "signal", MagicMock())
+    monkeypatch.setattr(discovery, "resolve_command", MagicMock(return_value=native))
+    run_native = MagicMock(return_value=0)
+    monkeypatch.setattr(discovery, "_run_native", run_native)
+
+    with pytest.raises(SystemExit) as stopped:
+        discovery.main()
+
+    assert stopped.value.code == 0
+    assert discovery._FTP_PASSWORD_ENV not in os.environ
+    discovery.resolve_command.assert_called_once_with(native, "secret")
+    run_native.assert_called_once_with(native, "secret")
 
 
 @pytest.mark.parametrize("returncode", [0, 7])
@@ -435,10 +458,12 @@ def test_native_run_isolates_config_and_removes_it_after_exit(
 ) -> None:
     paths = []
 
-    def start(command: list[str]) -> MagicMock:
+    def start(command: list[str], **kwargs: object) -> MagicMock:
         config = Path(_flag(command, "--config-file"))
         assert config.read_text() == "1;\n"
         assert config.parent.stat().st_mode & 0o777 == 0o700
+        assert config.stat().st_mode & 0o777 == 0o600
+        assert discovery._FTP_PASSWORD_ENV not in kwargs["env"]
         assert command[-1] == "/mirror"
         paths.append(config.parent)
         return MagicMock(wait=MagicMock(return_value=returncode))
@@ -452,7 +477,7 @@ def test_native_run_isolates_config_and_removes_it_after_exit(
 def test_native_start_failure_removes_temporary_config(monkeypatch: pytest.MonkeyPatch) -> None:
     paths = []
 
-    def fail(command: list[str]) -> None:
+    def fail(command: list[str], **kwargs: object) -> None:
         paths.append(Path(_flag(command, "--config-file")).parent)
         raise OSError("cannot execute")
 
@@ -469,7 +494,7 @@ def test_native_interrupt_reaps_child_and_removes_config(monkeypatch: pytest.Mon
     def interrupt() -> None:
         discovery._terminate_child(15, None)
 
-    def start(command: list[str]) -> MagicMock:
+    def start(command: list[str], **kwargs: object) -> MagicMock:
         paths.append(Path(_flag(command, "--config-file")).parent)
         child.wait.side_effect = lambda **kwargs: 0 if kwargs else interrupt()
         return child
@@ -481,6 +506,79 @@ def test_native_interrupt_reaps_child_and_removes_config(monkeypatch: pytest.Mon
     child.terminate.assert_called_once_with()
     assert paths and not paths[0].exists()
     assert discovery._ACTIVE_PROCESS is None
+
+
+@pytest.mark.skipif(shutil.which("perl") is None, reason="Perl is required")
+def test_native_config_password_round_trips_perl_special_characters(tmp_path: Path) -> None:
+    marker = tmp_path / "injected"
+    password = f"prefix\\'; open my $fh, '>', '{marker}'; # suffix"
+    config = tmp_path / "debmirror.conf"
+
+    discovery._write_native_config(config, password)
+    result = subprocess.run(
+        [
+            "perl",
+            "-e",
+            "do $ARGV[0] or die($@ || $!); print $passwd;",
+            str(config),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout == password
+    assert not marker.exists()
+    assert config.stat().st_mode & 0o777 == 0o600
+
+
+def test_native_password_is_absent_from_process_argv_and_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    helper = tmp_path / "debmirror-helper"
+    ready = tmp_path / "ready"
+    helper.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, sys, time\n"
+        "pathlib.Path(sys.argv[-1]).write_text('ready', encoding='utf-8')\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    helper.chmod(0o700)
+    password = "process-secret"
+    monkeypatch.setenv(discovery._FTP_PASSWORD_ENV, password)
+    results = []
+
+    thread = threading.Thread(
+        target=lambda: results.append(discovery._run_native([str(helper), str(ready)], password))
+    )
+    thread.start()
+    deadline = time.monotonic() + 5
+    while not ready.exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert ready.exists()
+    child = discovery._ACTIVE_PROCESS
+    assert child is not None
+    try:
+        assert password.encode() not in Path(f"/proc/{child.pid}/cmdline").read_bytes()
+        assert password.encode() not in Path(f"/proc/{child.pid}/environ").read_bytes()
+    finally:
+        child.terminate()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert results == [-15]
+
+
+@pytest.mark.parametrize("credential_args", [["--passwd", "secret", "/mirror"], ["/mirror", "--passwd=secret"]])
+def test_inline_password_is_rejected_before_native_execution(credential_args: list[str]) -> None:
+    argv = [
+        "debmirror", "--method", "ftp", "--host", "repo.example", "--root", "debian",
+        *credential_args,
+    ]
+
+    with pytest.raises(discovery.DiscoveryError, match="--passwd is not supported"):
+        discovery._run_native(argv)
+    with pytest.raises(discovery.DiscoveryError, match="--passwd is not supported"):
+        discovery.resolve_command(argv)
 
 
 def test_sigterm_handler_reaps_active_metadata_child(monkeypatch: pytest.MonkeyPatch) -> None:

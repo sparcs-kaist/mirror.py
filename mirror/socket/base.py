@@ -5,11 +5,11 @@ Provides the connection lifecycle, handshake protocol,
 command dispatch, and message listener infrastructure.
 """
 
-import json
 import os
 import queue
 import socket
 import threading
+import time
 import traceback
 import logging
 import uuid
@@ -20,6 +20,7 @@ from .protocol import (
     PROTOCOL_VERSION,
     APP_NAME,
     HANDSHAKE_TIMEOUT,
+    MESSAGE_TIMEOUT,
     HandshakeInfo,
     send_message,
     recv_message,
@@ -28,6 +29,7 @@ from .protocol import (
 logger = logging.getLogger(__name__)
 
 _CONNECTION_ERROR_SENTINEL = object()
+MAX_CONNECTIONS = 64
 
 
 class BaseServer:
@@ -52,7 +54,10 @@ class BaseServer:
         self._handlers: dict[str, Callable] = {}
         self._version = "unknown"
         self._connections: list[socket.socket] = []
+        self._pending_connections: set[socket.socket] = set()
+        self._connection_send_locks: dict[socket.socket, threading.Lock] = {}
         self._connections_lock = threading.Lock()
+        self._connection_slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
         self._socket_uid = socket_uid
         self._socket_gid = socket_gid
         self._socket_mode = socket_mode
@@ -99,7 +104,7 @@ class BaseServer:
     def _perform_handshake(self, conn: socket.socket) -> Optional[HandshakeInfo]:
         """Execute handshake with a connecting client"""
         try:
-            send_message(conn, {
+            self._send_to_connection(conn, {
                 "status": 200,
                 "message": "Handshake",
                 "data": {"info": self._build_handshake_info().to_dict()},
@@ -113,7 +118,7 @@ class BaseServer:
             client_info = HandshakeInfo.from_dict(info_dict)
 
             if client_info.app_name != APP_NAME:
-                send_message(conn, {
+                self._send_to_connection(conn, {
                     "status": 403,
                     "message": "Invalid application",
                     "data": None,
@@ -121,14 +126,14 @@ class BaseServer:
                 return None
 
             if client_info.protocol_version != PROTOCOL_VERSION:
-                send_message(conn, {
+                self._send_to_connection(conn, {
                     "status": 400,
                     "message": "Protocol version mismatch",
                     "data": None,
                 })
                 return None
 
-            send_message(conn, {"status": 200, "message": "OK", "data": None})
+            self._send_to_connection(conn, {"status": 200, "message": "OK", "data": None})
             return client_info
 
         except Exception as exc:
@@ -137,31 +142,75 @@ class BaseServer:
 
     def _handle_connection(self, conn: socket.socket, client_info: HandshakeInfo) -> None:
         """Read commands from a connected client until disconnect"""
-        with self._connections_lock:
-            self._connections.append(conn)
-        try:
-            while self.running:
-                try:
-                    request = recv_message(conn)
-                except (ConnectionError, json.JSONDecodeError):
-                    break
-
-                command = request.get("command")
-                kwargs = request.get("kwargs", {})
-                request_id = request.get("request_id")
-
-                response = self._dispatch_command(command, kwargs)
-                if isinstance(request_id, str):
-                    response["request_id"] = request_id
-                send_message(conn, response)
-        finally:
-            with self._connections_lock:
-                if conn in self._connections:
-                    self._connections.remove(conn)
+        while self.running:
             try:
-                conn.close()
-            except OSError as exc:
-                logger.debug("Failed to close connection: %s", exc)
+                request = recv_message(conn)
+            except (ConnectionError, OSError):
+                break
+
+            command = request.get("command")
+            kwargs = request.get("kwargs", {})
+            request_id = request.get("request_id")
+
+            response = self._dispatch_command(command, kwargs)
+            if isinstance(request_id, str):
+                response["request_id"] = request_id
+            try:
+                self._send_to_connection(conn, response)
+            except (ConnectionError, OSError):
+                break
+
+    def _send_to_connection(self, conn: socket.socket, data: dict) -> None:
+        """Serialize one bounded send on a tracked connection."""
+        with self._connections_lock:
+            send_lock = self._connection_send_locks.get(conn)
+        if send_lock is None:
+            raise ConnectionError("Connection is closed")
+
+        deadline = time.monotonic() + MESSAGE_TIMEOUT
+        if not send_lock.acquire(timeout=MESSAGE_TIMEOUT):
+            raise socket.timeout("timed out waiting to send message")
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise socket.timeout("timed out waiting to send message")
+            send_message(conn, data, remaining)
+        finally:
+            send_lock.release()
+
+    def _close_connection(self, conn: socket.socket) -> None:
+        """Close and untrack a connection, returning its slot exactly once."""
+        with self._connections_lock:
+            tracked = conn in self._pending_connections or conn in self._connections
+            self._pending_connections.discard(conn)
+            if conn in self._connections:
+                self._connections.remove(conn)
+            self._connection_send_locks.pop(conn, None)
+        try:
+            conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            conn.close()
+        except OSError as exc:
+            logger.debug("Failed to close connection: %s", exc)
+        if tracked:
+            self._connection_slots.release()
+
+    def _serve_connection(self, conn: socket.socket) -> None:
+        """Handshake and serve one accepted connection."""
+        try:
+            client_info = self._perform_handshake(conn)
+            if client_info is None:
+                return
+            with self._connections_lock:
+                if not self.running or conn not in self._pending_connections:
+                    return
+                self._pending_connections.remove(conn)
+                self._connections.append(conn)
+            self._handle_connection(conn, client_info)
+        finally:
+            self._close_connection(conn)
 
     def _dispatch_command(self, command: str, kwargs: Optional[dict]) -> dict:
         """Route a command to its handler and build the response"""
@@ -195,9 +244,10 @@ class BaseServer:
 
         for conn in connections:
             try:
-                send_message(conn, data)
-            except OSError as exc:
+                self._send_to_connection(conn, data)
+            except (ConnectionError, OSError) as exc:
                 logger.debug("broadcast send failed: %s", exc)
+                self._close_connection(conn)
 
     @property
     def client_count(self) -> int:
@@ -260,18 +310,26 @@ class BaseServer:
                 break
             try:
                 conn, _ = self.server.accept()
-
-                client_info = self._perform_handshake(conn)
-                if client_info is None:
+                if not self._connection_slots.acquire(blocking=False):
                     conn.close()
                     continue
-
-                handler_thread = threading.Thread(
-                    target=self._handle_connection,
-                    args=(conn, client_info),
-                    daemon=True,
-                )
-                handler_thread.start()
+                with self._connections_lock:
+                    if not self.running:
+                        conn.close()
+                        self._connection_slots.release()
+                        break
+                    self._pending_connections.add(conn)
+                    self._connection_send_locks[conn] = threading.Lock()
+                try:
+                    handler_thread = threading.Thread(
+                        target=self._serve_connection,
+                        args=(conn,),
+                        daemon=True,
+                    )
+                    handler_thread.start()
+                except Exception:
+                    self._close_connection(conn)
+                    logger.exception("Failed to start connection handler")
 
             except OSError:
                 if self.running:
@@ -286,6 +344,10 @@ class BaseServer:
                 self.server.close()
             except OSError as exc:
                 logger.debug("Failed to close server socket: %s", exc)
+        with self._connections_lock:
+            connections = list(self._pending_connections) + list(self._connections)
+        for conn in connections:
+            self._close_connection(conn)
         if self.socket_path.exists():
             try:
                 self.socket_path.unlink()
@@ -333,15 +395,45 @@ class BaseClient:
 
     def _listen_loop(self) -> None:
         """Background loop that receives server messages"""
-        while self._connected and self._sock:
+        sock = self._sock
+        while self._connected and sock is not None and self._sock is sock:
             try:
-                message = recv_message(self._sock)
+                message = recv_message(sock)
                 self._handle_incoming_message(message)
-            except (ConnectionError, json.JSONDecodeError, OSError):
+            except (ConnectionError, OSError):
                 break
             except Exception:
                 logger.exception("Listener error")
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+        if self._sock is sock:
+            self._connected = False
+            self._sock = None
+            self._server_info = None
+            self._wake_pending_connection_error()
+
+    def _poison_connection(self, sock: socket.socket) -> None:
+        """Close a connection after a failed send may have left a partial frame."""
+        if self._sock is not sock:
+            return
         self._connected = False
+        self._sock = None
+        self._server_info = None
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            sock.close()
+        except OSError:
+            pass
         self._wake_pending_connection_error()
 
     def _handle_incoming_message(self, message: Any) -> None:
@@ -448,13 +540,14 @@ class BaseClient:
     def disconnect(self) -> None:
         """Disconnect from server"""
         self._connected = False
-        if self._sock:
+        sock = self._sock
+        self._sock = None
+        if sock:
             try:
-                self._sock.shutdown(socket.SHUT_RDWR)
-                self._sock.close()
+                sock.shutdown(socket.SHUT_RDWR)
+                sock.close()
             except OSError as exc:
                 logger.debug("Failed to shut down client socket: %s", exc)
-            self._sock = None
         self._server_info = None
         self._wake_pending_connection_error()
 
@@ -487,15 +580,24 @@ class BaseClient:
             self._pending_responses[request_id] = response_queue
 
         try:
-            with self._send_lock:
+            deadline = time.monotonic() + MESSAGE_TIMEOUT
+            if not self._send_lock.acquire(timeout=MESSAGE_TIMEOUT):
+                raise TimeoutError(f"Command '{command}' timed out while waiting to send")
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(f"Command '{command}' timed out while waiting to send")
                 try:
                     send_message(sock, {
                         "command": command,
                         "kwargs": kwargs if kwargs else None,
                         "request_id": request_id,
-                    })
+                    }, remaining)
                 except OSError as exc:
+                    self._poison_connection(sock)
                     raise ConnectionError(f"Failed to send command '{command}': {exc}") from exc
+            finally:
+                self._send_lock.release()
 
             try:
                 response = response_queue.get(timeout=recv_timeout if recv_timeout is not None else 30)
