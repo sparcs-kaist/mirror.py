@@ -13,8 +13,8 @@ uv sync --extra apt-mirror2
 uv pip install -e '.[apt-mirror2]'
 ```
 
-The extra pins `apt-mirror==16`. Signed repositories also require `gpg` and
-`gpgv`. The worker runs the Python module with a generated private config; it
+The extra pins `apt-mirror==16`. Signature verification also requires `gpgv`.
+The worker runs the Python module with a generated private config; it
 does not invoke the unrelated Perl `apt-mirror` command or modify mirror.py's
 configuration file.
 

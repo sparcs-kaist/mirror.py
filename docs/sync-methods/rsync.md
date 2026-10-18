@@ -8,7 +8,7 @@ dry-run pre-check to skip syncs when the upstream has not changed.
 | Option | Type | Default | Required | Description |
 |--------|------|---------|----------|-------------|
 | `ffts` | bool | `false` | No | Enable an FFTS dry-run pre-check before syncing. When `true`, mirror fetches the upstream file-timestamp list and skips the sync if nothing has changed. |
-| `fftsfile` | string | `""` | Required when `ffts` is `true` | Relative path to the upstream timestamp file. It is appended to both `src` and `dst`; an empty value checks the source and destination roots instead of a timestamp file. |
+| `fftsfile` | string | `""` | No | Relative path to the upstream timestamp file. It is appended to both `src` and `dst`; an omitted or empty value checks the source and destination roots instead of a timestamp file. |
 | `user` | string | `""` | No | rsync username. Sets the `USER` environment variable for the rsync subprocess. |
 | `password` | string | `""` | No | rsync password. Sets the `RSYNC_PASSWORD` environment variable for the rsync subprocess. |
 | `option_include` | string | `""` | No | Flag characters appended to the default rsync flag string (e.g. `"H"` to add `--hard-links`). |

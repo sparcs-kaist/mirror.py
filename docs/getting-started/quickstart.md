@@ -136,12 +136,12 @@ The daemon connects to the worker via Unix domain sockets under
 
 **Log files** are written under `/var/log/mirror/`:
 
-- Daemon log: `/var/log/mirror/<year>/<month>/<date>.log`
+- Daemon log: `/var/log/mirror/<year>/<month>/<year>-<month>-<day>.log`
 - Per-package logs: `/var/log/mirror/packages/<year>/<month>/<day>/`
 
-**Web status** is written to `/var/www/mirror/status.json` after each sync
-completes. Serve that directory with any HTTP server to expose package status
-to users.
+**Web status** is written to `/var/www/mirror/status.json` when package status
+changes, including sync start and completion. Serve that directory with any
+HTTP server to expose package status to users.
 
 **TUI**: Run the real-time status terminal UI:
 

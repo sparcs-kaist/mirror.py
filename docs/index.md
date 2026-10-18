@@ -2,7 +2,7 @@
 
 mirror.py is a master-worker daemon that maintains local mirrors of remote package
 repositories via rsync, ftpsync, debmirror, apt-mirror2, lftp, bandersnatch,
-and local sync methods.
+ubuntu, jigdo, and local sync methods.
 It runs on Linux with scheduled syncs, per-package logging, and web-accessible status
 reporting.
 

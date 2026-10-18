@@ -11,6 +11,8 @@ syncs selected final ISO files with `--size-only`. Phase 4 writes the trace file
 |--------|------|---------|----------|-------------|
 | `jigdo_file` | string | (none) | Yes | rsync URL or path to the jigdo-file index used in phase 1. A `KeyError` is raised at sync time if absent. |
 | `debian_mirror` | string | (none) | Yes | Debian package mirror URL passed to `jigdo-mirror` for ISO assembly. A `KeyError` is raised at sync time if absent. |
+| `jigdo_include` | string | See below | No | Extended regular expression selecting ISO image names for phase 2 assembly. |
+| `jigdo_exclude` | string | `".*kfreebsd.*"` | No | Extended regular expression excluding ISO image names from phase 2 assembly. |
 | `timeout` | int | `7200` | No | rsync `--timeout` value in seconds, applied to all rsync phases. |
 | `trace` | bool | `true` | No | Write a trace file on successful sync. |
 | `trace_path` | string | `"project/trace"` | No | Relative subdirectory under `dst` where the trace file is written. |
@@ -22,6 +24,16 @@ syncs selected final ISO files with `--size-only`. Phase 4 writes the trace file
 | `hostname` | string | mirror hostname | No | Override the hostname used in rsync exclude patterns. Defaults to the global mirror hostname, then falls back to `socket.getfqdn()`. |
 | `user` | string | `""` | No | rsync username. Sets the `USER` environment variable for rsync subprocesses. |
 | `password` | string | `""` | No | rsync password. Sets the `RSYNC_PASSWORD` environment variable for rsync subprocesses. |
+
+The default `jigdo_include` selects the first three CD/DVD images for i386,
+amd64, sparc, and source sets:
+
+```text
+.*i386-(CD|DVD)-[1-3].iso.*|.*amd64-(CD|DVD)-[1-3].iso.*|.*sparc-(CD|DVD)-[1-3].iso.*|.*source-(CD|DVD)-[1-3].iso.*
+```
+
+These filters select images for local assembly. `final_includes` separately
+controls which ISO files phase 3 fetches through rsync.
 
 ## Example
 

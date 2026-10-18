@@ -101,15 +101,15 @@ See [State files](../guide/state-files.md) for the full path layout that
 
 ## External tools required by each sync method
 
-mirror.py spawns external binaries to perform the actual sync. Install the
-tools that correspond to the sync methods you intend to use.
+mirror.py runs external tools or Python modules to perform the actual sync.
+Install the tools that correspond to the sync methods you intend to use.
 
 | Sync method | External tool | Notes |
 |-------------|--------------|-------|
 | `rsync` | `rsync` | Available in all major Linux distributions |
-| `ftpsync` | archvsync | Provisioned automatically; optional `git` enables upstream updates |
+| `ftpsync` | `rsync` + archvsync | Install `rsync`; archvsync is provisioned automatically; optional `git` enables upstream updates |
 | `debmirror` | `debmirror` | Install separately; mirrors selected APT suites and architectures |
-| `apt-mirror2` | `apt-mirror` | Install the optional `apt-mirror2` extra |
+| `apt-mirror2` | Python `apt_mirror` module + `gpgv` | Install the optional `apt-mirror2` extra (`apt-mirror==16`); `gpgv` handles signature verification; no separate `apt-mirror` executable is used |
 | `lftp` | `lftp` | Mirror via LFTP's mirror command |
 | `ubuntu` | `rsync` | Two-stage Ubuntu archive mirroring |
 | `jigdo` | `jigdo-mirror` | Required for Debian CD jigdo mirroring |

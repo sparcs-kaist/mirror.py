@@ -5,6 +5,11 @@ follow the Python conventions below, preserve the master-worker and persistence
 contracts, and verify the behavior affected by your change. These conventions
 apply to new and modified code; keep unrelated code unchanged.
 
+Start with the [contribution guidelines](https://github.com/sparcs-kaist/mirror.py/blob/main/CONTRIBUTING.md)
+for the required issue discussion and PR workflow. Begin implementation once
+the issue discussion has settled the problem, scope, and development direction.
+Use this page for the technical development conventions and checks.
+
 ## Development setup
 
 mirror.py requires Python 3.10 or later and runs on Linux only. The project uses `uv` for

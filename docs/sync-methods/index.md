@@ -13,7 +13,7 @@ narrative, including global configuration keys such as `settings.ftpsync`, lives
 | [rsync](rsync.md) | Generic incremental mirror, optional FFTS pre-check | `rsync` | Yes |
 | [ftpsync](ftpsync.md) | Debian archvsync-based FTP mirroring | `rsync`; mirror.py provisions the archvsync script | Yes |
 | [debmirror](debmirror.md) | Debian-style APT archive with discovery and filters | `debmirror` (`rsync` for rsync transport) | Yes |
-| [apt-mirror2](apt-mirror2.md) | One or more regular or flat APT repositories | `apt-mirror==16`; `gpg`/`gpgv` for signed repositories | Yes |
+| [apt-mirror2](apt-mirror2.md) | One or more regular or flat APT repositories | Python `apt-mirror==16` via the optional extra; `gpgv` for signature verification | Yes |
 | [lftp](lftp.md) | Mirror via lftp with regex excludes | `lftp` | Yes |
 | [ubuntu](ubuntu.md) | Two-stage Ubuntu archive mirror | `rsync` | Yes |
 | [jigdo](jigdo.md) | Debian CD/DVD image assembly | `rsync` + `jigdo-mirror` | Yes |

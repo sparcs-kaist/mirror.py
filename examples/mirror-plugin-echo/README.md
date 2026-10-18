@@ -67,14 +67,17 @@ To disable without uninstalling: set `"echo": {"enabled": false}`.
 Restart the mirror daemon:
 
 ```bash
-sudo systemctl restart mirror
+sudo systemctl restart mirror.service
 ```
 
-Tail the master log and watch for echo lines on every package state change:
+Follow the systemd journal and watch for echo lines on every package state change:
 
 ```bash
-tail -f /var/log/mirror/master.stdout.log | grep echo
+sudo journalctl -u mirror.service -f | grep echo
 ```
+
+File logs use the path configured in `settings.logger.fileformat`; see the
+[log layout](https://mirror-py.sparcs.org/guide/state-files.html#log-file-layout).
 
 Example output:
 
