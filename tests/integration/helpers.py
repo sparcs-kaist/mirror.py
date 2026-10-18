@@ -43,7 +43,7 @@ class MirrorStack:
         return self._integration_tmp / "log"
 
     def stat_json(self) -> dict:
-        """Parse and return the current stat.json contents.
+        """Read the private stat.json through the container's runtime identity.
 
         Return:
             data(dict): Parsed stat.json dictionary.
@@ -51,7 +51,8 @@ class MirrorStack:
         stat_path = self.state_dir / "stat.json"
         if not stat_path.exists():
             return {}
-        return json.loads(stat_path.read_text())
+        result = self.docker_exec("cat", "/var/lib/mirror/stat.json")
+        return json.loads(result.stdout)
 
     def package_status(self, pkgid: str) -> str:
         """Return the current status string for a package.

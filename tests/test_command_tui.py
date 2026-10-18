@@ -386,7 +386,7 @@ class TestBuildTableHeader:
 class TestPackagesFromRpc:
     def _build_payload(self, pkgid: str, runninglog: str = None):
         pkg = _make_package(pkgid=pkgid, status="ACTIVE", runninglog=runninglog)
-        raw = pkg.to_dict()
+        raw = pkg.to_status_dict()
         return {"packages": [raw]}
 
     def test_roundtrips_pkgid(self):
@@ -399,6 +399,41 @@ class TestPackagesFromRpc:
         payload = self._build_payload("pypi")
         result = packages_from_rpc(payload)
         assert result[0].status == "ACTIVE"
+
+    def test_settings_free_response_preserves_display_fields(self):
+        pkg = _make_package(
+            "pypi",
+            syncrate=3600,
+            lastsync=123.0,
+            disabled=True,
+            timestamp=456.0,
+        )
+        pkg.name = "Python Package Index"
+        pkg.href = "/pypi/"
+        pkg.link = [mirror.structure.Package.Link("self", "/pypi/")]
+        payload = {"packages": [pkg.to_status_dict()]}
+        raw = payload["packages"][0]
+        assert "settings" not in raw
+
+        result = packages_from_rpc(payload)
+
+        assert result[0].name == "Python Package Index"
+        assert result[0].href == "/pypi/"
+        assert result[0].syncrate == 3600
+        assert result[0].link[0].rel == "self"
+        assert result[0].disabled is True
+        assert result[0].lastsync == 123.0
+        assert result[0].timestamp == 456.0
+        assert result[0].settings.src == ""
+        assert result[0].settings.dst == ""
+        assert result[0].settings.options == {}
+
+    def test_push_syncrate_is_preserved(self):
+        pkg = _make_package(pkgid="push-only", syncrate=-1)
+        result = packages_from_rpc({"packages": [pkg.to_status_dict()]})
+
+        assert len(result) == 1
+        assert result[0].syncrate == -1
 
     def test_roundtrips_runninglog(self):
         payload = self._build_payload("debian", runninglog="/var/log/mirror/packages/debian.log")
@@ -414,7 +449,7 @@ class TestPackagesFromRpc:
         # appear in the result (via _fallback_package_from_dict) rather than
         # being silently dropped.
         pkg = _make_package(pkgid="custom", status="ACTIVE")
-        raw = pkg.to_dict()
+        raw = pkg.to_status_dict()
         raw["synctype"] = "plugin_that_does_not_exist"
         payload = {"packages": [raw]}
 
@@ -425,7 +460,7 @@ class TestPackagesFromRpc:
 
     def test_fallback_preserves_runninglog(self):
         pkg = _make_package(pkgid="debian", status="SYNC", runninglog="/var/log/debian.log")
-        raw = pkg.to_dict()
+        raw = pkg.to_status_dict()
         raw["synctype"] = "unknown_plugin"
         payload = {"packages": [raw]}
 

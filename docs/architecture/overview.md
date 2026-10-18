@@ -71,6 +71,15 @@ push-triggered synchronization, and configuration reload. The daemon writes the
 active master socket path to `/var/run/mirror/master.sock.path`; clients prefer
 that metadata when `--socket` is omitted.
 
+`list_packages` returns `{"packages": [...]}` and `get_package` returns one
+package status object. Each object contains `id`, `name`, `href`, `synctype`,
+`syncrate` (ISO 8601), `link`, `disabled`, `lastsync`, `timestamp`, and the nested
+`status`/`statusinfo` state. Package `settings`, source and destination paths,
+and options such as credentials are omitted. The TUI consumes these display
+fields without requiring the server's sync plug-ins to be installed locally.
+This response format uses IPC protocol version 3; master, worker, and clients
+must be upgraded together.
+
 The TUI keeps one `MasterClient` connection, polls package state once per
 second, and performs manual start/stop RPCs outside the UI event loop. Its log
 reader accepts only regular non-symlink files under the configured package log

@@ -44,7 +44,8 @@ from prompt_toolkit.widgets import Frame, TextArea
 
 import mirror.socket.master
 from mirror.command.config import _resolve_master_socket
-from mirror.structure import Package
+from mirror.structure import Package, PackageSettings
+from mirror.toolbox import parse_iso_duration
 
 
 # ---------------------------------------------------------------------------
@@ -533,11 +534,10 @@ def _modal_active(state: "TUIState") -> bool:
 
 
 def _fallback_package_from_dict(raw: dict) -> Package:
-    """Build a minimal Package from raw RPC dict when from_dict rejects it.
+    """Build a display Package from a settings-free status RPC dictionary.
 
-    Used when Package.from_dict raises ValueError due to an unknown synctype
-    that the TUI process cannot resolve (plugins not loaded). Builds the bare
-    minimum the TUI needs to render the row and tail its log.
+    This parser intentionally does not use ``Package.from_dict`` because the
+    TUI does not load daemon sync plugins and status responses omit settings.
 
     Args:
         raw(dict): Raw package dict from the RPC payload.
@@ -545,8 +545,6 @@ def _fallback_package_from_dict(raw: dict) -> Package:
     Return:
         package(Package): Minimal Package instance for display purposes.
     """
-    from mirror.structure import PackageSettings
-
     status_obj = raw.get("status", "UNKNOWN")
     if isinstance(status_obj, dict):
         status = status_obj.get("status", "UNKNOWN")
@@ -555,15 +553,19 @@ def _fallback_package_from_dict(raw: dict) -> Package:
         status = str(status_obj)
         info = Package.StatusInfo.from_dict(raw.get("statusinfo", {}))
 
-    settings = PackageSettings(hidden=False, src="", dst="")
+    links = [
+        Package.Link(link["rel"], link["href"])
+        for link in raw.get("link", [])
+    ]
+    settings = PackageSettings(hidden=False, src="", dst="", options={})
     return Package(
         pkgid=raw["id"],
         name=raw.get("name", raw["id"]),
         status=status,
         href=raw.get("href", ""),
         synctype=raw.get("synctype", "unknown"),
-        syncrate=0,
-        link=[],
+        syncrate=parse_iso_duration(raw.get("syncrate", "")),
+        link=links,
         settings=settings,
         lastsync=float(raw.get("lastsync", 0.0)),
         disabled=bool(raw.get("disabled", False)),
@@ -575,9 +577,9 @@ def _fallback_package_from_dict(raw: dict) -> Package:
 def packages_from_rpc(payload: dict) -> list[Package]:
     """Rehydrate Package objects from a list_packages RPC response.
 
-    The RPC returns {"packages": [pkg.to_dict(), ...]} where each dict is
-    in stat format. Package.from_dict accepts that exact shape (it reads
-    status as either str or dict).
+    The RPC response contains status and display fields but omits package
+    settings. Sync types are treated as opaque strings so daemon-only plugins
+    can still be displayed.
 
     Args:
         payload(dict): RPC response from MasterClient.list_packages().
@@ -588,14 +590,7 @@ def packages_from_rpc(payload: dict) -> list[Package]:
     result = []
     for raw in payload.get("packages", []):
         try:
-            result.append(Package.from_dict(raw))
-        except ValueError:
-            # Unknown synctype (e.g. plugin-provided): build a fallback so the
-            # row still appears in the table with correct status/log path.
-            try:
-                result.append(_fallback_package_from_dict(raw))
-            except Exception:
-                pass
+            result.append(_fallback_package_from_dict(raw))
         except Exception:
             pass
     return result

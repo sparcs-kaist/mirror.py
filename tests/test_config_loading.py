@@ -78,7 +78,7 @@ def temp_config_env(tmp_path_factory):
                     "hidden": False,
                     "src": "rsync://test.src/test_pkg_1",
                     "dst": str(temp_dir / "data" / "test_pkg_1"),
-                    "options": {}
+                    "options": {"password": "initial-secret"}
                 }
             }
         }
@@ -90,6 +90,7 @@ def temp_config_env(tmp_path_factory):
     # Create dummy stat file (initial state)
     # Since the load function creates or updates the stat file, leave it empty or with minimal content.
     test_stat_path.write_text(json.dumps({"packages": {}}, indent=4))
+    test_stat_path.chmod(0o644)
 
     # Create dummy status file (load function will update it)
     test_status_path.write_text(json.dumps({"some_old_status": "data"}, indent=4))
@@ -147,13 +148,16 @@ def test_mirror_config_loading(temp_config_env):
     assert pkg.synctype == dummy_config_content["packages"][pkg_id]["synctype"]
     assert pkg.syncrate == mirror.toolbox.parse_iso_duration(dummy_config_content["packages"][pkg_id]["syncrate"])
     assert pkg.settings.src == dummy_config_content["packages"][pkg_id]["settings"]["src"]
+    assert pkg.settings.options["password"] == "initial-secret"
     
     # --- Verify Stat file ---
     loaded_stat = json.loads(stat_path.read_text())
     assert loaded_stat["mirrorname"] == dummy_config_content["mirrorname"]
     assert pkg_id in loaded_stat["packages"]
-    assert loaded_stat["packages"][pkg_id]["name"] == dummy_config_content["packages"][pkg_id]["name"]
+    assert set(loaded_stat["packages"][pkg_id]) == {"status"}
     assert loaded_stat["packages"][pkg_id]["status"]["status"] == "UNKNOWN" # UNKNOWN on initial load
+    assert "initial-secret" not in stat_path.read_text()
+    assert stat_path.stat().st_mode & 0o777 == 0o600
 
     # --- Verify Web Status file (check creation and saving) ---
     mirror.config.generate_and_save_web_status()
@@ -251,7 +255,12 @@ def test_load_preserves_runtime_stat_fields(tmp_path, monkeypatch):
         "packages": {
             "pkg1": _make_pkg_config({
                 "syncrate": "PT2H",
-                "settings": {"hidden": False, "src": "rsync://new/pkg1", "dst": "/tmp/new"},
+                "settings": {
+                    "hidden": False,
+                    "src": "rsync://new/pkg1",
+                    "dst": "/tmp/new",
+                    "options": {"password": "new-secret"},
+                },
             })
         },
     }
@@ -280,11 +289,14 @@ def test_load_preserves_runtime_stat_fields(tmp_path, monkeypatch):
     assert pkg.status == "ACTIVE"
     assert pkg.syncrate == 7200
     assert pkg.settings.src == "rsync://new/pkg1"
+    assert pkg.settings.options["password"] == "new-secret"
 
     saved = json.loads(stat_path.read_text())["packages"]["pkg1"]
+    assert set(saved) == {"status", "lastsync", "timestamp"}
     assert saved["lastsync"] == 1234.5
     assert saved["timestamp"] == 5678.0
-    assert saved["settings"]["src"] == "rsync://new/pkg1"
+    assert "new-secret" not in stat_path.read_text()
+    assert stat_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_load_promotes_legacy_statusinfo_lastsync(tmp_path, monkeypatch):
@@ -400,8 +412,8 @@ def test_package_to_dict_includes_disabled(tmp_path, monkeypatch):
     assert mirror.packages.get("pkg2").to_dict()["disabled"] is False
 
 
-def test_save_stat_data_omits_disabled(tmp_path, monkeypatch):
-    """disabled is config-owned and should not be persisted as runtime stat."""
+def test_save_stat_data_persists_only_runtime_fields(tmp_path, monkeypatch):
+    """Stat saves exclude config fields and replace permissive file modes."""
     stat_path = tmp_path / "stat.json"
     status_path = tmp_path / "status.json"
     config = {
@@ -411,7 +423,15 @@ def test_save_stat_data_omits_disabled(tmp_path, monkeypatch):
             "statfile": str(stat_path),
             "statusfile": str(status_path),
         })["settings"],
-        "packages": {"pkg1": _make_pkg_config({"disabled": True})},
+        "packages": {"pkg1": _make_pkg_config({
+            "disabled": True,
+            "settings": {
+                "hidden": False,
+                "src": "rsync://example.com/pkg1",
+                "dst": "/tmp/pkg1",
+                "options": {"password": "save-secret"},
+            },
+        })},
     }
     stat_path.write_text(json.dumps({"packages": {}}))
     status_path.write_text(json.dumps({}))
@@ -419,11 +439,15 @@ def test_save_stat_data_omits_disabled(tmp_path, monkeypatch):
     monkeypatch.setattr(mirror, "log", type("Log", (), {"warning": lambda *a, **k: None, "error": lambda *a, **k: None})(), raising=False)
 
     mirror.config._load_from_dict(config, source_path=tmp_path / "config.json", load_plugins=False)
+    stat_path.chmod(0o644)
     mirror.config.save_stat_data()
 
     saved = json.loads(stat_path.read_text())["packages"]["pkg1"]
-    assert "disabled" not in saved
+    assert set(saved) == {"status", "lastsync", "timestamp"}
+    assert "save-secret" not in stat_path.read_text()
+    assert stat_path.stat().st_mode & 0o777 == 0o600
     assert mirror.packages.get("pkg1").is_disabled() is True
+    assert mirror.packages.get("pkg1").settings.options["password"] == "save-secret"
 
 
 def _make_pkg_config(extra: dict = None) -> dict:

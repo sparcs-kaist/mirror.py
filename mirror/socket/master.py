@@ -89,7 +89,7 @@ class MasterServer(BaseServer):
     @expose("list_packages")
     def _handle_list_packages(self) -> dict:
         """List all packages"""
-        return {"packages": [pkg.to_dict() for pkg in mirror.packages.values()]}
+        return {"packages": [pkg.to_status_dict() for pkg in mirror.packages.values()]}
 
     @expose("start_sync")
     def _handle_start_sync(self, package_id: str) -> dict:
@@ -174,7 +174,7 @@ class MasterServer(BaseServer):
         package = mirror.packages.get(package_id)
         if package is None:
             raise ValueError(f"Package not found: {package_id}")
-        return package.to_dict()
+        return package.to_status_dict()
 
     @expose("reload")
     def _handle_reload(self, timeout: float = 30.0) -> dict:

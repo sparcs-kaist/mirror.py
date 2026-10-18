@@ -186,6 +186,28 @@ class Package:
 
         return package_dict
 
+    def to_status_dict(self) -> dict:
+        """Serialize fields safe for status RPC responses.
+
+        Return:
+            data(dict): Display and runtime status fields without package settings.
+        """
+        return {
+            "id": self.pkgid,
+            "name": self.name,
+            "href": self.href,
+            "synctype": self.synctype,
+            "syncrate": mirror.toolbox.format_iso_duration(self.syncrate),
+            "link": [link.to_dict() for link in self.link],
+            "disabled": self.disabled,
+            "lastsync": self.lastsync,
+            "timestamp": self.timestamp,
+            "status": {
+                "status": self.status,
+                "statusinfo": self.statusinfo.to_dict(),
+            },
+        }
+
     def to_json(self) -> str:
         """Serialize the package to a JSON string."""
         return json.dumps(self.to_dict())

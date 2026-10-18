@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 APP_NAME = "mirror.py"
 HANDSHAKE_TIMEOUT = 5.0
 MESSAGE_TIMEOUT = 10.0
