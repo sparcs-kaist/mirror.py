@@ -25,7 +25,7 @@ from .helpers import MirrorStack, _wait_for_process_running
 def project_root() -> Path:
     """Absolute path to the mirror.py project root.
 
-    Return:
+    Returns:
         root(Path): Project root directory.
     """
     return Path(__file__).parent.parent.parent
@@ -42,7 +42,7 @@ def built_wheel(project_root: Path) -> Path:
     Args:
         project_root(Path): Absolute path to the project root.
 
-    Return:
+    Returns:
         wheel_path(Path): Path to the wheel inside the mirror image build context.
     """
     dist_dir = project_root / "tests" / "integration" / "docker" / "mirror" / "dist"
@@ -95,7 +95,7 @@ def setup_test_image(built_wheel: Path, project_root: Path) -> str:
         built_wheel(Path): Wheel produced by the `built_wheel` fixture.
         project_root(Path): Project root for resolving the docker context.
 
-    Return:
+    Returns:
         tag(str): Docker image tag of the built setup-test image.
     """
     context = project_root / "tests" / "integration" / "docker" / "setup-test"
@@ -124,7 +124,7 @@ def integration_tmp(tmp_path_factory: pytest.TempPathFactory) -> Path:
     Args:
         tmp_path_factory(pytest.TempPathFactory): Pytest factory for session temp dirs.
 
-    Return:
+    Returns:
         tmp(Path): Path to the created temp directory.
     """
     tmp = tmp_path_factory.mktemp("mirror_integration", numbered=False)
@@ -148,7 +148,7 @@ def docker_compose_file(project_root: Path, built_wheel: Path, integration_tmp: 
         built_wheel(Path): Path to the locally-built wheel.
         integration_tmp(Path): Temp dir (ensures env var is set first).
 
-    Return:
+    Returns:
         path(str): Absolute path string to docker-compose.yml.
     """
     return str(project_root / "tests" / "integration" / "docker-compose.yml")
@@ -158,7 +158,7 @@ def docker_compose_file(project_root: Path, built_wheel: Path, integration_tmp: 
 def docker_compose_project_name() -> str:
     """Docker Compose project name used across all integration tests.
 
-    Return:
+    Returns:
         name(str): Project name.
     """
     return "mirror_integration"

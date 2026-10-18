@@ -484,7 +484,7 @@ class BaseClient:
     def connect(self) -> HandshakeInfo:
         """Connect to server and perform handshake
 
-        Return:
+        Returns:
             server_info(HandshakeInfo): Server's handshake information
         """
         if not self.socket_path.exists():
@@ -564,7 +564,7 @@ class BaseClient:
                 calling this method.
             **kwargs: Command arguments forwarded to the server.
 
-        Return:
+        Returns:
             data(Any): Response payload from the server.
         """
         if not self._connected or not self._sock:

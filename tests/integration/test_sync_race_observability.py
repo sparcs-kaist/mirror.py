@@ -43,7 +43,7 @@ def _master_log_tail_offset(mirror_stack) -> int:
     Args:
         mirror_stack: MirrorStack instance.
 
-    Return:
+    Returns:
         offset(int): Total byte count of all master log files at call time.
     """
     result = mirror_stack.docker_exec(
@@ -68,7 +68,7 @@ def _read_master_log_slice(mirror_stack, offset: int) -> str:
         mirror_stack: MirrorStack instance.
         offset(int): Byte offset to start reading from.
 
-    Return:
+    Returns:
         slice_text(str): Log content after the given offset.
     """
     result = mirror_stack.docker_exec(

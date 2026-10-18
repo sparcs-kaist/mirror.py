@@ -22,7 +22,7 @@ def _read_package_metadata(mirror_stack: MirrorStack) -> dict:
     Args:
         mirror_stack(MirrorStack): Running integration stack.
 
-    Return:
+    Returns:
         metadata(dict): Package IDs mapped to public configuration metadata.
     """
     script = (
@@ -161,7 +161,7 @@ def _read_config(mirror_stack) -> dict:
     Args:
         mirror_stack: MirrorStack instance.
 
-    Return:
+    Returns:
         config(dict): Parsed configuration dictionary.
     """
     result = mirror_stack.docker_exec("cat", "/etc/mirror/config.json")
@@ -175,7 +175,7 @@ def _cli_reload(mirror_stack) -> subprocess.CompletedProcess:
     Args:
         mirror_stack: MirrorStack instance.
 
-    Return:
+    Returns:
         result(subprocess.CompletedProcess): Completed process with stdout, stderr, returncode.
     """
     return mirror_stack.docker_exec(
@@ -192,7 +192,7 @@ def _poll_stat_for_pkg(mirror_stack, pkgid: str, present: bool, timeout: float) 
         present(bool): True to wait for presence, False to wait for absence.
         timeout(float): Maximum seconds to poll.
 
-    Return:
+    Returns:
         matched(bool): True if the condition was satisfied within timeout.
     """
     deadline = time.monotonic() + timeout
@@ -218,7 +218,7 @@ def _read_master_log(mirror_stack) -> str:
     Args:
         mirror_stack: MirrorStack instance.
 
-    Return:
+    Returns:
         log_text(str): Combined log content, or empty string on failure.
     """
     # Try the structured log directory first (time-based folder).

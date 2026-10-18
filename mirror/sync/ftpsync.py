@@ -200,7 +200,7 @@ def _info_trigger(trigger: str) -> str:
     Args:
         trigger(str): Sync trigger source ("auto", "manual", "push").
 
-    Return:
+    Returns:
         info_trigger(str): INFO_TRIGGER trace value; unknown triggers fall back
             to "mirror.py <trigger>".
     """
@@ -217,7 +217,7 @@ def _clone_archvsync(path: Path) -> bool:
     Args:
         path(Path): Parent directory for the clone.
 
-    Return:
+    Returns:
         ok(bool): True if the clone succeeded.
     """
     try:
@@ -242,7 +242,7 @@ def _extract_archvsync(path: Path) -> bool:
     Args:
         path(Path): Directory to extract into.
 
-    Return:
+    Returns:
         ok(bool): True if extraction succeeded.
     """
     try:
@@ -273,7 +273,7 @@ def _split_rsync_src(src: str, opts: dict) -> tuple[str, str]:
         opts(dict): Package sync options; supplies "path" for the bare-host
             shape and may override the module derived from a URL.
 
-    Return:
+    Returns:
         host_path(tuple[str, str]): (host, module path) for RSYNC_HOST/RSYNC_PATH.
 
     Raises:
@@ -304,7 +304,7 @@ def _config(
     Args:
         package(mirror.structure.Package): Package whose options populate the config.
 
-    Return:
+    Returns:
         config_text(str): Newline-separated KEY=VALUE lines for ftpsync.conf.
     """
     opts = package.settings.options

@@ -430,7 +430,7 @@ def build_payload(package: mirror.structure.Package) -> dict[str, object]:
     Args:
         package(mirror.structure.Package): Package containing apt-mirror2 options.
 
-    Return:
+    Returns:
         payload(dict): Validated worker input.
     """
     return _build_payload(package.settings.dst, package.settings.options)
@@ -916,7 +916,7 @@ def resolve_repository(raw: dict[str, object], global_dst: Path) -> ResolvedRepo
         raw(dict): Validated repository payload.
         global_dst(Path): Package destination used by the shrink guard.
 
-    Return:
+    Returns:
         repository(ResolvedRepository): Native apt-mirror2 selections.
     """
     request = _request_from_dict(raw)
@@ -1074,7 +1074,7 @@ def render_config(
         repositories(list[ResolvedRepository]): Discovered repositories.
         runtime(Path): Private runtime directory.
 
-    Return:
+    Returns:
         config(str): Complete native configuration text.
     """
     destination = str(payload["dst"])
@@ -1135,7 +1135,7 @@ def run_payload(payload: dict[str, object]) -> int:
     Args:
         payload(dict): JSON-decoded worker payload from build_payload().
 
-    Return:
+    Returns:
         returncode(int): Native apt-mirror2 process return code.
     """
     global _ACTIVE_PROCESS

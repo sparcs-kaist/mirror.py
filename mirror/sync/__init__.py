@@ -58,7 +58,7 @@ def get_standalone_result(pkgid: str) -> Optional[tuple[bool, Optional[int]]]:
     Args:
         pkgid(str): Package identifier.
 
-    Return:
+    Returns:
         result(tuple, optional): (success, returncode) tuple, or None if no
             result has been recorded for this pkgid.
     """
@@ -71,7 +71,7 @@ def get_module(method: str) -> Callable:
     Args:
         method(str): Sync method name (e.g. "rsync", "ftpsync").
 
-    Return:
+    Returns:
         module(Callable): The loaded sync module object.
     """
     import mirror.sync
@@ -83,7 +83,7 @@ def _validate_extra_args(extra_args: dict[str, str]) -> dict[str, str]:
     Args:
         extra_args(dict[str, str]): Caller-supplied mapping.
 
-    Return:
+    Returns:
         clean(dict[str, str]): Validated copy with str keys/values.
 
     Raises:
@@ -116,7 +116,7 @@ def mark_watchdog_fired(pkgid: str) -> bool:
     Args:
         pkgid(str): Package identifier.
 
-    Return:
+    Returns:
         first(bool): True if this is the first time the watchdog fired for
             pkgid since its last sync start; False if already fired.
     """
@@ -146,7 +146,7 @@ def should_kill_for_max_runtime(uptime: Optional[float], max_runtime_seconds: in
         max_runtime_seconds(int): The package's configured cap; 0 disables the
             watchdog.
 
-    Return:
+    Returns:
         kill(bool): True if uptime is known and exceeds the cap.
     """
     if max_runtime_seconds <= 0:
@@ -285,7 +285,7 @@ def get_extra_args(pkgid: str) -> dict[str, str]:
     Args:
         pkgid(str): Package ID.
 
-    Return:
+    Returns:
         extra_args(dict[str, str]): Copy of the stored mapping (empty if none).
     """
     with _start_lock:

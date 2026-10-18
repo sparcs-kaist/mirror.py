@@ -207,6 +207,24 @@ See [state files](https://mirror-py.sparcs.org/guide/state-files.html),
 [architecture](https://mirror-py.sparcs.org/architecture/overview.html), and
 [troubleshooting](https://mirror-py.sparcs.org/guide/troubleshooting.html) for operational details.
 
+## Architecture
+
+The master schedules package syncs and owns package state. The worker executes
+sync subprocesses with the configured UID/GID and nice level, so active jobs can
+continue when the master restarts.
+
+The daemons communicate over Unix sockets using length-prefixed JSON. A
+three-step handshake exchanges server information, client information, and
+confirmation. The master keeps a persistent worker connection for RPC and
+asynchronous `job_finished` notifications.
+
+The master checks package schedules every second using `syncrate`.
+`mirror.sync.start(package)` starts sync preparation in a daemon thread, and
+the sync method delegates execution through
+`mirror.socket.worker.execute_command()`. Worker completion calls into
+`mirror.sync.on_sync_done()` to update the package result to `ACTIVE` or `ERROR`.
+See the [architecture overview](docs/architecture/overview.md) for details.
+
 ## Development
 
 ```bash
@@ -220,13 +238,30 @@ Docker with Compose and builds containers using the current source tree. Run
 the suites sequentially; see the [integration guide](tests/integration/README.md)
 for host requirements and fixture behavior.
 
+For the issue and PR workflow, read [CONTRIBUTING.md](CONTRIBUTING.md).
 For documentation and configuration editor builds, see
-[Contributing](https://mirror-py.sparcs.org/contributing/index.html). For extensions, see the
+[Development guide](https://mirror-py.sparcs.org/contributing/index.html). For extensions, see the
 [plugin author guide](https://mirror-py.sparcs.org/plugins/index.html) and the
 [example plugin](examples/mirror-plugin-echo/).
 
 Report bugs and feature requests through
 [GitHub Issues](https://github.com/sparcs-kaist/mirror.py/issues).
+
+### Source layout
+
+| Module | Responsibility |
+|--------|---------------|
+| `mirror/__main__.py` | CLI entry point (setup, daemon, worker, config, plugin, push, tui, standalone, worker-execute; crontab compatibility placeholder) |
+| `mirror/command/` | Command implementations for daemon, worker, setup |
+| `mirror/config/` | JSON config loading, package state persistence |
+| `mirror/structure/` | Dataclasses: Package, Config, PackageSettings, StatusInfo |
+| `mirror/socket/` | Unix socket IPC (protocol, base server/client, master, worker) |
+| `mirror/sync/` | Nine built-in sync method executors and shared sync lifecycle |
+| `mirror/worker/` | Subprocess lifecycle management (create, track, prune) |
+| `mirror/event/` | Priority-based pub/sub event system |
+| `mirror/logger/` | Time-based log rotation, per-package log files, gzip compression |
+| `mirror/toolbox/` | Utilities (ISO 8601 duration parser, permission checks) |
+| `mirror/plugin/` | Built-in and external entry-point plugins for sync, events, and status |
 
 ## License
 

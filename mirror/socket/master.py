@@ -117,7 +117,7 @@ class MasterServer(BaseServer):
                 SSH_CONNECTION metadata to forward to the sync layer.
                 Invalid or disallowed entries raise ValueError.
 
-        Return:
+        Returns:
             result(dict): {"package_id", "status"} where status is "started" on
                 success, or "already_running" if a sync was in flight.
         """
@@ -181,7 +181,7 @@ class MasterServer(BaseServer):
             timeout(float): Server-side wait budget (seconds). Returns an error
                 dict if the main loop does not signal completion in time.
 
-        Return:
+        Returns:
             result(dict): The reload result from ``_perform_reload`` (or a timeout error).
         """
         from mirror.config.reload_controller import reload_controller
@@ -275,7 +275,7 @@ def init_instance(role: str, **kwargs) -> MasterServer | MasterClient:
         role(str): "server" for MasterServer, "client" for MasterClient
         **kwargs: Arguments passed to the constructor
 
-    Return:
+    Returns:
         instance(MasterServer | MasterClient): Initialized instance
     """
     global _instance
@@ -366,7 +366,7 @@ def reload(socket_path: Optional[Path | str] = None, timeout: float = 30.0) -> d
         socket_path: Override for the master socket path. None falls back to default.
         timeout: Seconds to wait for the daemon to apply the reload.
 
-    Return:
+    Returns:
         result(dict): Reload result from the master daemon.
     """
     with MasterClient(socket_path=socket_path) as client:
@@ -379,7 +379,7 @@ def get_runtime_info(socket_path: Optional[Path | str] = None) -> dict:
     Args:
         socket_path(Path | str, optional): Socket file path override.
 
-    Return:
+    Returns:
         info(dict): Runtime info dict from the daemon.
     """
     with MasterClient(socket_path) as client:
@@ -392,7 +392,7 @@ def get_master_client(socket_path: Optional[Path | str] = None) -> MasterClient:
     Args:
         socket_path(Path | str, optional): Socket file path
 
-    Return:
+    Returns:
         client(MasterClient): Connected client instance
     """
     client = MasterClient(socket_path)
@@ -406,7 +406,7 @@ def is_master_running(socket_path: Optional[Path | str] = None) -> bool:
     Args:
         socket_path(Path | str, optional): Socket file path
 
-    Return:
+    Returns:
         alive(bool): True if master responds to ping
     """
     try:

@@ -55,7 +55,7 @@ right information and emits a ready-to-use config block on its own.
 
 | Key                 | Type   | Notes                                                                       |
 |---------------------|--------|-----------------------------------------------------------------------------|
-| `logfolder`         | path   | Base directory for daemon logs.                                             |
+| `logfolder`         | path   | Base directory for ftpsync tool logs. Daemon and per-package logs use `logger.fileformat` and `logger.packagefileformat`. |
 | `webroot`           | path   | Web root for the status UI.                                                 |
 | `statusfile`        | path   | Web status JSON output path.                                                |
 | `statfile`          | path   | Persistent package state (`stat.json`).                                     |
@@ -68,6 +68,7 @@ right information and emits a ready-to-use config block on its own.
 | `ftpsync`           | object | Global ftpsync defaults (see §4.2).                                         |
 | `plugins`           | object | Enable-only plugin map: `{ "<name>": {"enabled": bool} }`. Use `{}` when unused. Per-plugin config lives in `<name>.json` next to `config.json`. |
 | `socket`            | object | Master control socket ownership/permissions (see §2.2). Optional.           |
+| `socket_path`       | path   | Optional custom socket directory containing `master.sock` and `worker.sock`. Configure the same directory for both daemons and restart both after changes. CLI commands normally discover the running master socket from runtime metadata. |
 
 The `logger` block is rarely changed; copy it verbatim from `config-example.json`.
 
@@ -113,6 +114,10 @@ once at daemon startup. The whole block is optional.
 > restart. A live reload keeps the running value and emits the warning
 > `socket change requires daemon restart (kept current value)`.
 
+For a custom `settings.socket_path`, use a directory, not a path ending in
+`.sock`. Both daemons treat a `.sock` value as the same literal socket file,
+which causes a conflict when the master and worker share that configuration.
+
 ---
 
 ## 3. Package definition (common fields)
@@ -143,7 +148,7 @@ Every package — regardless of sync method — shares this shape:
 | `name`              | string  | Display name shown in the UI (this is the visible label).                   |
 | `id`                | string  | Internal identifier. Must equal the map key. Must not start with `_` or collide with reserved names (`get`, `items`, `keys`, `values`, `to_dict`). |
 | `href`              | string  | Web path for this mirror.                                                   |
-| `synctype`          | string  | One of: `rsync`, `ftpsync`, `lftp`, `bandersnatch`, `ubuntu`, `jigdo`, `local`. |
+| `synctype`          | string  | A registered sync plugin. Built-ins: `rsync`, `ftpsync`, `lftp`, `bandersnatch`, `ubuntu`, `jigdo`, `local`, `debmirror`, `apt-mirror2`. |
 | `syncrate`          | string  | Sync interval (see §3.1).                                                   |
 | `link`              | array   | List of `{ "rel", "href" }` reference links (e.g. upstream HOME).           |
 | `settings.hidden`   | bool    | Hide the package from the web UI when `true`.                               |
@@ -163,7 +168,9 @@ Every package — regardless of sync method — shares this shape:
 
 ## 4. Per-method `settings`
 
-Each method only reads the keys listed below. Unknown keys in `options` are ignored.
+Use the options documented for the selected method. Unknown-option handling
+depends on the method; `apt-mirror2` rejects unknown package and repository
+options. Do not rely on unrecognized keys being ignored.
 
 ### 4.1 `rsync`
 
@@ -177,7 +184,7 @@ skips the full sync when the upstream timestamp file is unchanged.
 | Option     | Type   | Default | Description                                                              |
 |------------|--------|---------|--------------------------------------------------------------------------|
 | `ffts`     | bool   | `false` | Enable the FFTS dry-run pre-check before the full sync.                  |
-| `fftsfile` | string | `""`    | Upstream timestamp file checked by FFTS (e.g. `lastupdate`, `fullfiletimelist-rocky`). Required when `ffts` is `true`. |
+| `fftsfile` | string | `""`    | Upstream timestamp file checked by FFTS (e.g. `lastupdate`, `fullfiletimelist-rocky`). Optional; an omitted or empty value checks the source and destination roots. |
 | `user`           | string       | `""`    | rsync username (sets `USER` env). Leave empty for anonymous.            |
 | `password`       | string       | `""`    | rsync password (sets `RSYNC_PASSWORD` env).                            |
 | `option_include` | string       | `""`    | Flag characters to **add** to the default flag string. Each char must be in the whitelist `vrlptDHaznhPxWENcimub`; no `-`, spaces, or control chars. Chars already present are skipped. e.g. `"p"` re-adds permission preservation. |
@@ -317,8 +324,8 @@ on success.
 
 ### 4.5 `jigdo`
 
-Three-phase Debian CD mirror: template rsync, local ISO regeneration via
-`jigdo-mirror`, and a final size-only rsync.
+Four-phase Debian CD mirror: template rsync, local ISO regeneration via
+`jigdo-mirror`, a final size-only rsync, and optional trace-file creation.
 
 - `src`: rsync URL. `dst`: local directory.
 - **Required options**: `jigdo_file`, `debian_mirror`.
@@ -327,6 +334,8 @@ Three-phase Debian CD mirror: template rsync, local ISO regeneration via
 |--------------------|-------------|--------------------|----------------------------------------------------|
 | `jigdo_file`       | string      | **required**       | rsync URL/path to the jigdo-file index.            |
 | `debian_mirror`    | string      | **required**       | Debian package mirror URL used to assemble ISOs.   |
+| `jigdo_include`    | string      | First three CD/DVD images for i386, amd64, sparc, and source | Extended regular expression selecting phase 2 ISO image names; see the jigdo reference for the exact default. |
+| `jigdo_exclude`    | string      | `".*kfreebsd.*"`   | Extended regular expression excluding phase 2 ISO image names. |
 | `timeout`          | int         | `7200`             | rsync `--timeout` (seconds).                       |
 | `trace`            | bool        | `true`             | Write trace file on success.                       |
 | `trace_path`       | string      | `project/trace`    | Relative subdir under `dst` for the trace file.    |
@@ -337,6 +346,11 @@ Three-phase Debian CD mirror: template rsync, local ISO regeneration via
 | `jigdo_mirror_bin` | string      | `jigdo-mirror`     | jigdo-mirror binary path/name.                     |
 | `hostname`         | string      | mirror hostname    | Override hostname used in exclude patterns.        |
 | `user` / `password`| string      | `""`               | rsync credentials.                                 |
+
+The assembly filters are separate from `final_includes`, which controls ISO
+files fetched through rsync in phase 3. See the
+[jigdo reference](https://mirror-py.sparcs.org/sync-methods/jigdo.html)
+for exact filter defaults and a complete package example.
 
 ### 4.6 `bandersnatch`
 
@@ -362,6 +376,75 @@ The method only verifies `dst` exists and marks the package ACTIVE.
 |--------|------|----------------------|
 | —      | —    | No options are read. |
 
+### 4.8 `debmirror`
+
+Mirror a Debian-style APT archive using the external `debmirror` command.
+Install it on the worker host; rsync transport also requires `rsync`.
+
+- `src`: archive URL using `http`, `https`, `ftp`, `rsync`, or `file`.
+  A `file:` URL requires an absolute path and no authority other than `localhost`.
+- `dst`: absolute local destination path.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `dist` | string or list[string] | discovered | Distributions to mirror; comma-separated strings are accepted. |
+| `section` | string or list[string] | discovered | Archive components to mirror. |
+| `arch` | string or list[string] | discovered | Binary architectures to mirror. |
+| `source` | bool | `false` | Include source packages. |
+| `check_gpg` | bool | `true` | Verify Release signatures. |
+| `keyring` | absolute path or list[path] | unset | Trusted local keyrings; configure them when signature verification is enabled. Missing keyrings produce warnings. |
+| `cleanup` | string | `"postcleanup"` | One of `postcleanup`, `precleanup`, or `nocleanup`. |
+
+Omitted selections are discovered on each run from listings and Release
+metadata. Signatures are verified by default; `check_gpg: false` disables
+verification, and `ignore_release_gpg: true` allows unverified metadata when
+signature verification fails. Automatic discovery refuses to remove an existing
+distribution that disappears from a listing; set `dist` explicitly when
+intentionally narrowing the mirror.
+
+See the [debmirror reference](https://mirror-py.sparcs.org/sync-methods/debmirror.html)
+for all transport overrides, content filters, installer options, timeouts,
+signature controls, and a complete package example.
+
+### 4.9 `apt-mirror2`
+
+Mirror multiple regular or flat APT repositories as one scheduled package.
+Install the `apt-mirror2` Python extra in the environment used by the daemon
+and worker. The daemon checks that it is installed before delegating the job.
+The worker runs `python -m apt_mirror` from `apt-mirror==16`; it does not use the
+unrelated Perl `apt-mirror` executable. Signature verification requires `gpgv`.
+
+- `src`: package display URL only; actual sources are in `options.config`.
+- `dst`: non-root absolute destination without whitespace, `$`, or `#`.
+
+| Package option | Type | Default | Description |
+|----------------|------|---------|-------------|
+| `config` | list[object] | **required** | Non-empty repository list. Every item requires `src` and `dst`. |
+| `source` | bool | `false` | Default for downloading source indexes and packages; items can override it. |
+| `nthreads` | positive int | `8` | Download concurrency shared by the package. |
+| `limit_rate` | positive int or string | unlimited | Aggregate bytes per second, optionally suffixed with `k` or `m`, such as `"20m"`. |
+
+| Repository option | Type | Default | Description |
+|-------------------|------|---------|-------------|
+| `src` | string | **required** | Unique HTTP, HTTPS, or anonymous FTP repository URL without credentials, queries, fragments, or path traversal. |
+| `dst` | string | **required** | Safe relative directory below the package destination. Item destinations must not overlap. |
+| `dist` | string or list[string] | discovered | Distributions, or flat paths ending in `/`, such as `"./"`. |
+| `section` | string or list[string] | discovered | Components for regular repositories; not accepted for flat repositories. |
+| `arch` | string or list[string] | discovered | Binary architectures for regular repositories; not accepted for flat repositories. |
+| `source` | bool | package `source` | Include source indexes and packages for this item. |
+| `check_gpg` | bool | `true` | Verify metadata during discovery and native mirroring. |
+| `keyring` | absolute path or list[path] | **required** when `check_gpg` is `true` | Trusted local keyrings for this item. Keys are not downloaded or shared between items. |
+
+Unknown package and repository options are rejected. Release metadata is
+required even when signature verification is explicitly disabled. Omitted
+selections are discovered each run; automatic discovery refuses to remove an
+existing distribution that disappears from a listing. Use explicit `dist`
+selections when intentionally narrowing the mirror.
+
+See the [apt-mirror2 reference](https://mirror-py.sparcs.org/sync-methods/apt-mirror2.html)
+for full URL and path restrictions, discovery, cleanup behavior, and a complete
+package example.
+
 ---
 
 ## 5. AI Assistant Protocol
@@ -375,6 +458,8 @@ user provides. Follow these steps:
 1. **Identify the sync method.** Map the user's intent to one `synctype`:
    - rsync URL + "skip when unchanged" / timestamp file -> `rsync` (set `ffts`/`fftsfile`).
    - Debian, push-based -> `ftpsync` (`syncrate: "PUSH"`).
+   - Selected Debian-style APT archive with discovery or filters -> `debmirror`.
+   - Multiple regular or flat APT repositories in one job -> `apt-mirror2`.
    - Ubuntu archive -> `ubuntu`.
    - Debian CD/ISO with jigdo -> `jigdo`.
    - Anonymous `ftp://` source -> `lftp`.
@@ -384,8 +469,13 @@ user provides. Follow these steps:
 2. **Collect the required inputs** for that method:
    - **Always**: display `name`, `id` (kebab-case, equals the map key), `href`,
      `src`, `dst`, `syncrate`, and any reference `link`s.
-   - **rsync**: whether FFTS is used and the `fftsfile` name; credentials if any.
+   - **rsync**: whether FFTS is used, an optional `fftsfile` name, and credentials if any.
    - **ftpsync**: rsync URL or (host + `path`); `hub`; any `INFO_*` overrides.
+   - **debmirror**: archive URL, optional `dist`/`section`/`arch` selections,
+     whether source packages are needed, and local trusted keyrings for signature checks.
+   - **apt-mirror2**: a non-empty `config` repository list with each item's actual
+     `src`, relative `dst`, selections, and local keyrings unless `check_gpg` is
+     explicitly disabled. The package `src` is only a display URL.
    - **lftp**: confirm `src` is an `ftp://` URL; retry/timeout/excludes if any.
    - **ubuntu**: trace on/off; extra excludes if any.
    - **jigdo**: `jigdo_file` and `debian_mirror` (both required).
@@ -405,7 +495,8 @@ user provides. Follow these steps:
    - `id` equals the map key, does not start with `_`, and is not a reserved
      name (`get`, `items`, `keys`, `values`, `to_dict`).
    - `src` strips any trailing slash for rsync.
-   - Only options listed for the chosen method appear in `options`.
+   - Only options documented for the chosen method, including its linked full
+     reference, appear in `options`.
    - Use `user`/`password` (not `username`) for credentials.
 
 6. **Output** the package block as a JSON snippet ready to paste under

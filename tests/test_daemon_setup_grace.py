@@ -26,7 +26,7 @@ def _make_syncing_pkg(pkgid: str, timestamp_ms: float) -> MagicMock:
         pkgid(str): Package identifier.
         timestamp_ms(float): Value of package.timestamp (milliseconds since epoch).
 
-    Return:
+    Returns:
         package(MagicMock): Stub where is_syncing() returns True and
             set_status is a MagicMock recording calls.
     """

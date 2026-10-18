@@ -29,15 +29,19 @@ path.
 | `source` | bool | `false` | No | Include source packages. |
 | `check_gpg` | bool | `true` | No | Enable Release signature verification. |
 | `keyring` | absolute path or list of paths | (none) | Required operationally when GPG checks are enabled | Pass trusted keyrings to debmirror. mirror.py warns when none is configured or a configured file is missing. |
-| `ignore_release_gpg` | bool | `false` | No | Pass `--ignore-release-gpg` while GPG checking is enabled. |
+| `ignore_release_gpg` | bool | `false` | No | Allow unverified metadata when discovery signature checks fail, and pass `--ignore-release-gpg` while GPG checking is enabled. |
 | `ignore_missing_release` | bool | `false` | No | Pass `--ignore-missing-release`. |
 
 When any of `dist`, `section`, or `arch` is omitted, mirror.py resolves that
 selection from repository listings and Release metadata. Discovery prefers
-`InRelease`, only falls back when it is absent, verifies metadata before using
-it, deduplicates distribution aliases with identical Release content, and
+`InRelease`, only falls back when it is absent, verifies signatures by default,
+deduplicates distribution aliases with identical Release content, and
 refuses an automatically discovered distribution set that would remove an
 existing distribution. Specify `dist` explicitly to narrow a mirror.
+
+`check_gpg: false` disables signature checks. `ignore_release_gpg: true` allows
+unverified metadata when signature verification fails, including missing
+detached signatures. Keep the defaults when signature verification is required.
 
 ## Content, transport, and cleanup options
 

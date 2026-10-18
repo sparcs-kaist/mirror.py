@@ -55,7 +55,7 @@ def _time_formatting(line: str, usetime: datetime.datetime, pkgid: str | None = 
         usetime(datetime.datetime): Timestamp to format from.
         pkgid(str, optional): Package ID substituted into {packageid} placeholder.
 
-    Return:
+    Returns:
         formatted(str): Template with all placeholders replaced.
     """
     return line.format(
@@ -76,7 +76,7 @@ def compress_file(filepath: str | Path) -> Path | None:
     Args:
         filepath(str | Path): Path to the file to compress.
 
-    Return:
+    Returns:
         gz_path(Path | None): Path to the .gz file, or None if compression failed.
     """
     filepath = Path(filepath)

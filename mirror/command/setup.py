@@ -103,7 +103,7 @@ def _ensure_directories() -> None:
 def _write_default_config_if_absent() -> bool:
     """Protect the config permissions and write defaults only for a new file.
 
-    Return:
+    Returns:
         written(bool): True if the config was written, False if it already existed.
     """
     try:

@@ -39,7 +39,7 @@ def setup() -> None:
 def plugin():
     """Entry-point factory consumed by mirror.plugin.load_external_plugins.
 
-    Return:
+    Returns:
         record(mirror.plugin.PluginRecord): Event plug-in record.
     """
     from mirror.plugin import event_plugin

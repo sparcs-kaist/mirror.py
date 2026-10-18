@@ -74,7 +74,7 @@ def build_ubuntu_commands(
         extra_rsync_args(Sequence[str]): Additional rsync flags appended after base args.
         stage1_excludes(Sequence[str]): Patterns to exclude in stage 1.
 
-    Return:
+    Returns:
         commands(tuple[list[str], list[str]]): (stage1_argv, stage2_argv).
     """
     src_arg = src if src.endswith("/") else src + "/"
@@ -111,7 +111,7 @@ def write_trace_file(
             Defaults to socket.getfqdn() when None.
         now(Optional[datetime]): Timestamp to record. Defaults to datetime.now(timezone.utc).
 
-    Return:
+    Returns:
         trace_file(Path): Path to the written trace file.
     """
     _validate_trace_path(trace_path)
@@ -147,7 +147,7 @@ def run_standalone(
         extra_rsync_args(Sequence[str]): Additional rsync flags.
         stage1_excludes(Sequence[str]): Patterns to exclude in stage 1.
 
-    Return:
+    Returns:
         None
     """
     from prompt_toolkit.shortcuts import print_formatted_text
@@ -195,7 +195,7 @@ def setup(path: Path, package: "mirror.structure.Package") -> None:
         path(Path): Unused setup path.
         package(mirror.structure.Package): Package being set up.
 
-    Return:
+    Returns:
         None
     """
     pass
@@ -208,7 +208,7 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger, tri
         package(mirror.structure.Package): Package to sync.
         pkg_logger(logging.Logger): Logger for this sync session.
 
-    Return:
+    Returns:
         None
     """
     pkg_logger.info(f"Starting sync.ubuntu for {package.name}")
@@ -282,7 +282,7 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger, tri
 def plugin():
     """Entry-point factory for the ubuntu sync plug-in.
 
-    Return:
+    Returns:
         record(mirror.plugin.PluginRecord): Sync plug-in record exposing execute.
     """
     from mirror.plugin import sync_plugin

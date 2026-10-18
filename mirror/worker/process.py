@@ -46,7 +46,7 @@ def _make_preexec(uid: Optional[int], gid: Optional[int], nice: int, clear_group
         nice(int): Niceness increment; skipped when falsy (i.e. 0).
         clear_groups(bool): Whether to clear inherited supplementary groups.
 
-    Return:
+    Returns:
         preexec(callable): Zero-argument callable for subprocess preexec_fn.
     """
     def preexec():
@@ -96,7 +96,7 @@ def _identity_popen_kwargs(uid: Optional[int], gid: Optional[int], nice: int) ->
         gid(int | None): Group ID, or None to run as the current group.
         nice(int): Niceness increment.
 
-    Return:
+    Returns:
         kwargs(dict): Keyword arguments to spread into subprocess.Popen.
     """
     clear_groups = _should_clear_groups(uid, gid)
@@ -237,7 +237,7 @@ class Job:
         Args:
             stream(str): One of 'stdin', 'stdout', 'stderr'
 
-        Return:
+        Returns:
             fd(int | None): File descriptor, or None if unavailable
         """
         if self.process is None:
@@ -339,7 +339,7 @@ class Job:
     def info(self) -> dict:
         """Return a snapshot dict of the job's current state.
 
-        Return:
+        Returns:
             data(dict): Job metadata including id, pid, running status, and uptime.
         """
         with self._lock:
@@ -399,7 +399,7 @@ def run_foreground(
         log_helper_command(list[str], optional): Helper command started before
             the main process.  Always terminated/killed in a finally block.
 
-    Return:
+    Returns:
         returncode(int): Exit code of the main process.
     """
     run_env = os.environ.copy()
@@ -457,7 +457,7 @@ def create(
         nice(int): Niceness value
         log_path(Path, optional): File to redirect stdout/stderr into
 
-    Return:
+    Returns:
         job(Job): The started Job instance
 
     Raises:
@@ -485,7 +485,7 @@ def get(job_id: str) -> Optional[Job]:
     Args:
         job_id(str): Job identifier
 
-    Return:
+    Returns:
         job(Job | None): The Job, or None if not found
     """
     with _jobs_lock:
@@ -495,7 +495,7 @@ def get(job_id: str) -> Optional[Job]:
 def get_all() -> list[Job]:
     """Return a snapshot list of all registered jobs.
 
-    Return:
+    Returns:
         jobs(list[Job]): All current jobs
     """
     with _jobs_lock:

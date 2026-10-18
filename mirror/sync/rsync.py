@@ -21,7 +21,7 @@ def _validate_flag_option(value, name: str, whitelist: str | None = None) -> str
         name(str): Option name used in error messages.
         whitelist(str | None): If provided, each char must appear in this set.
 
-    Return:
+    Returns:
         value(str): The validated value unchanged.
     """
     if not isinstance(value, str):
@@ -40,7 +40,7 @@ def _validate_excludes(value) -> list[str]:
     Args:
         value: Value to validate (must be list of str with no control characters).
 
-    Return:
+    Returns:
         excludes(list[str]): Copy of the validated list.
     """
     if not isinstance(value, list):
@@ -148,7 +148,7 @@ def rsync(
         option_include(str): Characters to append to the default flag string (whitelisted).
         excludes(list[str] | None): Additional --exclude patterns to append.
 
-    Return:
+    Returns:
         result(tuple[list[str], dict[str, str]]): Command argument list and environment dict.
     """
     option_exclude = _validate_flag_option(option_exclude, "option_exclude")
@@ -192,7 +192,7 @@ def check_ffts_update(package: mirror.structure.Package, pkg_logger: logging.Log
         package(mirror.structure.Package): Package to check.
         pkg_logger(logging.Logger): Logger for this sync session.
 
-    Return:
+    Returns:
         needs_update(bool): True if an update is needed or check failed, False if up to date.
     """
     pkg_logger.info(f"Running FFTS check for {package.name}")
@@ -252,7 +252,7 @@ def check_ffts_update(package: mirror.structure.Package, pkg_logger: logging.Log
 def plugin():
     """Entry-point factory for the rsync plug-in.
 
-    Return:
+    Returns:
         record(mirror.plugin.PluginRecord): Sync plug-in record exposing execute and on_sync_done.
     """
     from mirror.plugin import sync_plugin

@@ -19,7 +19,7 @@ def make_package(pkgid: str = "testpkg") -> MagicMock:
     Args:
         pkgid(str): Package identifier.
 
-    Return:
+    Returns:
         package(MagicMock): Stub exposing pkgid only. The watchdog cap now
             lives on `mirror.conf.max_runtime_seconds`, set per-test.
     """

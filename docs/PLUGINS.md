@@ -100,7 +100,16 @@ falls back to `[echo]`).
 
 ### 4. Restart the daemon
 
-`systemctl restart mirror` (or whichever service manager). Watch `/var/log/mirror/master.stdout.log` to see the echo plug-in print on every package status change.
+For a systemd installation, restart the daemon and follow its journal to see
+the echo plug-in log each package status change:
+
+```bash
+sudo systemctl restart mirror.service
+sudo journalctl -u mirror.service -f
+```
+
+File logs use the path configured in `settings.logger.fileformat`; see the
+[log layout](https://mirror-py.sparcs.org/guide/state-files.html#log-file-layout).
 
 ## Plug-in contract
 

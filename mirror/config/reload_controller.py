@@ -55,7 +55,7 @@ class ReloadController:
         Args:
             timeout(float): Maximum seconds to wait.
 
-        Return:
+        Returns:
             result(dict): The reload result, or
             ``{"status": "error", "error": "reload timeout after Ns"}`` if
             the main loop did not signal completion within ``timeout``.
@@ -74,7 +74,7 @@ class ReloadController:
     def consume_pending(self) -> tuple[bool, list[_ReloadResponse]]:
         """Atomically pop all pending requests. Called from the main loop.
 
-        Return:
+        Returns:
             should_reload(bool): True iff at least one request is pending.
             responses(list[_ReloadResponse]): CLI requesters awaiting a result.
                 The signal-side request does not produce a response object.

@@ -28,7 +28,7 @@ def _emit_ok(message: str) -> None:
 def _capture_ssh_env() -> dict[str, str]:
     """Capture SSH-supplied env vars from the current process environment.
 
-    Return:
+    Returns:
         ssh_env(dict[str, str]): Subset of os.environ holding the keys archvsync's
             ftpsync consumes when invoked over SSH. Empty if neither is set.
     """

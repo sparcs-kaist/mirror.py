@@ -266,7 +266,7 @@ def _parse_src(src: str, options: dict) -> tuple[str, str | None, str]:
         options(dict): Package sync options; "method"/"host"/"root" override the
             corresponding value parsed from src.
 
-    Return:
+    Returns:
         parsed(tuple[str, str | None, str]): Validated (method, host, root).
 
     Raises:
@@ -320,7 +320,7 @@ def build_command(package: mirror.structure.Package) -> tuple[list[str], dict[st
     Args:
         package(mirror.structure.Package): Package to sync.
 
-    Return:
+    Returns:
         result(tuple[list[str], dict[str, str]]): Command argument list (mirrordir last)
             and environment dict.
 
@@ -1256,7 +1256,7 @@ def resolve_command(argv: list[str], ftp_password: str | None = None) -> list[st
         argv(list[str]): Native debmirror argument vector with its destination last.
         ftp_password(str | None): FTP password passed outside the argument vector.
 
-    Return:
+    Returns:
         command(list[str]): Native arguments containing every required selection option.
     """
     options = _parse_native_options(argv, ftp_password)
@@ -1342,7 +1342,7 @@ def main() -> None:
 def plugin() -> "mirror.plugin.PluginRecord":
     """Entry-point factory for the debmirror plug-in.
 
-    Return:
+    Returns:
         record(mirror.plugin.PluginRecord): Sync plug-in record exposing execute.
     """
     from mirror.plugin import sync_plugin

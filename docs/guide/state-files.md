@@ -108,9 +108,10 @@ These fields are defined in `Package.StatusInfo` in `mirror/structure/__init__.p
 
 ## status.json — web status
 
-`/var/www/mirror/status.json` is regenerated after each sync completes. It is
-intended to be served by a web server so that users and monitoring tools can
-inspect mirror freshness. Its shape is:
+`/var/www/mirror/status.json` is regenerated when package status changes,
+including sync start and completion. It is intended to be served by a web
+server so that users and monitoring tools can inspect mirror freshness.
+Its shape is:
 
 ```json
 {
@@ -157,15 +158,21 @@ default payload through a transform hook.
 
 ## Log file layout
 
-Daemon logs are written under the path configured in `settings.logfolder`
-(default `/var/log/mirror/`):
+Daemon log paths come from `settings.logger.fileformat`; per-package paths
+come from `settings.logger.packagefileformat`. Each has `base`, `folder`, and
+`filename` templates. The configuration created by `mirror setup` uses:
 
 ```
 /var/log/mirror/
-    <year>/<month>/<date>.log           # daemon log
+    <year>/<month>/<year>-<month>-<day>.log  # daemon log
     packages/<year>/<month>/<day>/      # per-package sync logs
-        <HH>:<MM>:<SS>.<us>.<pkgid>.log
+        <pkgid>.<HH>:<MM>:<SS>.<us>.log
 ```
 
+The quickstart example overrides the per-package filename template, placing
+the package ID last. Use the configured templates or the paths recorded in
+package status to locate logs. `settings.logfolder` is the base for ftpsync
+tool logs; it does not select the daemon or per-package log paths.
+
 Log files are gzip-compressed on rotation when `gzip: true` is set in the
-`logger.fileformat` and `logger.packagefileformat` config sections.
+`settings.logger.fileformat` and `settings.logger.packagefileformat` config sections.

@@ -1,140 +1,88 @@
-# Mirror.py
+# Agent Instructions for Mirror.py
 
-A Python daemon that mirrors remote repositories to a local server using various sync protocols (rsync, ftpsync, lftp, bandersnatch).
+Mirror.py is a Linux daemon for maintaining local repository mirrors. Read
+[README.md](README.md) for the project overview, supported sync methods,
+architecture, source layout, runtime paths, and CLI documentation.
 
-## Project Goal
+## Workflow and Git
 
-Provide a reliable, extensible system for maintaining local mirrors of remote package repositories (e.g., Debian, PyPI). Runs as a master-worker daemon pair on Linux, with scheduled syncs, per-package logging, and web-accessible status reporting.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md). Every change requires an issue;
+  settle the problem, scope, and development direction in the issue before
+  implementation. No separate maintainer approval is required to start work.
+- Discuss implementation problems, tests, and review in the PR, and link the
+  corresponding issue. Return substantial direction or scope changes to the
+  issue and reflect the agreed outcome in the PR. Maintainers decide merges.
+- Read relevant code, callers, and tests before editing. Keep changes within
+  the agreed scope and preserve unrelated work.
+- Reuse the branch dedicated to the current task. If none exists, create a
+  `feat/<name>` or `fix/<name>` branch before feature or fix changes.
+- Commit and push only when the user explicitly requests them. Use
+  Conventional Commit subjects and `--no-gpg-sign` when committing because
+  interactive GPG signing is unavailable. Do not force-push, push directly to
+  `main` or `master`, or merge without explicit permission.
 
-## Architecture
+## Development and Verification
 
-Master-worker model with Unix domain socket IPC:
+- Follow the Python, docstring, logging, and dependency conventions in the
+  [development guide](docs/contributing/index.md#python-coding-style).
+- Python >= 3.10, Linux only. Use `uv` with its default settings.
+- Prefer the standard library and existing dependencies. Do not introduce
+  dependencies that require separately deployed or managed services, such as
+  Redis or MySQL, unless the requirement and adoption have been explicitly
+  agreed in the issue. Reuse the existing filesystem, JSON state, and Unix
+  sockets when they meet the requirement.
+- Install development dependencies: `uv sync`.
+- Run default tests: `uv run pytest` (excludes integration tests).
+- Run integration tests: `uv run pytest -m integration -v` (requires Docker
+  and Compose). Run default and integration suites sequentially.
+- Install documentation dependencies: `uv sync --group docs`.
+- Build documentation and editor assets: `npm --prefix docs/editor run docs:build`
+  (requires Node >= 22.12). With assets already built, prose-only site changes
+  can use `uv run --group docs sphinx-build -b html -W --keep-going docs docs/_build/html`.
+- Run checks appropriate to the change. Cover behavior changes and regressions
+  with relevant tests; use existing tests for readability-only code changes.
+  Validate formatting and links for standalone Markdown changes. Report checks,
+  results, and reasons for checks not run. See the
+  [verification guide](CONTRIBUTING.md#verify-your-change).
 
-```
-CLI (click)
-  └─ mirror daemon    → MasterServer (listens on master.sock)
-  └─ mirror worker    → WorkerServer (listens on worker.sock)
+## Architecture and Persistence Constraints
 
-Master daemon:
-  1. Loads config, starts MasterServer
-  2. Connects to Worker as WorkerClient (persistent session)
-  3. 1-second loop: checks each package's sync timing
-  4. Delegates sync to Worker via socket RPC
+- The master owns scheduling and package state. The worker owns long-lived
+  sync subprocesses, which must survive master restarts. Preserve socket
+  authentication, authorization, completion notifications, and concurrency
+  protections.
+- `/etc/mirror/config.json` is read-only during daemon and worker runtime.
+  Only initial provisioning through `mirror setup` writes it. Never write
+  runtime changes through `mirror.confPath` or introduce `Config.save()`.
+- Runtime status, error counts, log paths, and timestamps belong in `stat.json`.
+  Extend `Package.StatusInfo` or the appropriate state dataclass, preserve
+  loading through `from_dict()`, and emit fields through `Package.to_dict()`
+  for `save_stat_data()`. Update `generate_and_save_web_status()` when web
+  clients need the field. Preserve atomic writes and state locking.
 
-Worker server:
-  1. Receives execute_command RPC
-  2. Spawns subprocess (rsync/ftpsync/etc.) with UID/GID/nice
-  3. Broadcasts job_finished notification to Master
-  4. Master calls mirror.sync.on_sync_done() to update status
-```
+## Sync Module Development
 
-## Module Map
-
-| Module | Responsibility |
-|--------|---------------|
-| `mirror/__main__.py` | CLI entry point (setup, daemon, worker, config, plugin, push, tui, standalone, worker-execute; crontab compatibility placeholder) |
-| `mirror/command/` | Command implementations for daemon, worker, setup |
-| `mirror/config/` | JSON config loading, package state persistence |
-| `mirror/structure/` | Dataclasses: Package, Config, PackageSettings, StatusInfo |
-| `mirror/socket/` | Unix socket IPC (protocol, base server/client, master, worker) |
-| `mirror/sync/` | Nine built-in sync method executors and shared sync lifecycle |
-| `mirror/worker/` | Subprocess lifecycle management (create, track, prune) |
-| `mirror/event/` | Priority-based pub/sub event system |
-| `mirror/logger/` | Time-based log rotation, per-package log files, gzip compression |
-| `mirror/toolbox/` | Utilities (ISO 8601 duration parser, permission checks) |
-| `mirror/plugin/` | Built-in and external entry-point plugins for sync, events, and status |
-
-## Socket IPC Protocol
-
-- Length-prefixed JSON over Unix domain sockets
-- 3-step handshake: server info → client info → confirmation
-- Bidirectional: RPC (command/response) + async notifications (job_finished)
-- Master holds persistent WorkerClient connection to receive notifications
-
-## Sync Flow
-
-1. Master detects package needs sync (based on `syncrate` ISO 8601 duration)
-2. `mirror.sync.start(package)` launches sync in a daemon thread
-3. Sync module (e.g., rsync) builds command and calls `mirror.socket.worker.execute_command()`
-4. Worker spawns subprocess, Master receives `job_finished` notification on completion
-5. Package status updated: ACTIVE (success) or ERROR (failure)
-
-## Active Sync Methods
-
-- **rsync**: Incremental sync with optional FFTS pre-check
-- **ftpsync**: Debian archvsync-based FTP mirroring
-- **lftp**: FTP mirroring with regex filters
-- **bandersnatch**: PyPI mirroring using bandersnatch's configuration
-- **local**: Register an existing local directory without fetching
-- **ubuntu**: Two-stage rsync mirroring
-- **jigdo**: Debian CD/DVD image assembly
-- **debmirror**: Debian archive mirroring with signed metadata discovery
-- **apt-mirror2**: Multiple APT repositories under one scheduled job
-
-## Path Layout
-
-| Path | Purpose | Writable by daemon? |
-|------|---------|---------------------|
-| `/etc/mirror/config.json` | Main configuration | **No — read-only at runtime** |
-| `/var/lib/mirror/stat.json` | Persistent package state | Yes (atomic rewrite on status change) |
-| `/var/run/mirror/` | Sockets (master.sock, worker.sock), PID files | Yes |
-| `/var/log/mirror/` | Daemon logs, per-package logs under `packages/` | Yes |
-| `/var/www/mirror/status.json` | Web status JSON for the UI | Yes |
-
-### Config invariant
-
-`/etc/mirror/config.json` is **read-only** during daemon and worker runtime.
-Only `mirror setup` ever writes it (initial provisioning). Runtime state — sync
-status, error counts, log paths, timestamps — lives exclusively in `stat.json`.
-When adding a new persisted field:
-
-- DO: extend `Package.StatusInfo` (or another stat-side dataclass) and emit it via
-  `Package.to_dict()` so `save_stat_data()` picks it up automatically.
-- DO: surface it in `generate_and_save_web_status()` if the UI needs it.
-- DON'T: never call `mirror.confPath.write_text(...)` or otherwise mutate the
-  user-supplied config.json. There is intentionally no `Config.save()`.
-
-## Development
-
-- Python >= 3.10, Linux only
-- Package manager: `uv`
-- Dependencies: click, prompt_toolkit, bandersnatch; apt-mirror2 is optional
-- Tests: `uv run pytest tests/`
-- Install for dev: `uv sync` (includes pytest and pytest-docker)
-- Editor: Node >= 22.12; `npm --prefix docs/editor ci`
-
-## Commands
-
-```bash
-mirror setup                      # Provision directories and systemd units
-mirror daemon [--config PATH]     # Run master daemon
-mirror worker [--config PATH]     # Run worker server
-mirror config reload             # Reload configuration through the master
-mirror push PACKAGE              # Trigger a configured package
-mirror tui                       # Inspect live package status
-mirror crontab -u USER -c CONFIG  # Compatibility placeholder; no output
-```
-
-## Agent Instructions
-
-### Codebase Changes
-
-- When modifying the codebase at the user's request, commit directly with `--no-gpg-sign` (interactive GPG signing is unavailable in this environment).
-- By default, create a dedicated branch for any feature or fix request before making changes. Follow the `feat/<name>` or `fix/<name>` naming convention.
-
-### Sync Module Development
-
-- Read the relevant existing modules in `mirror/sync/` before editing. Match their style; use `rsync.py`, `ftpsync.py`, and `lftp.py` as references.
-- Start with imports, not a module-level docstring. Put `mirror` imports before standard-library imports, following the neighboring sync modules.
-- Keep each sync method in `mirror/sync/<method>.py` by default, including method-specific discovery helpers. Avoid extra helper modules, static empty config files, and abstractions used by only one method.
-- Keep constants and data types near the top. Make the `setup` and `execute` flow easy to find, group related helpers, and expose the method through `plugin()` using `mirror.plugin.sync_plugin`.
-- Use short, single-purpose functions with action-based names and annotated signatures. Keep coordinator functions together when that makes the execution order clearer. Prefer explicit steps and descriptive names over nested conditional expressions or dense comprehensions.
-- Keep useful English function docstrings. Document public arguments and return values using the existing `Args:` and `Return:` style. Use comments to explain constraints or non-obvious decisions; avoid decorative headings and comments that repeat the code.
-- Keep command construction separate from execution. A command builder should return arguments and environment settings without network, filesystem, or worker side effects. Validate user-controlled values before passing them to external commands; pass arguments separately instead of interpolating shell commands.
-- Use `execute(package, logger, trigger="auto")` to prepare and delegate jobs through `mirror.socket.worker.execute_command()`. Preserve the package job ID, configured UID/GID, environment, and log path. Report failures before delegation through `mirror.sync.on_sync_done()`; let worker completion drive the normal result lifecycle.
-- Run long-lived sync subprocesses through the worker. Discovery that needs the worker's identity or environment should run there too. Keep credentials out of logs and preserve signature verification, path validation, and metadata size/time limits.
-- Create generated tool configs in a temporary directory with an explicit lifecycle owner. Keep them available until the subprocess finishes, ensure the worker can access them, and clean up on success, failure, and handled termination. Never write runtime changes to the user's `/etc/mirror/config.json`.
-- For behavior changes, cover command building and worker delegation with unit tests, and real sync behavior with the relevant E2E integration tests. For readability-only changes, use existing tests to prove behavior is preserved; do not add tests that merely mirror the refactor. Run unit and integration suites sequentially when they share temporary resources.
+- Read the relevant module and use `mirror/sync/rsync.py`, `ftpsync.py`, and
+  `lftp.py` as references. Follow the
+  [sync development guide](docs/contributing/index.md#developing-sync-methods)
+  for module organization and plugin registration.
+- Separate command construction from execution. Builders return arguments
+  and environment settings without network, filesystem, or worker side effects.
+  Validate user-controlled values and pass command arguments separately.
+- Use `execute(package, logger, trigger="auto")` to prepare and delegate jobs
+  through `mirror.socket.worker.execute_command()`. Preserve the package job
+  ID, configured UID/GID, environment, and log path.
+- Run long-lived subprocesses through the worker. Discovery requiring the
+  worker's identity or environment belongs there too.
+- Report failures before delegation through `mirror.sync.on_sync_done()`;
+  let worker completion drive the normal result lifecycle after delegation.
+- Keep credentials out of logs and preserve signature verification, path
+  validation, and metadata size and time limits.
+- Give generated tool configurations an explicit temporary-directory owner.
+  Keep them accessible to the worker until the subprocess finishes. Clean up
+  on success, failure, and handled termination.
+- For sync behavior changes, cover command building and worker delegation with
+  unit tests and real synchronization with relevant E2E integration tests.
 
 ### RC Release Bump
 
