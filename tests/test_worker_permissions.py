@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import subprocess
@@ -84,8 +85,8 @@ def test_negative_nice_rejected_when_not_root():
         Job("nice_test", ["true"], {}, None, None, -5)
 
 
-def test_preexec_applies_nice_before_uid_changes(monkeypatch):
-    """preexec_fn order must be: nice -> setgid -> setuid."""
+def test_preexec_applies_nice_and_clears_groups_before_uid_changes(monkeypatch):
+    """preexec_fn order must be: nice -> setgroups -> setgid -> setuid."""
     from mirror.worker.process import Job
 
     calls = []
@@ -96,13 +97,18 @@ def test_preexec_applies_nice_before_uid_changes(monkeypatch):
     def fake_setuid(uid):
         calls.append(("setuid", uid))
 
+    def fake_setgroups(groups):
+        calls.append(("setgroups", groups))
+
     def fake_nice(n):
         calls.append(("nice", n))
         return n
 
     monkeypatch.setattr("mirror.worker.process.os.setgid", fake_setgid)
     monkeypatch.setattr("mirror.worker.process.os.setuid", fake_setuid)
+    monkeypatch.setattr("mirror.worker.process.os.setgroups", fake_setgroups)
     monkeypatch.setattr("mirror.worker.process.os.nice", fake_nice)
+    monkeypatch.setattr("mirror.worker.process.os.geteuid", lambda: 0)
 
     job = Job("order_test", ["true"], {}, 1000, 1000, 10)
     captured = {}
@@ -121,7 +127,8 @@ def test_preexec_applies_nice_before_uid_changes(monkeypatch):
     captured["preexec_fn"]()
 
     names = [c[0] for c in calls]
-    assert names.index("nice") < names.index("setgid"), f"order was {names}"
+    assert names.index("nice") < names.index("setgroups"), f"order was {names}"
+    assert names.index("setgroups") < names.index("setgid"), f"order was {names}"
     assert names.index("setgid") < names.index("setuid"), f"order was {names}"
 
 
@@ -141,6 +148,7 @@ def test_nice_zero_uses_popen_user_group_without_preexec(monkeypatch):
             return None
 
     monkeypatch.setattr("mirror.worker.process.subprocess.Popen", _FakePopen)
+    monkeypatch.setattr("mirror.worker.process.os.geteuid", lambda: 0)
 
     job = Job("no_preexec_test", ["true"], {}, 1000, 1001, 0)
     job.start()
@@ -148,6 +156,7 @@ def test_nice_zero_uses_popen_user_group_without_preexec(monkeypatch):
     assert "preexec_fn" not in captured
     assert captured["user"] == 1000
     assert captured["group"] == 1001
+    assert captured["extra_groups"] == []
 
 
 def test_nonzero_nice_uses_preexec_without_popen_user_group(monkeypatch):
@@ -166,6 +175,7 @@ def test_nonzero_nice_uses_preexec_without_popen_user_group(monkeypatch):
             return None
 
     monkeypatch.setattr("mirror.worker.process.subprocess.Popen", _FakePopen)
+    monkeypatch.setattr("mirror.worker.process.os.geteuid", lambda: 0)
 
     job = Job("preexec_test", ["true"], {}, 1000, 1001, 5)
     job.start()
@@ -173,6 +183,102 @@ def test_nonzero_nice_uses_preexec_without_popen_user_group(monkeypatch):
     assert callable(captured["preexec_fn"])
     assert "user" not in captured
     assert "group" not in captured
+
+
+def test_nonroot_same_identity_preserves_supplementary_groups(monkeypatch):
+    """Explicit current IDs and an unchanged foreground identity preserve groups."""
+    from mirror.worker.process import _identity_popen_kwargs
+
+    monkeypatch.setattr("mirror.worker.process.os.geteuid", lambda: 1000)
+    monkeypatch.setattr("mirror.worker.process.os.getegid", lambda: 1001)
+
+    same_identity = _identity_popen_kwargs(1000, 1001, 0)
+    same_uid = _identity_popen_kwargs(1000, None, 0)
+    same_gid = _identity_popen_kwargs(None, 1001, 0)
+    inherited_identity = _identity_popen_kwargs(None, None, 0)
+
+    assert "extra_groups" not in same_identity
+    assert "extra_groups" not in same_uid
+    assert "extra_groups" not in same_gid
+    assert "extra_groups" not in inherited_identity
+
+
+def test_nonroot_changed_identity_clears_groups(monkeypatch):
+    """A requested identity change clears groups even when the parent is non-root."""
+    from mirror.worker.process import _identity_popen_kwargs
+
+    monkeypatch.setattr("mirror.worker.process.os.geteuid", lambda: 1000)
+    monkeypatch.setattr("mirror.worker.process.os.getegid", lambda: 1001)
+
+    assert _identity_popen_kwargs(1002, 1001, 0)["extra_groups"] == []
+    assert _identity_popen_kwargs(1000, 1002, 0)["extra_groups"] == []
+
+
+def test_root_explicit_partial_identity_clears_groups(monkeypatch):
+    """Root clears groups when either UID or GID is explicit, even unchanged."""
+    from mirror.worker.process import _identity_popen_kwargs
+
+    monkeypatch.setattr("mirror.worker.process.os.geteuid", lambda: 0)
+    monkeypatch.setattr("mirror.worker.process.os.getegid", lambda: 0)
+
+    assert _identity_popen_kwargs(0, None, 0)["extra_groups"] == []
+    assert _identity_popen_kwargs(None, 0, 0)["extra_groups"] == []
+
+
+def test_preexec_group_clear_failure_stops_identity_change(monkeypatch):
+    """A setgroups failure must prevent setgid and setuid from running."""
+    from mirror.worker.process import _identity_popen_kwargs
+
+    calls = []
+    monkeypatch.setattr("mirror.worker.process.os.geteuid", lambda: 0)
+    monkeypatch.setattr("mirror.worker.process.os.nice", lambda value: calls.append("nice"))
+    monkeypatch.setattr(
+        "mirror.worker.process.os.setgroups",
+        lambda groups: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+    monkeypatch.setattr("mirror.worker.process.os.setgid", lambda gid: calls.append("setgid"))
+    monkeypatch.setattr("mirror.worker.process.os.setuid", lambda uid: calls.append("setuid"))
+
+    preexec = _identity_popen_kwargs(1000, 1000, 1)["preexec_fn"]
+    with pytest.raises(PermissionError, match="denied"):
+        preexec()
+
+    assert calls == ["nice"]
+
+
+@pytest.mark.parametrize("nice", [0, 5])
+@pytest.mark.skipif(os.geteuid() != 0, reason="Requires root to set child credentials")
+def test_root_child_has_no_supplementary_groups(nice: int) -> None:
+    """Both Popen paths drop a seeded supplementary group and child identity."""
+    target_uid, target_gid = get_target_uid_gid()
+    script = f"""
+import json
+import os
+import subprocess
+import sys
+from mirror.worker.process import _identity_popen_kwargs
+
+os.setgroups([12345])
+result = subprocess.run(
+    [sys.executable, "-c", "import json, os; print(json.dumps([os.getuid(), os.getgid(), os.getgroups()]))"],
+    check=True,
+    capture_output=True,
+    text=True,
+    **_identity_popen_kwargs({target_uid}, {target_gid}, {nice}),
+)
+print(json.dumps([json.loads(result.stdout), os.getgroups()]))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert json.loads(result.stdout) == [
+        [target_uid, target_gid, []],
+        [12345],
+    ]
 
 
 @pytest.mark.parametrize(

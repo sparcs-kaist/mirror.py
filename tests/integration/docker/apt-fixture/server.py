@@ -14,6 +14,8 @@ import aioftp
 DATA_ROOT = Path("/srv/data")
 DENY_LISTING_MARKER = Path("/srv/data/deny-dists-listing")
 PARTIAL_LISTING_MARKER = Path("/srv/data/partial-dists-listing")
+FTP_USER = "mirror"
+FTP_PASSWORD = "mirror\\'secret"
 
 
 class FixtureHandler(SimpleHTTPRequestHandler):
@@ -49,9 +51,15 @@ def serve_http() -> None:
 
 
 async def serve_ftp() -> None:
-    """Serve all fixture repositories over anonymous FTP."""
-    user = aioftp.User(base_path=DATA_ROOT, home_path="/")
-    server = aioftp.Server([user])
+    """Serve all fixture repositories over anonymous and authenticated FTP."""
+    anonymous = aioftp.User(base_path=DATA_ROOT, home_path="/")
+    authenticated = aioftp.User(
+        FTP_USER,
+        FTP_PASSWORD,
+        base_path=DATA_ROOT,
+        home_path="/",
+    )
+    server = aioftp.Server([anonymous, authenticated])
     await server.start("0.0.0.0", 2121)
     await server.serve_forever()
 

@@ -20,6 +20,8 @@ from .helpers import (
 PACKAGE_ID = "debmirror-test"
 FIXTURE_CONTAINER = "apt-fixture"
 FIXTURE_PATH = Path(__file__).parent / "docker" / "apt-fixture"
+FTP_USER = "mirror"
+FTP_PASSWORD = "mirror\\'secret"
 
 
 def _replace_fixture(version: str) -> None:
@@ -91,13 +93,16 @@ def _wait_for_completion(
 
 
 @contextmanager
-def _package_options(mirror_stack: Any, selections: dict[str, Any]) -> Iterator[None]:
+def _package_options(mirror_stack: Any, selections: dict[str, Any], src: str | None = None) -> Iterator[None]:
     """Apply temporary debmirror selections through the production reload path."""
     result = mirror_stack.docker_exec("cat", "/etc/mirror/config.json")
     original = result.stdout
     config = json.loads(original)
-    options = config["packages"][PACKAGE_ID]["settings"]["options"]
+    settings = config["packages"][PACKAGE_ID]["settings"]
+    options = settings["options"]
     options.update(selections)
+    if src is not None:
+        settings["src"] = src
     write_container_config(MIRROR_CONTAINER, json.dumps(config, indent=2))
     reload_result = mirror_stack.docker_exec("mirror", "config", "reload", check=False)
     assert reload_result.returncode == 0, (
@@ -209,6 +214,48 @@ def test_debmirror_explicit_subset_and_source(mirror_stack: Any) -> None:
         assert not (destination / "pool/main/m/mirror-test/mirror-test_1.0_arm64.deb").exists()
         assert not (destination / "pool/extras").exists()
         assert not (destination / "dists/bullseye").exists()
+
+
+@pytest.mark.integration
+def test_debmirror_authenticated_ftp_discovery_and_explicit_selection(mirror_stack: Any) -> None:
+    """FTP credentials support discovery and native sync without argument exposure."""
+    auth = {
+        "user": FTP_USER,
+        "password": FTP_PASSWORD,
+        "passive": True,
+    }
+    source = "ftp://apt-fixture:2121/debian"
+    with _package_options(mirror_stack, auth, src=source):
+        _clean_destination(mirror_stack)
+        previous_lastsync = mirror_stack.package_lastsync(PACKAGE_ID)
+        mirror_stack.trigger_sync(PACKAGE_ID)
+        discovered_lastsync = _wait_for_completion(
+            mirror_stack, previous_lastsync, "ACTIVE"
+        )
+
+        destination = mirror_stack.publish_dir / PACKAGE_ID
+        relative = "pool/main/m/mirror-test/mirror-test_1.0_amd64.deb"
+        assert (destination / relative).read_bytes() == _fixture_bytes("v1", relative)
+        assert FTP_PASSWORD not in latest_package_log_text(mirror_stack, PACKAGE_ID)
+
+        explicit = {
+            **auth,
+            "dist": "bookworm",
+            "section": "main",
+            "arch": "amd64",
+        }
+        with _package_options(mirror_stack, explicit, src=source):
+            _clean_destination(mirror_stack)
+            mirror_stack.trigger_sync(PACKAGE_ID)
+            explicit_lastsync = _wait_for_completion(
+                mirror_stack, discovered_lastsync, "ACTIVE"
+            )
+
+            assert (destination / relative).read_bytes() == _fixture_bytes("v1", relative)
+            assert FTP_PASSWORD not in latest_package_log_text(mirror_stack, PACKAGE_ID)
+
+        mirror_stack.trigger_sync(PACKAGE_ID)
+        _wait_for_completion(mirror_stack, explicit_lastsync, "ACTIVE")
 
 
 @pytest.mark.integration

@@ -12,7 +12,13 @@ import mirror.socket
 import mirror.socket.worker
 import mirror.structure
 import mirror.sync
-from mirror.sync.debmirror import build_command, execute, plugin, _redact_command
+from mirror.sync.debmirror import (
+    _FTP_PASSWORD_ENV,
+    _redact_command,
+    build_command,
+    execute,
+    plugin,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +126,18 @@ class TestSyncDebmirrorDelegation(unittest.TestCase):
         self.assertEqual(call["gid"], 4343)
         self.assertEqual(call["job_id"], self.pkg.pkgid)
         self.pkg.set_status.assert_not_called()
+
+    def test_ftp_password_is_only_delegated_in_reserved_environment(self):
+        self.pkg.settings.src = "ftp://ftp.example/debian"
+        options = {"user": "mirror", "password": "secret"}
+
+        _, mock_exec, mock_on_done = self._run_execute(options=options)
+
+        mock_on_done.assert_not_called()
+        call = mock_exec.call_args.kwargs
+        assert "secret" not in call["commandline"]
+        assert "--passwd" not in call["commandline"]
+        assert call["env"][_FTP_PASSWORD_ENV] == "secret"
 
     def test_relative_dst_routes_to_on_sync_done(self):
         _, mock_exec, mock_on_done = self._run_execute(
@@ -497,14 +515,47 @@ def test_build_command_proxy_with_whitespace_raises():
 
 # --- auth ---
 
-def test_build_command_ftp_user_passwd():
+def test_build_command_ftp_password_uses_reserved_environment():
     argv, env = build_command(_make_pkg(
         src="ftp://ftp.debian.org/debian",
         options={"dist": "bookworm", "user": "anon", "password": "secret"},
     ))
     assert argv[argv.index("--user") + 1] == "anon"
-    assert argv[argv.index("--passwd") + 1] == "secret"
+    assert "--passwd" not in argv
+    assert env[_FTP_PASSWORD_ENV] == "secret"
     assert "RSYNC_PASSWORD" not in env
+
+
+def test_build_command_reserved_password_env_cannot_be_injected(monkeypatch):
+    monkeypatch.setenv(_FTP_PASSWORD_ENV, "inherited")
+    monkeypatch.setattr(
+        mirror.sync,
+        "get_extra_args",
+        lambda package_id: {_FTP_PASSWORD_ENV: "injected", "OTHER": "value"},
+    )
+
+    _, no_password_env = build_command(_make_pkg(
+        src="ftp://ftp.debian.org/debian",
+        options={"dist": "bookworm", "user": "anon"},
+    ))
+    _, configured_password_env = build_command(_make_pkg(
+        src="ftp://ftp.debian.org/debian",
+        options={"dist": "bookworm", "user": "anon", "password": "configured"},
+    ))
+
+    assert no_password_env == {_FTP_PASSWORD_ENV: "", "OTHER": "value"}
+    assert configured_password_env == {
+        _FTP_PASSWORD_ENV: "configured",
+        "OTHER": "value",
+    }
+
+
+def test_build_command_ftp_password_with_control_character_raises():
+    with pytest.raises(ValueError, match="control characters"):
+        build_command(_make_pkg(
+            src="ftp://ftp.debian.org/debian",
+            options={"dist": "bookworm", "user": "anon", "password": "bad\npassword"},
+        ))
 
 
 def test_build_command_rsync_auth_env_and_host():
