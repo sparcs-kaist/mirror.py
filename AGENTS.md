@@ -26,6 +26,11 @@ architecture, source layout, runtime paths, and CLI documentation.
 - Follow the Python, docstring, logging, and dependency conventions in the
   [development guide](docs/contributing/index.md#python-coding-style).
 - Python >= 3.10, Linux only. Use `uv` with its default settings.
+- Prefer the standard library and existing dependencies. Do not introduce
+  dependencies that require separately deployed or managed services, such as
+  Redis or MySQL, unless the requirement and adoption have been explicitly
+  agreed in the issue. Reuse the existing filesystem, JSON state, and Unix
+  sockets when they meet the requirement.
 - Install development dependencies: `uv sync`.
 - Run default tests: `uv run pytest` (excludes integration tests).
 - Run integration tests: `uv run pytest -m integration -v` (requires Docker

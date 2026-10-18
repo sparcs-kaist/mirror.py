@@ -75,6 +75,10 @@ ownership and style.
   code, logs, CLI or UI messages, or commit messages.
 - Prefer the standard library and existing dependencies. Discuss new
   third-party dependencies in the issue before adding them.
+- Do not introduce dependencies that require separately deployed or managed
+  services, such as Redis or MySQL, unless the requirement and adoption have
+  been explicitly agreed in the issue. Use the existing filesystem, JSON state,
+  and Unix sockets when they meet the requirement.
 - Update affected documentation alongside behavior or configuration changes.
 - Use Conventional Commit subjects, such as
   `fix: preserve worker job state after master restart`.

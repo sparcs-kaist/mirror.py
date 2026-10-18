@@ -156,6 +156,18 @@ Use `uv` for Python package management. When selecting Python explicitly,
 specify a version, not an interpreter path. Leave other `uv` settings at their
 defaults, including its cache location.
 
+### Dependencies and separate services
+
+Prefer the standard library and existing dependencies. Do not introduce
+dependencies that require separately deployed or managed services, such as
+Redis or MySQL, unless the requirement and adoption have been explicitly
+agreed in the issue before implementation. This applies both to direct service
+integrations and to libraries that require such services.
+
+Use the existing filesystem, JSON state, and Unix sockets when they meet the
+requirement. Evaluate dependencies by the services they require and the
+operational burden they introduce, rather than by the number of imports.
+
 ## Architecture and state ownership
 
 The master schedules syncs and owns package state. The worker owns sync
