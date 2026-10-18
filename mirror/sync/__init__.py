@@ -11,6 +11,7 @@ from typing import Callable, Optional
 from threading import Thread
 
 methods = []
+_ALLOWED_EXTRA_ENV_KEYS = frozenset({"SSH_ORIGINAL_COMMAND", "SSH_CONNECTION"})
 
 # PRE/POST listeners for MASTER.PACKAGE_STATUS_UPDATE MUST NOT acquire
 # _start_lock. set_status() fires PRE synchronously (wait=True) while holding
@@ -77,7 +78,7 @@ def get_module(method: str) -> Callable:
     return getattr(mirror.sync, method)
 
 def _validate_extra_args(extra_args: dict[str, str]) -> dict[str, str]:
-    """Coerce and validate an extra_args mapping for subprocess env use.
+    """Validate caller-supplied SSH metadata for subprocess env use.
 
     Args:
         extra_args(dict[str, str]): Caller-supplied mapping.
@@ -86,8 +87,8 @@ def _validate_extra_args(extra_args: dict[str, str]) -> dict[str, str]:
         clean(dict[str, str]): Validated copy with str keys/values.
 
     Raises:
-        ValueError: keys/values are not strings, key is empty, or any string
-            contains characters disallowed in subprocess env (NUL, '=' in key).
+        ValueError: Keys/values are not strings, key is not allowed, or any
+            string contains characters disallowed in subprocess env.
     """
     clean: dict[str, str] = {}
     for k, v in extra_args.items():
@@ -103,6 +104,8 @@ def _validate_extra_args(extra_args: dict[str, str]) -> dict[str, str]:
             raise ValueError(f"extra_args key {k!r} must not contain NUL")
         if "\x00" in v:
             raise ValueError(f"extra_args value for key {k!r} must not contain NUL")
+        if k not in _ALLOWED_EXTRA_ENV_KEYS:
+            raise ValueError(f"extra_args key {k!r} is not allowed")
         clean[k] = v
     return clean
 
@@ -161,12 +164,12 @@ def start(package: "mirror.structure.Package", trigger: str = "auto", extra_args
     Args:
         package(mirror.structure.Package): Package to sync.
         trigger(str): Source of the trigger ("auto", "manual", etc.).
-        extra_args(dict[str, str], optional): Extra key-value pairs to associate
-            with this sync (str->str). Validated before the lock is acquired.
+        extra_args(dict[str, str], optional): SSH_ORIGINAL_COMMAND and
+            SSH_CONNECTION metadata. Validated before the lock is acquired.
             Cleared from the registry on completion or on scoped launch failure.
             Raises ValueError on bad input (non-str keys/values, empty key,
-            '=' or NUL in key, NUL in value). Raises RuntimeError if a sync
-            for this pkgid is already in progress (existing behavior unchanged).
+            '=' or NUL in key, NUL in value, or disallowed key). Raises RuntimeError
+            if a sync for this pkgid is already in progress (existing behavior unchanged).
 
     Raises:
         ValueError: If sync method is unknown or extra_args is invalid.

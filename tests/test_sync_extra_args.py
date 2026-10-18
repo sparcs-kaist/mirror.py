@@ -58,9 +58,29 @@ def _make_fake_record() -> MagicMock:
 # (a) _validate_extra_args
 # ---------------------------------------------------------------------------
 
-def test_validate_extra_args_valid():
-    result = _validate_extra_args({"K": "V"})
-    assert result == {"K": "V"}
+@pytest.mark.parametrize("metadata", [
+    {},
+    {"SSH_CONNECTION": ""},
+    {"SSH_ORIGINAL_COMMAND": "ftpsync sync:all"},
+    {
+        "SSH_ORIGINAL_COMMAND": "ftpsync sync:all",
+        "SSH_CONNECTION": "203.0.113.10 54321 198.51.100.5 22",
+    },
+])
+def test_validate_extra_args_valid(metadata: dict[str, str]) -> None:
+    result = _validate_extra_args(metadata)
+    assert result == metadata
+    assert result is not metadata
+
+
+@pytest.mark.parametrize("key", [
+    "BASH_ENV", "ENV", "PERL5OPT", "PYTHONPATH", "PYTHONHOME",
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "PATH", "BASH_FUNC_payload%%",
+    "SSH_AUTH_SOCK", "ssh_original_command", "ARBITRARY_VARIABLE",
+])
+def test_validate_extra_args_rejects_disallowed_keys(key: str) -> None:
+    with pytest.raises(ValueError, match="is not allowed"):
+        _validate_extra_args({"SSH_ORIGINAL_COMMAND": "ftpsync sync:all", key: "payload"})
 
 
 def test_validate_extra_args_key_with_equals_raises():
@@ -70,7 +90,7 @@ def test_validate_extra_args_key_with_equals_raises():
 
 def test_validate_extra_args_value_with_nul_raises():
     with pytest.raises(ValueError):
-        _validate_extra_args({"K": "v\x00"})
+        _validate_extra_args({"SSH_CONNECTION": "v\x00"})
 
 
 def test_validate_extra_args_empty_key_raises():
@@ -120,11 +140,11 @@ def test_start_registers_extra_args_and_on_sync_done_clears():
          patch.object(mirror, "packages", fake_packages, create=True), \
          patch.object(mirror, "sync", sync_mod):
 
-        start(pkg, extra_args={"K": "V"})
+        start(pkg, extra_args={"SSH_ORIGINAL_COMMAND": "ftpsync sync:all"})
 
         # Wait until the runner thread is inside execute (extra_args must still be registered).
         execute_started.wait(timeout=2.0)
-        assert get_extra_args(pkgid) == {"K": "V"}
+        assert get_extra_args(pkgid) == {"SSH_ORIGINAL_COMMAND": "ftpsync sync:all"}
 
         # Release the blocking execute, then call on_sync_done manually.
         execute_gate.set()
@@ -176,7 +196,7 @@ def test_start_failure_clears_extra_args(monkeypatch):
          patch.object(mirror, "sync", sync_mod):
 
         with pytest.raises(RuntimeError):
-            start(pkg, extra_args={"K": "V"})
+            start(pkg, extra_args={"SSH_ORIGINAL_COMMAND": "ftpsync sync:all"})
 
     assert get_extra_args(pkgid) == {}
     # start() failure path transitions status to ERROR.
@@ -226,10 +246,39 @@ def test_bad_input_does_not_mutate_state():
         assert not _extra_args
 
     with pytest.raises(ValueError):
-        start(pkg, extra_args={"K": "v\x00"})
+        start(pkg, extra_args={"SSH_CONNECTION": "v\x00"})
 
     with _start_lock:
         assert not _extra_args
+
+
+@pytest.mark.parametrize("key", ["BASH_ENV", "PERL5OPT", "PYTHONPATH"])
+@pytest.mark.parametrize("syncing", [False, True])
+def test_start_rejects_env_injection_without_side_effects(key: str, syncing: bool) -> None:
+    pkg = _make_pkg("injection-pkg")
+    if syncing:
+        pkg.status = "SYNC"
+    metadata = {"SSH_CONNECTION": "203.0.113.10 54321 198.51.100.5 22"}
+    with _start_lock:
+        _extra_args[pkg.pkgid] = metadata.copy()
+        _watchdog_fired.add(pkg.pkgid)
+
+    try:
+        with patch("mirror.logger.create_logger") as create_logger, \
+             patch("mirror.socket.worker.execute_command") as execute_command:
+            with pytest.raises(ValueError, match="is not allowed"):
+                start(pkg, trigger="push", extra_args={key: "payload"})
+
+        create_logger.assert_not_called()
+        execute_command.assert_not_called()
+        pkg.set_status.assert_not_called()
+        assert pkg.status == ("SYNC" if syncing else "UNKNOWN")
+        assert get_extra_args(pkg.pkgid) == metadata
+        with _start_lock:
+            assert pkg.pkgid in _watchdog_fired
+    finally:
+        with _start_lock:
+            _watchdog_fired.discard(pkg.pkgid)
 
 
 # ---------------------------------------------------------------------------

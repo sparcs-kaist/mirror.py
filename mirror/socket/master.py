@@ -113,9 +113,9 @@ class MasterServer(BaseServer):
 
         Args:
             package_id(str): Package identifier.
-            extra_args(dict[str, str], optional): Extra env-shaped entries to forward
-                to the sync layer. Validated as a flat str->str dict; rejected
-                otherwise with ValueError.
+            extra_args(dict[str, str], optional): SSH_ORIGINAL_COMMAND and
+                SSH_CONNECTION metadata to forward to the sync layer.
+                Invalid or disallowed entries raise ValueError.
 
         Return:
             result(dict): {"package_id", "status"} where status is "started" on
@@ -129,14 +129,11 @@ class MasterServer(BaseServer):
         if package.is_disabled():
             raise RuntimeError(f"Package {package_id} is disabled")
 
-        # Type-validate extra_args at the RPC boundary; the deeper validator in
-        # mirror.sync handles content rules (NUL, '=' in keys, etc).
+        # Validate untrusted metadata before any early return or sync launch.
         if extra_args is not None:
             if not isinstance(extra_args, dict):
                 raise ValueError("extra_args must be a dict[str, str] or null")
-            for k, v in extra_args.items():
-                if not isinstance(k, str) or not isinstance(v, str):
-                    raise ValueError("extra_args entries must map str -> str")
+            extra_args = mirror.sync._validate_extra_args(extra_args)
 
         with mirror.sync._start_lock:
             if package.is_syncing():

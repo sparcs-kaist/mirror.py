@@ -97,6 +97,10 @@ command forwards `SSH_ORIGINAL_COMMAND` and `SSH_CONNECTION` when present, so it
 can be used as the forced command for an upstream push. A request for an already
 running package succeeds with `already_running` status.
 
+The master accepts only `SSH_ORIGINAL_COMMAND` and `SSH_CONNECTION` in
+`push_sync` environment metadata. Requests containing other variables are
+rejected before a sync starts.
+
 The master socket is read from `/var/run/mirror/master.sock.path` and otherwise
 falls back to the default master socket. The accepted `--config` option is not
 currently used for socket resolution.

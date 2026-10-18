@@ -704,11 +704,38 @@ class TestMasterPushSync:
 
             try:
                 with MasterClient(socket_path) as client:
-                    result = client.push_sync(pkgid, extra_args={"FOO": "bar"})
+                    result = client.push_sync(pkgid, extra_args={"SSH_ORIGINAL_COMMAND": "ftpsync sync:all"})
                     assert result["status"] == "started"
-                    assert recorded["extra_args"] == {"FOO": "bar"}
+                    assert recorded["extra_args"] == {"SSH_ORIGINAL_COMMAND": "ftpsync sync:all"}
             finally:
                 server.stop()
+
+    @pytest.mark.parametrize("key", ["BASH_ENV", "PERL5OPT", "PYTHONPATH", "ARBITRARY_VARIABLE"])
+    @pytest.mark.parametrize("syncing", [False, True])
+    def test_push_sync_rejects_env_injection(self, monkeypatch, tmp_path: Path, key: str, syncing: bool) -> None:
+        """Untrusted environment keys cannot reach sync.start, even during a sync."""
+        import mirror.sync
+        from unittest.mock import MagicMock
+
+        pkgid = "injection-pkg"
+        pkg = self._make_fake_pkg(pkgid=pkgid, syncing=syncing)
+        monkeypatch.setattr(mirror, "packages", {pkgid: pkg}, raising=False)
+        start = MagicMock()
+        monkeypatch.setattr(mirror.sync, "start", start)
+
+        socket_path = tmp_path / "master.sock"
+        server = MasterServer(socket_path)
+        server.start()
+        try:
+            with MasterClient(socket_path) as client:
+                with pytest.raises(Exception, match="is not allowed"):
+                    client.push_sync(pkgid, extra_args={
+                        "SSH_ORIGINAL_COMMAND": "ftpsync sync:all",
+                        key: "payload",
+                    })
+            start.assert_not_called()
+        finally:
+            server.stop()
 
     def test_push_sync_extra_args_non_string_value(self, monkeypatch):
         """push_sync with non-string value in extra_args raises an error on client side"""
