@@ -136,7 +136,10 @@ systemctl cat mirror.service > /dev/null
 systemctl cat mirror-worker.service > /dev/null
 python3 - <<'PY'
 import json
+import os
+import stat
 c = json.load(open("/etc/mirror/config.json"))
+assert stat.S_IMODE(os.stat("/etc/mirror/config.json").st_mode) == 0o600
 assert c["packages"] == {}, c["packages"]
 assert "plugins" not in c["settings"], c["settings"]
 assert c["settings"]["logfolder"] == "/var/log/mirror/ftpsync", c["settings"]["logfolder"]
@@ -191,16 +194,20 @@ exit 1
 
 @pytest.mark.integration
 def test_setup_preserves_existing_config(systemd_container: str) -> None:
-    """Re-running setup with an existing config.json leaves it untouched."""
+    """Re-running setup preserves config contents and restricts permissions."""
     script = r"""
 set -euo pipefail
 mkdir -p /etc/mirror
 printf '%s' '{"sentinel": true}' > /etc/mirror/config.json
+chmod 0644 /etc/mirror/config.json
 mirror setup
 python3 - <<'PY'
 import json
+import os
+import stat
 c = json.load(open("/etc/mirror/config.json"))
 assert c == {"sentinel": True}, c
+assert stat.S_IMODE(os.stat("/etc/mirror/config.json").st_mode) == 0o600
 print("PRESERVED")
 PY
 """

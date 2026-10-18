@@ -24,18 +24,27 @@ HELPER_DRAIN_TIMEOUT = 5.0
 FOREGROUND_HELPER_KILL_TIMEOUT = 5.0
 
 
-def _make_preexec(uid: Optional[int], gid: Optional[int], nice: int):
-    """Return a preexec closure that applies niceness, GID, and UID.
+def _should_clear_groups(uid: Optional[int], gid: Optional[int]) -> bool:
+    """Return whether a requested identity must drop supplementary groups."""
+    root_with_explicit_identity = os.geteuid() == 0 and (uid is not None or gid is not None)
+    uid_changes = uid is not None and uid != os.geteuid()
+    gid_changes = gid is not None and gid != os.getegid()
+    return root_with_explicit_identity or uid_changes or gid_changes
+
+
+def _make_preexec(uid: Optional[int], gid: Optional[int], nice: int, clear_groups: bool):
+    """Return a preexec closure that applies niceness and child credentials.
 
     The closure applies os.nice(nice) first (only when nice is truthy so that a
-    zero adjustment is skipped), then os.setgid(gid) if gid is not None, then
-    os.setuid(uid) if uid is not None.  Any OSError is logged and re-raised so
-    the Popen call fails visibly.
+    zero adjustment is skipped), clears supplementary groups when requested,
+    then applies GID and UID. Any OSError is logged and re-raised so the Popen
+    call fails visibly.
 
     Args:
         uid(int | None): User ID to set, or None to skip setuid.
         gid(int | None): Group ID to set, or None to skip setgid.
         nice(int): Niceness increment; skipped when falsy (i.e. 0).
+        clear_groups(bool): Whether to clear inherited supplementary groups.
 
     Returns:
         preexec(callable): Zero-argument callable for subprocess preexec_fn.
@@ -48,6 +57,13 @@ def _make_preexec(uid: Optional[int], gid: Optional[int], nice: int):
                 os.nice(nice)
             except OSError as e:
                 logger.error(f"Failed to set niceness to {nice}: {e}")
+                raise e
+
+        if clear_groups:
+            try:
+                os.setgroups([])
+            except OSError as e:
+                logger.error(f"Failed to clear supplementary groups: {e}")
                 raise e
 
         if gid is not None:
@@ -83,9 +99,13 @@ def _identity_popen_kwargs(uid: Optional[int], gid: Optional[int], nice: int) ->
     Returns:
         kwargs(dict): Keyword arguments to spread into subprocess.Popen.
     """
+    clear_groups = _should_clear_groups(uid, gid)
     if nice == 0:
-        return {"group": gid, "user": uid}
-    return {"preexec_fn": _make_preexec(uid, gid, nice)}
+        kwargs = {"group": gid, "user": uid}
+        if clear_groups:
+            kwargs["extra_groups"] = []
+        return kwargs
+    return {"preexec_fn": _make_preexec(uid, gid, nice, clear_groups)}
 
 
 class Job:
@@ -133,8 +153,6 @@ class Job:
         if self.env:
             run_env.update(self.env)
 
-        preexec = _make_preexec(self.uid, self.gid, self.nice)
-
         self.start_time = time.time()
 
         stdout_dest = subprocess.DEVNULL
@@ -162,11 +180,10 @@ class Job:
                             os.environ.copy(),
                             subprocess.DEVNULL,
                             subprocess.DEVNULL,
-                            preexec,
                         ),
                     )
 
-                popen_kwargs = self._popen_kwargs(run_env, stdout_dest, stderr_dest, preexec)
+                popen_kwargs = self._popen_kwargs(run_env, stdout_dest, stderr_dest)
                 self.process = subprocess.Popen(self.commandline, **popen_kwargs)
 
             # Close our handle to the log file now that subprocess has it
@@ -182,7 +199,7 @@ class Job:
             self.end_time = time.time()
             raise e
 
-    def _popen_kwargs(self, env, stdout_dest, stderr_dest, preexec) -> dict:
+    def _popen_kwargs(self, env, stdout_dest, stderr_dest) -> dict:
         popen_kwargs = {
             "env": env,
             "stdin": subprocess.DEVNULL,

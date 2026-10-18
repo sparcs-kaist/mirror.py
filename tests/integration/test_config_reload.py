@@ -13,32 +13,28 @@ import time
 
 import pytest
 
-from .helpers import write_container_config
+from .helpers import MirrorStack, write_container_config
 
 
-# Runtime fields that background auto-sync mutates independently of config reload.
-_VOLATILE_PKG_FIELDS = {"status", "lastsync", "timestamp", "statusinfo"}
-
-
-def _config_invariant(stat: dict) -> dict:
-    """Project stat.json onto config-derived fields a reload must preserve.
-
-    Drops volatile runtime fields (status/lastsync/timestamp/statusinfo) that
-    background auto-sync legitimately mutates, so the assertion isolates whether
-    the reload itself altered package definitions.
+def _read_package_metadata(mirror_stack: MirrorStack) -> dict:
+    """Read non-volatile package metadata from the master's status RPC.
 
     Args:
-        stat(dict): Parsed stat.json contents.
+        mirror_stack(MirrorStack): Running integration stack.
 
     Returns:
-        invariant(dict): mirrorname plus per-package config-derived fields only.
+        metadata(dict): Package IDs mapped to public configuration metadata.
     """
+    script = (
+        "import json; from mirror.socket.master import list_packages; "
+        "print(json.dumps(list_packages()))"
+    )
+    result = mirror_stack.docker_exec("python3", "-c", script)
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    fields = {"id", "name", "href", "synctype", "syncrate", "link", "disabled"}
     return {
-        "mirrorname": stat.get("mirrorname"),
-        "packages": {
-            pkgid: {k: v for k, v in pkg.items() if k not in _VOLATILE_PKG_FIELDS}
-            for pkgid, pkg in stat.get("packages", {}).items()
-        },
+        pkg["id"]: {key: pkg[key] for key in fields}
+        for pkg in payload["packages"]
     }
 
 
@@ -520,19 +516,21 @@ def test_path_setting_warn_and_ignore(mirror_stack):
 
 @pytest.mark.integration
 def test_malformed_config_no_state_change(mirror_stack):
-    """Writing garbage to config.json and reloading exits 1 without changing stat.json.
+    """Malformed config reload preserves package membership and public metadata.
 
     Steps:
-    1. Snapshot stat.json bytes.
+    1. Snapshot stat package IDs and runtime RPC metadata.
     2. Write garbage JSON to config.json.
     3. Run ``mirror config reload``; assert exit 1.
-    4. Assert stat.json content is byte-identical to the snapshot.
+    4. Assert package IDs and metadata are unchanged despite background syncs.
     5. Restore original config and confirm a subsequent reload exits 0.
     """
     # Snapshot stat.json.
     stat_before = mirror_stack.docker_exec("cat", "/var/lib/mirror/stat.json")
     assert stat_before.returncode == 0, "Failed to read stat.json before test"
-    stat_snapshot = _config_invariant(json.loads(stat_before.stdout))
+    stat_snapshot = json.loads(stat_before.stdout)
+    metadata_snapshot = _read_package_metadata(mirror_stack)
+    assert metadata_snapshot, "Expected baseline packages for the reload regression check"
 
     # Snapshot original config for restoration.
     original_config = _read_config(mirror_stack)
@@ -552,9 +550,10 @@ def test_malformed_config_no_state_change(mirror_stack):
             "stat.json became unreadable after malformed-config reload: "
             f"stderr={stat_after.stderr!r}"
         )
-        assert _config_invariant(json.loads(stat_after.stdout)) == stat_snapshot, (
-            "package definitions changed after malformed-config reload; expected no change"
-        )
+        saved = json.loads(stat_after.stdout)
+        assert saved["mirrorname"] == stat_snapshot["mirrorname"]
+        assert set(saved["packages"]) == set(stat_snapshot["packages"])
+        assert _read_package_metadata(mirror_stack) == metadata_snapshot
 
     finally:
         # Restore original config and verify daemon is still functional.

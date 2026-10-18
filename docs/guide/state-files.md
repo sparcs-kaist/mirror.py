@@ -28,14 +28,16 @@ paths, timestamps — lives exclusively in `stat.json`. There is intentionally n
 ## stat.json — persistent package state
 
 `/var/lib/mirror/stat.json` is rewritten atomically every time a package
-changes status. Its default structure includes these fields (package configuration fields are
-also retained):
+changes status, with file mode `0600`. Its default structure contains only
+runtime state; package settings, including credentials, are not copied into it:
 
 ```json
 {
     "mirrorname": "<name>",
     "packages": {
         "<packageid>": {
+            "lastsync": 0.0,
+            "timestamp": 0.0,
             "status": {
                 "status": "<STATUS>",
                 "statusinfo": { ... }
@@ -44,6 +46,44 @@ also retained):
     }
 }
 ```
+
+`lastsync` is the last sync timestamp in seconds; `timestamp` is the last
+status transition timestamp in milliseconds. Fields absent in an older file
+use their existing defaults when loaded.
+
+On startup or config reload, older state files are rewritten into this format.
+Known runtime fields are preserved, including legacy `statusinfo.lastsync`.
+Configuration always comes from `config.json`.
+
+Status plug-ins can extend or transform this payload. They are trusted code
+and must avoid including credentials in their contributions or other outputs.
+
+### Upgrading existing installations
+
+Update the master, worker, and CLI/TUI together. The package status RPC format
+uses IPC protocol version 3; version 2 clients and servers reject the mismatch
+during the handshake. Start the updated worker before the updated master.
+
+`mirror setup` creates `config.json` with mode `0600` and restricts an existing
+regular config file to `0600` without changing its contents or owner. It rejects
+symlinks and other non-regular config paths. For an existing installation,
+either rerun setup or restrict the actual config file explicitly:
+
+```bash
+sudo chmod 0600 /etc/mirror/config.json
+```
+
+Use the actual path when running with a custom `--config`. Runtime loading
+does not change config contents or permissions. The updated daemon writes
+`stat.json` with `0600` on startup and every subsequent save. Verify the
+permissions after startup:
+
+```bash
+sudo stat -c '%a %n' /etc/mirror/config.json /var/lib/mirror/stat.json
+```
+
+Both files should report `600`. Existing backups are not rewritten by this
+migration. Web `status.json` and separate plug-in outputs remain `0644`.
 
 ### Per-package status object
 

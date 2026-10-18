@@ -2,6 +2,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -100,17 +101,28 @@ def _ensure_directories() -> None:
 
 
 def _write_default_config_if_absent() -> bool:
-    """Write the default config only when no config file exists yet.
+    """Protect the config permissions and write defaults only for a new file.
 
     Returns:
         written(bool): True if the config was written, False if it already existed.
     """
-    if _CONFIG_PATH.exists():
+    try:
+        fd = os.open(_CONFIG_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        fd = os.open(_CONFIG_PATH, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ValueError(f"Configuration path must be a regular file: {_CONFIG_PATH}")
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
         print_formatted_text(
-            "Existing /etc/mirror/config.json detected — skipping config write."
+            "Existing /etc/mirror/config.json detected — permissions set to 0600; skipping config write."
         )
         return False
-    _CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=4))
+    with os.fdopen(fd, "w", encoding="utf-8") as config_file:
+        os.fchmod(config_file.fileno(), 0o600)
+        json.dump(DEFAULT_CONFIG, config_file, indent=4)
     return True
 
 

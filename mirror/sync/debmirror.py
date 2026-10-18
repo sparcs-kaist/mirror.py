@@ -42,6 +42,7 @@ _LOGGER = logging.getLogger(__name__)
 _MAX_METADATA_SIZE = 16 * 1024 * 1024
 _MAX_DISTRIBUTIONS = 1024
 _MAX_LISTING_LINKS = 4096
+_FTP_PASSWORD_ENV = "MIRROR_DEBMIRROR_FTP_PASSWORD"
 _FIELD_RE = re.compile(rb"^([A-Za-z0-9-]+):[ \t]*(.*)$")
 _VALUE_OPTIONS = {
     "--arch", "--config-file", "--di-arch", "--di-dist", "--diff",
@@ -398,6 +399,7 @@ def build_command(package: mirror.structure.Package) -> tuple[list[str], dict[st
         argv.append("--passive")
 
     env = dict(mirror.sync.get_extra_args(package.pkgid))
+    env[_FTP_PASSWORD_ENV] = ""
 
     user = options.get("user")
     password = options.get("password")
@@ -406,7 +408,9 @@ def build_command(package: mirror.structure.Package) -> tuple[list[str], dict[st
         if method == "ftp":
             argv += ["--user", user]
             if password:
-                argv += ["--passwd", _validate_control_characters(str(password), "passwd")]
+                env[_FTP_PASSWORD_ENV] = _validate_control_characters(
+                    str(password), "passwd"
+                )
         elif method == "rsync":
             env["RSYNC_PASSWORD"] = _validate_control_characters(str(password), "password") if password else ""
             argv[argv.index("--host") + 1] = f"{user}@{host}"
@@ -529,6 +533,12 @@ def _read_flag(parsed: list[tuple[str, str | None]], name: str) -> str | None:
     return values[-1] if values else None
 
 
+def _reject_inline_password(argv: list[str]) -> None:
+    """Reject FTP passwords supplied through process arguments."""
+    if any(arg == "--passwd" or arg.startswith("--passwd=") for arg in argv):
+        raise DiscoveryError("native --passwd is not supported; use protected credentials")
+
+
 def _has_flag(parsed: list[tuple[str, str | None]], name: str) -> bool:
     """Return whether a native long option is present."""
     return any(option == name for option, _ in parsed)
@@ -547,10 +557,11 @@ def _parse_timeout(value: str | None) -> int:
     return timeout
 
 
-def _parse_native_options(argv: list[str]) -> NativeOptions:
+def _parse_native_options(argv: list[str], ftp_password: str | None = None) -> NativeOptions:
     """Parse the subset of the debmirror command line used for discovery."""
     if len(argv) < 2 or Path(argv[0]).name != "debmirror":
         raise DiscoveryError("discovery helper requires a debmirror command")
+    _reject_inline_password(argv)
     parsed = _scan_options(argv)
     method = _read_flag(parsed, "--method")
     root = _read_flag(parsed, "--root")
@@ -574,7 +585,7 @@ def _parse_native_options(argv: list[str]) -> NativeOptions:
         ignore_release_gpg=_has_flag(parsed, "--ignore-release-gpg"),
         keyrings=tuple(value for name, value in parsed if name == "--keyring" and value is not None),
         user=_read_flag(parsed, "--user"),
-        password=_read_flag(parsed, "--passwd"),
+        password=ftp_password,
         proxy=_read_flag(parsed, "--proxy"),
         passive=_has_flag(parsed, "--passive"),
         rsync_options=tuple(shlex.split(_read_flag(parsed, "--rsync-options") or "")),
@@ -1238,16 +1249,17 @@ def _guard_existing_distributions(destination: str, metadata: list[ReleaseMetada
         )
 
 
-def resolve_command(argv: list[str]) -> list[str]:
+def resolve_command(argv: list[str], ftp_password: str | None = None) -> list[str]:
     """Resolve omitted debmirror dimensions and return a native command.
 
     Args:
         argv(list[str]): Native debmirror argument vector with its destination last.
+        ftp_password(str | None): FTP password passed outside the argument vector.
 
     Returns:
         command(list[str]): Native arguments containing every required selection option.
     """
-    options = _parse_native_options(argv)
+    options = _parse_native_options(argv, ftp_password)
     if options.dist is not None and options.section is not None and options.arch is not None:
         return list(argv)
     metadata = _discover_metadata(options)
@@ -1272,18 +1284,37 @@ def resolve_command(argv: list[str]) -> list[str]:
     return resolved
 
 
-def _run_native(argv: list[str]) -> int:
+def _escape_perl_single_quoted(value: str) -> str:
+    """Escape a value for a Perl single-quoted string literal."""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _write_native_config(config: Path, ftp_password: str | None) -> None:
+    """Create a private debmirror config containing an optional FTP password."""
+    content = "1;\n"
+    if ftp_password is not None:
+        escaped = _escape_perl_single_quoted(ftp_password)
+        content = f"$passwd = '{escaped}';\n1;\n"
+    descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        file.write(content)
+
+
+def _run_native(argv: list[str], ftp_password: str | None = None) -> int:
     """Run debmirror with an isolated config and clean up after completion."""
     global _ACTIVE_PROCESS
 
+    _reject_inline_password(argv)
     with tempfile.TemporaryDirectory(prefix="mirror-debmirror-run-") as directory:
         config = Path(directory) / "debmirror.conf"
-        # Override /etc/debmirror.conf and ~/.debmirror.conf with an empty Perl config.
-        config.write_text("1;\n", encoding="utf-8")
+        # Override /etc/debmirror.conf and ~/.debmirror.conf with a private Perl config.
+        _write_native_config(config, ftp_password)
         command = [*argv[:-1], "--config-file", str(config), argv[-1]]
+        child_env = os.environ.copy()
+        child_env.pop(_FTP_PASSWORD_ENV, None)
         try:
             # Native downloads must not inherit the metadata subprocess size cap.
-            _ACTIVE_PROCESS = subprocess.Popen(command)
+            _ACTIVE_PROCESS = subprocess.Popen(command, env=child_env)
             return _ACTIVE_PROCESS.wait()
         except OSError as error:
             raise DiscoveryError("debmirror could not be started") from error
@@ -1293,14 +1324,15 @@ def _run_native(argv: list[str]) -> int:
 
 def main() -> None:
     """Discover selections and run debmirror in the worker's environment."""
+    ftp_password = os.environ.pop(_FTP_PASSWORD_ENV, None) or None
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     signal.signal(signal.SIGTERM, _terminate_child)
     native = sys.argv[1:]
     if native[:1] == ["--"]:
         native = native[1:]
     try:
-        resolved = resolve_command(native)
-        returncode = _run_native(resolved)
+        resolved = resolve_command(native, ftp_password)
+        returncode = _run_native(resolved, ftp_password)
     except DiscoveryError as error:
         _LOGGER.error("debmirror discovery failed: %s", error)
         raise SystemExit(1) from error

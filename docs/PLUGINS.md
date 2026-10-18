@@ -276,8 +276,14 @@ logged via `mirror.log.warning` and do not block sibling writes.
 
 All status files (stat.json, status.json, plug-in outputs) are written via
 tempfile + `os.replace` so readers never observe a partially-written file.
+The default `stat.json` payload contains runtime state only and is written with
+mode 0600. It no longer includes package configuration fields such as `settings`.
+Stat transforms must consume runtime state rather than expecting configuration
+in the input payload; extension hooks still receive the in-memory `Package`.
 Plug-in status output files are written with mode 0644 so a web server or
 other consumer running as a different user can read them.
+Status plug-ins are trusted code: hooks, transforms, and output builders must
+not copy credentials from a `Package` into their results.
 
 ## API reference
 
