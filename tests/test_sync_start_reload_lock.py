@@ -1,6 +1,6 @@
 """Tests that start() acquires _reload_state_lock around set_status calls."""
 import threading
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -58,15 +58,9 @@ def test_start_acquires_reload_state_lock():
 
     # Use a separate thread to verify the lock is held by the calling thread
     # when set_status runs. We record whether a competing thread was blocked.
-    lock_was_held = threading.Event()
-
-    original_set_status_side = _tracked_set_status
-
     def _contending_thread_check():
         """Try to acquire the lock non-blocking while set_status is running."""
         pass  # actual check is inline below via event coordination
-
-    acquired_events: list[bool] = []
 
     # Patch set_status to signal a contending thread and check lock ownership.
     contender_go = threading.Event()

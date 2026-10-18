@@ -5,9 +5,7 @@ immediately escalated to ERROR or SYNC, and that persistent mismatches are
 escalated only after MISMATCH_GRACE_SECONDS, with an under-lock re-check.
 """
 import time
-from unittest.mock import MagicMock, patch, call
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 import mirror
 import mirror.sync

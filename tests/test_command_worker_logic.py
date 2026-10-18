@@ -75,12 +75,12 @@ def test_worker_config_usage(mock_server, mock_logging):
     # Create a mock config content
     mock_config = '{"settings": {"logger": {"level": "DEBUG"}}}'
     
-    with patch("builtins.open", new_callable=MagicMock) as mock_open:
+    with patch("builtins.open", new_callable=MagicMock):
         mock_file = MagicMock()
         mock_file.__enter__.return_value.read.return_value = mock_config
         
         # Mock json.load to return the dict
-        with patch("json.load", return_value={"settings": {"logger": {"level": "DEBUG"}}}) as mock_json:
+        with patch("json.load", return_value={"settings": {"logger": {"level": "DEBUG"}}}):
             with patch("pathlib.Path.exists", return_value=True):
                  with patch("time.sleep", side_effect=Exception("BreakLoop")):
                     try:

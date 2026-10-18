@@ -3,7 +3,6 @@
 import copy
 import json
 from pathlib import Path
-from typing import Optional
 
 import pytest
 from click.testing import CliRunner

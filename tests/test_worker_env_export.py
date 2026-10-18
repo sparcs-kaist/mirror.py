@@ -51,7 +51,7 @@ def _wait_for_job(job_id: str, timeout: float = 10.0) -> None:
 
 def test_env_export_explicit_keys(worker_server, tmp_path):
     """Env vars passed to execute_command must appear in the spawned subprocess."""
-    server, socket_path = worker_server
+    _, socket_path = worker_server
 
     marker = f"hello-world-{uuid.uuid4().hex}"
     log_path = tmp_path / "probe.log"
@@ -85,7 +85,7 @@ def test_env_export_explicit_keys(worker_server, tmp_path):
 
 def test_env_export_keys_absent_when_not_passed(monkeypatch, worker_server, tmp_path):
     """Keys not included in env= must not be visible in the subprocess."""
-    server, socket_path = worker_server
+    _, socket_path = worker_server
 
     monkeypatch.delenv("MIRROR_PUSH_TEST", raising=False)
     monkeypatch.delenv("SSH_ORIGINAL_COMMAND", raising=False)

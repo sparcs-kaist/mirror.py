@@ -21,8 +21,6 @@ from mirror.sync.jigdo import (
     JIGDO_EXCLUDE_DEFAULT,
     JIGDO_FINAL_INCLUDES,
     JIGDO_INCLUDE_DEFAULT,
-    JIGDO_TEMPLATE_EXCLUDES,
-    JIGDO_TRACE_PATH_DEFAULT,
     build_final_rsync_command,
     build_jigdo_set_conf,
     build_template_rsync_command,

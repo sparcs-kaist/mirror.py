@@ -3,11 +3,9 @@
 import logging
 import subprocess
 import sys
-import types
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,9 +14,6 @@ import mirror.structure
 import mirror.socket.worker
 import mirror.sync
 from mirror.sync.ubuntu import (
-    UBUNTU_RSYNC_BASE_ARGS,
-    UBUNTU_STAGE1_EXCLUDES,
-    UBUNTU_TRACE_PATH_DEFAULT,
     build_ubuntu_commands,
     execute,
     write_trace_file,
@@ -79,7 +74,7 @@ def _install_fake_subprocess_run(monkeypatch, returncode: int = 0):
 # ---------------------------------------------------------------------------
 
 def test_build_ubuntu_commands_stage1_has_excludes():
-    stage1, stage2 = build_ubuntu_commands("rsync://host/u", Path("/tmp/x"))
+    stage1, _ = build_ubuntu_commands("rsync://host/u", Path("/tmp/x"))
 
     expected_excludes = {
         "--exclude=Packages*",
@@ -98,7 +93,7 @@ def test_build_ubuntu_commands_stage1_has_excludes():
 # ---------------------------------------------------------------------------
 
 def test_build_ubuntu_commands_stage2_has_delete():
-    stage1, stage2 = build_ubuntu_commands("rsync://host/u", Path("/tmp/x"))
+    _, stage2 = build_ubuntu_commands("rsync://host/u", Path("/tmp/x"))
 
     delete_idx = stage2.index("--delete")
     after_idx = stage2.index("--delete-after")

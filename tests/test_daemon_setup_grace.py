@@ -4,11 +4,8 @@ Verifies that a package stuck in SYNC status without a corresponding worker
 job is not immediately transitioned to ERROR. Instead, a grace window of
 SETUP_GRACE_SECONDS is observed before the ERROR transition fires.
 """
-import sys
 import time
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 import mirror
 import mirror.sync
@@ -93,7 +90,6 @@ def test_grace_period_triggers_error_transition_when_sync_is_stale(
     # iteration; second call raises KeyboardInterrupt to stop the daemon.
     # We also need time.time() to advance by > MISMATCH_GRACE_SECONDS between
     # the two iterations so the mismatch is considered persistent.
-    iteration = [0]
     base_time = time.time()
     time_values = [
         base_time,                              # first iteration: note_mismatch records now

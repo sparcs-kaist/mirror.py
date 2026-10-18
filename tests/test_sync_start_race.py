@@ -73,7 +73,6 @@ def test_concurrent_start_rejects_second_call():
 
 def test_status_error_when_execute_raises_immediately():
     pkg = _make_pkg("race2")
-    pkgid = pkg.pkgid
     import mirror.plugin
     fake_record = MagicMock()
     fake_record.execute = MagicMock(side_effect=RuntimeError("boom"))

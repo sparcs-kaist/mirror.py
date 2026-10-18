@@ -129,7 +129,6 @@ def test_explicit_empty_info_option_suppresses_non_empty_global(
     ftpsync_package_factory,
 ):
     """An explicit empty per-package INFO_* value suppresses a non-empty global default."""
-    import mirror
     # fixture already sets maintainer to "Admins <admins@example.com>"
     opts = _base_opts({"maintainer": ""})
     pkg = ftpsync_package_factory(opts)

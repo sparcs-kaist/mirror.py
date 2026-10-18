@@ -19,13 +19,10 @@ from prompt_toolkit.utils import get_cwidth
 
 import mirror.structure
 from mirror.command.tui import (
-    LOG_FOLLOW_MAX_LINES,
-    LOG_INITIAL_LINES,
     LOG_PAGE_LINES,
     MirrorTUI,
     TUIState,
     _fit_field,
-    _fallback_package_from_dict,
     _modal_active,
     _visible_columns,
     apply_filter,
@@ -917,7 +914,7 @@ class TestBoundedLogReader:
         import gzip
         import threading
 
-        tui_module, reader = self._reader_api()
+        _, reader = self._reader_api()
         corrupt = tmp_path / "corrupt.log.gz"
         corrupt.write_bytes(b"not a gzip stream")
         with pytest.raises(OSError):

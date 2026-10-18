@@ -5,7 +5,7 @@ Covers:
 - standalone path does NOT call save_stat_data or generate_and_save_web_status
 - on_sync_done short-circuit does not call Package.set_status
 """
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
