@@ -635,7 +635,6 @@ class TestMasterPushSync:
     @pytest.mark.parametrize("syncing", [False, True])
     def test_push_sync_rejects_env_injection(self, monkeypatch, tmp_path: Path, key: str, syncing: bool) -> None:
         """Untrusted environment keys cannot reach sync.start, even during a sync."""
-        import mirror
         import mirror.sync
         from unittest.mock import MagicMock
 
