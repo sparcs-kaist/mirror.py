@@ -4,8 +4,6 @@ from pathlib import Path
 from typing import Optional
 
 import click
-from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.shortcuts import print_formatted_text
 
 
 @click.group("worker-execute")

@@ -306,8 +306,6 @@ def test_get_config_returns_empty_dict_on_non_dict_json(tmp_path, monkeypatch, c
 
 def test_get_config_honors_config_filename_override(tmp_path, monkeypatch):
     """get_config uses PluginRecord.config_filename when set."""
-    from mirror.plugin import _register_sync, _unregister
-
     _setup_config_path(tmp_path, monkeypatch)
     (tmp_path / "custom-rsync-cfg.json").write_text(json.dumps({"custom": True}))
 
@@ -327,8 +325,6 @@ def test_get_config_honors_config_filename_override(tmp_path, monkeypatch):
 
 def test_get_config_returns_empty_on_traversal_attempt(tmp_path, monkeypatch, caplog):
     """get_config returns {} and warns when config_filename attempts path traversal."""
-    from mirror.plugin import _register_sync, _unregister
-
     _setup_config_path(tmp_path, monkeypatch)
 
     original_record = mirror.plugin._registry["rsync"]

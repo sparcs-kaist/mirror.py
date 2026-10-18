@@ -6,7 +6,6 @@ import pytest
 import mirror
 import mirror.sync as sync_mod
 from mirror.sync import (
-    _extra_args,
     _start_lock,
     _watchdog_fired,
     mark_watchdog_fired,

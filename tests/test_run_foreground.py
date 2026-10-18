@@ -1,10 +1,7 @@
 """Tests for mirror.worker.process.run_foreground."""
 
-import os
 import subprocess
 from unittest.mock import MagicMock, call, patch
-
-import pytest
 
 from mirror.worker.process import FOREGROUND_HELPER_KILL_TIMEOUT, run_foreground
 

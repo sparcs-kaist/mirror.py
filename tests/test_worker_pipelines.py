@@ -22,7 +22,7 @@ def test_pipelines_default_to_devnull():
             return None
 
     with patch("mirror.worker.process.subprocess.Popen", _FakePopen):
-        job = process.create("p_test", ["true"], {}, os.getuid(), os.getgid(), 0)
+        process.create("p_test", ["true"], {}, os.getuid(), os.getgid(), 0)
         try:
             assert captured["stdin"] is subprocess.DEVNULL
             assert captured["stdout"] is subprocess.DEVNULL

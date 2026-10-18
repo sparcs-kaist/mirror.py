@@ -10,8 +10,6 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import mirror
 import mirror.sync
 from mirror.command.daemon import (

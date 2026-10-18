@@ -580,7 +580,6 @@ class TestMasterPushSync:
         """push_sync with unknown pkgid raises an error on the client side"""
         import mirror
 
-        original = getattr(mirror, "packages", None)
         monkeypatch.setattr(mirror, "packages", {}, raising=False)
 
         with tempfile.TemporaryDirectory() as tmpdir:

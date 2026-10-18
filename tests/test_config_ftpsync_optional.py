@@ -1,6 +1,4 @@
 """Unit tests verifying that settings.ftpsync is fully optional in Config.load_from_dict."""
-import pytest
-
 import mirror.structure
 
 

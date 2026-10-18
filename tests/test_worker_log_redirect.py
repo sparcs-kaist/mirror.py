@@ -45,7 +45,7 @@ def test_log_path_popen_kwargs(monkeypatch, tmp_path):
 
     monkeypatch.setattr("mirror.worker.process.subprocess.Popen", _FakePopen)
 
-    job = process.create("log_kwargs_test", ["true"], {}, os.getuid(), os.getgid(), 0, log_path=log_file)
+    process.create("log_kwargs_test", ["true"], {}, os.getuid(), os.getgid(), 0, log_path=log_file)
 
     try:
         assert captured["stdin"] is subprocess.DEVNULL
