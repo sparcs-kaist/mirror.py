@@ -63,7 +63,7 @@ def _exec(name: str, *args: str, check: bool = True) -> subprocess.CompletedProc
         *args(str): Command and arguments.
         check(bool): Raise CalledProcessError on non-zero exit.
 
-    Return:
+    Returns:
         result(subprocess.CompletedProcess): Captured stdout/stderr/returncode.
     """
     return subprocess.run(

@@ -11,7 +11,7 @@ def parse_iso_duration(iso8601: str) -> int:
     Args:
         iso8601(str): ISO 8601 duration string (e.g. "P1DT2H3M4S") or "PUSH" or "".
 
-    Return:
+    Returns:
         seconds(int): Total duration in seconds. Returns -1 for "PUSH", 0 for "".
     """
     if not iso8601:
@@ -47,7 +47,7 @@ def format_iso_duration(duration: int) -> str:
     Args:
         duration(int): Duration in seconds. Use -1 for "PUSH".
 
-    Return:
+    Returns:
         iso8601(str): ISO 8601 duration string, "PUSH" for -1, or "" for 0.
     """
     if duration == -1:
@@ -93,7 +93,7 @@ def parse_file_mode(value: str) -> int:
     Args:
         value(str): Octal mode string from configuration.
 
-    Return:
+    Returns:
         mode(int): Parsed file mode as an integer (e.g. 0o770).
     """
     if isinstance(value, bool) or not isinstance(value, str):
@@ -117,7 +117,7 @@ def set_rsync_user(url: str, user: str) -> str:
         url(str): Rsync source URL (rsync:// or :: form).
         user(str): Username to embed.
 
-    Return:
+    Returns:
         url_with_user(str): URL with the username inserted.
     """
 
@@ -134,7 +134,7 @@ def set_rsync_user(url: str, user: str) -> str:
 def has_root_or_sudo() -> bool:
     """Check that user has root or passwordless sudo permission.
 
-    Return:
+    Returns:
         ok(bool): True if EUID is 0 or `sudo -n true` succeeds.
     """
     if os.getuid() == 0:
@@ -148,7 +148,7 @@ def command_exists(command: str) -> bool:
     Args:
         command(str): Command name to look up.
 
-    Return:
+    Returns:
         exists(bool): True if the command is found on PATH.
     """
     return shutil.which(command) is not None

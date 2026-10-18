@@ -11,7 +11,7 @@ def make_package(syncrate: int, lastsync: float, status: str) -> MagicMock:
         lastsync(float): Epoch seconds of the last sync.
         status(str): Current package status string.
 
-    Return:
+    Returns:
         package(MagicMock): Stub exposing syncrate, lastsync, and status.
     """
     pkg = MagicMock()

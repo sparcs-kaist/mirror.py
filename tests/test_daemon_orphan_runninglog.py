@@ -30,7 +30,7 @@ def _make_orphan_pkg(pkgid: str, stale_ms: float, runninglog: str) -> MagicMock:
         stale_ms(float): Package timestamp in milliseconds (old enough to exceed SETUP_GRACE_SECONDS).
         runninglog(str): Path string stored in statusinfo.runninglog.
 
-    Return:
+    Returns:
         package(MagicMock): Stub where is_syncing() always returns True.
     """
     pkg = MagicMock()

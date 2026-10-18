@@ -38,7 +38,7 @@ def _run_create_config(plugin_name: str, force: bool) -> ConfigCreateResult:
         plugin_name(str): Registered name of the plug-in.
         force(bool): Whether to overwrite an existing config file.
 
-    Return:
+    Returns:
         result(ConfigCreateResult): Dataclass with ``path`` and ``created`` fields.
 
     Raises:

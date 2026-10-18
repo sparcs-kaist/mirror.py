@@ -221,7 +221,7 @@ def _load_web_status_data():
 def _serialize_current_plugin_settings() -> dict:
     """Serialize the live plugin settings back to the dict shape Config.load_from_dict expects.
 
-    Return:
+    Returns:
         out(dict): Mapping of plugin name to {"enabled": bool}.
     """
     out: dict = {}
@@ -270,7 +270,7 @@ def _perform_reload() -> dict:
     validates the candidate config, then swaps state under
     ``_reload_state_lock``.
 
-    Return:
+    Returns:
         result(dict): {
             "status": "ok" | "error",
             "added": [pkgid, ...],
@@ -600,7 +600,7 @@ def _resolve_output_path(plugin_name: str, output) -> Path:
         plugin_name(str): Owning plug-in name.
         output(mirror.plugin.StatusOutput): Output declaration.
 
-    Return:
+    Returns:
         path(Path): Resolved filesystem path.
     """
     import mirror.plugin as _plugin

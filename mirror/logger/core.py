@@ -46,7 +46,7 @@ def create_logger(name: str, start_time: float) -> logging.Logger:
         name(str): Package name used to identify the logger and format paths.
         start_time(float): Unix timestamp of when the sync started.
 
-    Return:
+    Returns:
         pkg_logger(logging.Logger): Configured logger with file and prompt handlers.
     """
     if "packageformat" not in mirror.conf.logger:
@@ -108,7 +108,7 @@ def close_logger(pkg_logger: logging.Logger, compress: bool | None = None) -> Pa
         pkg_logger(logging.Logger): The logger to close.
         compress(bool, optional): Override gzip setting. Uses config value if None.
 
-    Return:
+    Returns:
         log_path(Path | None): Path to the (compressed) log file, or None if no file handler.
     """
     if compress is None:
@@ -168,7 +168,7 @@ def get_log_path(pkg_logger: logging.Logger) -> Path | None:
     Args:
         pkg_logger(logging.Logger): Package logger to inspect.
 
-    Return:
+    Returns:
         path(Path | None): Log file path, or None if no FileHandler is attached.
     """
     for handler in pkg_logger.handlers:
@@ -182,7 +182,7 @@ def get(pkgid: str) -> logging.Logger:
     Args:
         pkgid(str): Package identifier.
 
-    Return:
+    Returns:
         logger(logging.Logger): Logger scoped to this package.
     """
     return logging.getLogger(f"mirror.package.{pkgid}")
@@ -194,7 +194,7 @@ def exists(pkgid: str) -> bool:
     Args:
         pkgid(str): Package identifier.
 
-    Return:
+    Returns:
         attached(bool): True if a FileHandler is present.
     """
     pkg_logger = logging.getLogger(f"mirror.package.{pkgid}")
@@ -252,7 +252,7 @@ def reattach_logger(pkg_logger: logging.Logger, log_file_path: Path, pkgid: str)
         log_file_path(Path): Path to the log file (from stat.json runninglog).
         pkgid(str): Package identifier (used in warning messages).
 
-    Return:
+    Returns:
         attached(bool): True if a handler was successfully attached.
     """
     import stat as _stat

@@ -45,7 +45,7 @@ class MirrorStack:
     def stat_json(self) -> dict:
         """Parse and return the current stat.json contents.
 
-        Return:
+        Returns:
             data(dict): Parsed stat.json dictionary.
         """
         stat_path = self.state_dir / "stat.json"
@@ -59,7 +59,7 @@ class MirrorStack:
         Args:
             pkgid(str): Package identifier.
 
-        Return:
+        Returns:
             status(str): Status string (e.g. "ACTIVE", "ERROR", "SYNC", "UNKNOWN").
         """
         data = self.stat_json()
@@ -76,7 +76,7 @@ class MirrorStack:
         Args:
             pkgid(str): Package identifier.
 
-        Return:
+        Returns:
             lastsync(float): Unix timestamp of last sync, or 0.0 if not set.
         """
         data = self.stat_json()
@@ -90,7 +90,7 @@ class MirrorStack:
         Args:
             pkgid(str): Package identifier.
 
-        Return:
+        Returns:
             errorcount(int): Number of errors recorded.
         """
         data = self.stat_json()
@@ -107,7 +107,7 @@ class MirrorStack:
         Args:
             pkgid(str): Package identifier.
 
-        Return:
+        Returns:
             package(dict): Package data returned by the master socket RPC.
         """
         script = (
@@ -129,7 +129,7 @@ class MirrorStack:
         Args:
             pkgid(str): Worker job identifier.
 
-        Return:
+        Returns:
             progress(dict): Worker ``get_progress`` RPC response.
         """
         script = (
@@ -152,7 +152,7 @@ class MirrorStack:
             *args(str): Command and arguments to execute.
             check(bool): Raise CalledProcessError if return code is non-zero.
 
-        Return:
+        Returns:
             result(subprocess.CompletedProcess): Completed process result.
         """
         cmd = ["docker", "exec", MIRROR_CONTAINER, *args]
@@ -236,7 +236,7 @@ class MirrorStack:
         Args:
             name(str): Process name.
 
-        Return:
+        Returns:
             pid(int): Process PID. Returns 0 if not running.
         """
         result = self.docker_exec(
@@ -282,7 +282,7 @@ class MirrorStack:
         Args:
             pkgid(str): Package identifier to search for.
 
-        Return:
+        Returns:
             files(list[Path]): Sorted list of matching log file paths.
         """
         packages_dir = self.log_dir / "packages"
@@ -301,7 +301,7 @@ class MirrorStack:
             expected(str): Expected status string.
             timeout(float): Maximum seconds to wait before raising TimeoutError.
 
-        Return:
+        Returns:
             elapsed(float): Seconds elapsed until status matched.
 
         Raises:
@@ -333,7 +333,7 @@ class MirrorStack:
             previous_lastsync(float): Timestamp before the requested sync.
             timeout(float): Maximum seconds to wait.
 
-        Return:
+        Returns:
             lastsync(float): Timestamp written by the new completion.
 
         Raises:
@@ -419,7 +419,7 @@ def make_minimal_config(packages: dict) -> dict:
     Args:
         packages(dict): Package definitions in config.json package schema format.
 
-    Return:
+    Returns:
         config(dict): Full config dict suitable for JSON serialization.
     """
     return {
@@ -476,7 +476,7 @@ def run_fixture_python(
         script(str): Python source passed to ``python -c``.
         *args(str): Positional arguments exposed to the script through ``sys.argv``.
 
-    Return:
+    Returns:
         result(subprocess.CompletedProcess): Completed Docker command.
     """
     return subprocess.run(
@@ -495,7 +495,7 @@ def latest_package_log_text(mirror_stack: MirrorStack, package_id: str) -> str:
         mirror_stack(MirrorStack): Running integration stack.
         package_id(str): Package identifier used to select logs.
 
-    Return:
+    Returns:
         text(str): Uncompressed package log contents.
     """
     logs = mirror_stack.read_package_log_dir(package_id)

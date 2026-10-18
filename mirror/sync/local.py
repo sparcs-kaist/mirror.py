@@ -32,7 +32,7 @@ def execute(package: mirror.structure.Package, pkg_logger: logging.Logger, trigg
 def plugin():
     """Entry-point factory for the local plug-in.
 
-    Return:
+    Returns:
         record(mirror.plugin.PluginRecord): Sync plug-in record exposing execute.
     """
     from mirror.plugin import sync_plugin

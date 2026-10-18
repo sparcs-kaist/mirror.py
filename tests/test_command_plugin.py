@@ -33,7 +33,7 @@ def _make_dummy_plugin(tmp_path: Path) -> PluginRecord:
     Args:
         tmp_path(pathlib.Path): Directory where the dummy config file is written.
 
-    Return:
+    Returns:
         record(PluginRecord): Validated sync PluginRecord with create_config set.
     """
     config_file = tmp_path / "dummy_cfg.conf"
@@ -93,7 +93,7 @@ def _write_cfg(tmp_path: Path) -> tuple[Path, str, str]:
     Args:
         tmp_path(pathlib.Path): Temporary directory for the test.
 
-    Return:
+    Returns:
         cfg_path(pathlib.Path): Path to the written config.json.
         statfile(str): Expected path for stat.json (must remain absent).
         statusfile(str): Expected path for status.json (must remain absent).

@@ -100,7 +100,7 @@ def _wait_for_new_sync(mirror_stack, pkgid: str, prev_lastsync: float, timeout: 
         prev_lastsync(float): The lastsync timestamp before the new cycle.
         timeout(int): Maximum seconds to wait.
 
-    Return:
+    Returns:
         new_lastsync(float): The updated lastsync timestamp.
 
     Raises:

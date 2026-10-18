@@ -36,7 +36,7 @@ class PackageSettings(Options):
         Args:
             data(dict): Raw package settings dictionary.
 
-        Return:
+        Returns:
             settings(PackageSettings): Populated instance.
         """
         known_fields = {"hidden", "src", "dst", "options"}
@@ -166,7 +166,7 @@ class Package:
     def to_dict(self) -> dict:
         """Serialize the package to a stat-format dictionary.
 
-        Return:
+        Returns:
             data(dict): Package fields with "id" key and ISO 8601 syncrate.
         """
         package_dict = asdict(self)
@@ -285,7 +285,7 @@ class PluginSettings(Options):
         Args:
             data(dict): Raw plugin settings dictionary.
 
-        Return:
+        Returns:
             settings(PluginSettings): Populated instance.
         """
         known = {"enabled"}
@@ -318,7 +318,7 @@ class Config:
             Args:
                 data(dict): Raw socket settings ({"uid", "gid", "mode"}).
 
-            Return:
+            Returns:
                 settings(SocketSettings): Parsed instance. uid/gid stay None
                     when absent (no chown). mode defaults to 0o600 and is parsed
                     from an octal string (e.g. "0770") via parse_file_mode.
@@ -347,7 +347,7 @@ class Config:
             mode is emitted as an octal string; uid/gid are omitted when None
             so the result round-trips through from_dict.
 
-            Return:
+            Returns:
                 data(dict): {"mode": <octal string>} plus uid/gid when set.
             """
             out: dict = {"mode": format(self.mode, "04o")}
@@ -390,7 +390,7 @@ class Config:
         Args:
             raw(object): The raw value read from config["settings"]["plugins"].
 
-        Return:
+        Returns:
             plugins(dict[str, PluginSettings]): Parsed plugin settings map.
         """
         if raw is None:
@@ -415,7 +415,7 @@ class Config:
         Args:
             config(dict): Top-level config dictionary.
 
-        Return:
+        Returns:
             conf(Config): Populated Config instance.
         """
         from mirror.toolbox import parse_iso_duration
@@ -470,7 +470,7 @@ class Config:
     def to_dict(self) -> dict:
         """Serialize Config to a dictionary matching the config.json schema.
 
-        Return:
+        Returns:
             data(dict): Config as a serializable dict.
         """
         from mirror.toolbox import format_iso_duration

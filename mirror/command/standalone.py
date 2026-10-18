@@ -22,7 +22,7 @@ def _coerce_scalar(value: str):
     Args:
         value(str): Raw string value to coerce.
 
-    Return:
+    Returns:
         coerced: Bool, int, or str depending on content.
     """
     if value.lower() == "true":
@@ -51,7 +51,7 @@ def _parse_options(option: tuple, options_json: Optional[str]) -> dict:
         option(tuple): Sequence of "key=value" or "key[]=value" strings from -o flags.
         options_json(str, optional): JSON object string merged after -o parsing.
 
-    Return:
+    Returns:
         opts(dict): Merged options dictionary.
 
     Raises:
@@ -99,7 +99,7 @@ def _resolve_state_dir(state_dir: Optional[str]) -> Path:
     Args:
         state_dir(str, optional): Explicit path supplied via --state-dir, or None.
 
-    Return:
+    Returns:
         resolved(Path): Writable directory path to use as mirror.STATE_PATH.
     """
     import mirror
@@ -125,7 +125,7 @@ def _build_minimal_config():
     a standalone run. logfolder and webroot are set to a writable temp directory.
     uid and gid are set to the current process owner.
 
-    Return:
+    Returns:
         conf(mirror.structure.Config): Minimal Config instance.
     """
     import mirror.structure

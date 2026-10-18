@@ -26,7 +26,7 @@ def _note_mismatch(pkgid: str, now: float) -> float:
         pkgid(str): Package ID.
         now(float): Current time.time() value.
 
-    Return:
+    Returns:
         first_seen(float): The original first-seen timestamp (may be earlier than now).
     """
     return _mismatch_first_seen.setdefault(pkgid, now)
@@ -112,7 +112,7 @@ def should_auto_sync(package: mirror.structure.Package, now: float, errorcontinu
         now(float): Current epoch seconds (injected for testability).
         errorcontinuetime(int): Seconds to wait before retrying after an ERROR.
 
-    Return:
+    Returns:
         should_sync(bool): True if the auto-loop should call sync.start(package).
     """
     if package.syncrate <= 0:

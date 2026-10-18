@@ -28,7 +28,7 @@ def _start_systemd_container(image: str) -> str:
     Args:
         image(str): Docker image tag to run.
 
-    Return:
+    Returns:
         name(str): Container name (used for docker exec / rm).
     """
     name = f"mirror-setup-test-{uuid.uuid4().hex[:12]}"
@@ -69,7 +69,7 @@ def _exec(name: str, script: str) -> subprocess.CompletedProcess:
         name(str): Container name.
         script(str): Bash script body.
 
-    Return:
+    Returns:
         result(subprocess.CompletedProcess): Captured stdout/stderr/returncode.
     """
     return subprocess.run(

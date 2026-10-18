@@ -21,7 +21,7 @@ def _resolve_master_socket(explicit: Optional[str]) -> str:
     Args:
         explicit(str, optional): Explicit socket path from the ``--socket`` flag.
 
-    Return:
+    Returns:
         path(str): Resolved master socket path.
     """
     if explicit:

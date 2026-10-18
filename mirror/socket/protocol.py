@@ -39,7 +39,7 @@ class HandshakeInfo:
     def to_dict(self) -> dict:
         """Serialize to dictionary
 
-        Return:
+        Returns:
             data(dict): Dataclass fields as dictionary
         """
         return asdict(self)
@@ -51,7 +51,7 @@ class HandshakeInfo:
         Args:
             data(dict): Dictionary with HandshakeInfo fields
 
-        Return:
+        Returns:
             info(HandshakeInfo): Deserialized instance
         """
         return HandshakeInfo(**data)
@@ -76,7 +76,7 @@ def recv_message(sock: socket.socket, timeout: Optional[float] = None) -> dict:
         sock(socket.socket): Connected socket
         timeout(float, optional): Read timeout in seconds
 
-    Return:
+    Returns:
         data(dict): Deserialized JSON payload
     """
     if timeout is not None:
@@ -109,7 +109,7 @@ def expose(cmd_name: Optional[str] = None) -> Callable:
     Args:
         cmd_name(str, optional): Command name. Defaults to method name.
 
-    Return:
+    Returns:
         decorator(Callable): Decorator that tags the method
     """
     def decorator(func: Callable) -> Callable:

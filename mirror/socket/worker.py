@@ -358,7 +358,7 @@ def init_instance(role: str, **kwargs) -> "WorkerServer | WorkerClient | WorkerC
         role(str): "server" for WorkerServer, "client" for a supervised WorkerClient.
         **kwargs: Arguments passed to the constructor (socket_path).
 
-    Return:
+    Returns:
         instance: WorkerServer for "server" role, or the WorkerClientSupervisor
             for "client" role (the supervisor manages the actual WorkerClient
             stored in module global `_instance`).
@@ -512,7 +512,7 @@ def is_worker_running(job_id: Optional[str] = None) -> bool:
     Args:
         job_id(str, optional): If provided, check if this job is running
 
-    Return:
+    Returns:
         alive(bool): True if worker responds (and job is running, if specified)
     """
     try:

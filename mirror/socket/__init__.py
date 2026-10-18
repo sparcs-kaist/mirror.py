@@ -20,7 +20,7 @@ def init(role: str, **kwargs: Any) -> Any:
                    "worker_client" for WorkerClient
         **kwargs: Arguments passed to the constructor
 
-    Return:
+    Returns:
         instance(Any): Initialized server or connected client
     """
     from . import master, worker

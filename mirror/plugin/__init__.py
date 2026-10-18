@@ -233,7 +233,7 @@ def sync_plugin(
         api_version(tuple, optional): ``(major, minor)`` API version this plug-in targets.
             Validated and stored on the returned PluginRecord.
 
-    Return:
+    Returns:
         record(PluginRecord): Validated sync PluginRecord.
 
     Raises:
@@ -287,7 +287,7 @@ def event_plugin(
         api_version(tuple, optional): ``(major, minor)`` API version this plug-in targets.
             Validated and stored on the returned PluginRecord.
 
-    Return:
+    Returns:
         record(PluginRecord): Validated event PluginRecord.
 
     Raises:
@@ -341,7 +341,7 @@ def status_plugin(
         api_version(tuple, optional): ``(major, minor)`` API version this plug-in targets.
             Validated and stored on the returned PluginRecord.
 
-    Return:
+    Returns:
         record(PluginRecord): Validated status PluginRecord.
 
     Raises:
@@ -789,7 +789,7 @@ def _resolve_plugin_config_path(record: PluginRecord) -> "Path | None":
     Args:
         record(PluginRecord): Registered plug-in record.
 
-    Return:
+    Returns:
         path(Path | None): Resolved path, or None when resolution is not possible.
     """
     import mirror.config
@@ -817,7 +817,7 @@ def get_record(name: str) -> "PluginRecord | None":
     Args:
         name(str): Plug-in name to look up.
 
-    Return:
+    Returns:
         record(PluginRecord | None): The registered record, or None if absent.
     """
     return _registry.get(name)
@@ -834,7 +834,7 @@ def get_config(name: str) -> dict:
     Args:
         name(str): Registered plug-in name.
 
-    Return:
+    Returns:
         config(dict): The parsed JSON object from the plug-in config file,
             or an empty dict if the file is absent, unreadable, or not a JSON
             object.

@@ -86,7 +86,7 @@ def format_duration(seconds: float) -> str:
     Args:
         seconds(float): Duration in seconds.
 
-    Return:
+    Returns:
         formatted(str): Human-readable duration string.
     """
     if seconds <= 0:
@@ -106,7 +106,7 @@ def format_datetime(epoch: float) -> str:
     Args:
         epoch(float): Epoch seconds. Non-positive values yield "-".
 
-    Return:
+    Returns:
         text(str): Localtime datetime string, or "-" for missing values.
     """
     if epoch <= 0:
@@ -124,7 +124,7 @@ def format_started(package: Package, now: float) -> str:
         package(Package): Package to inspect.
         now(float): Current epoch seconds (unused; accepted for symmetry).
 
-    Return:
+    Returns:
         text(str): Datetime string, "-" for non-SYNC, "(unknown)" for SYNC
             without a timestamp.
     """
@@ -142,7 +142,7 @@ def format_elapsed(package: Package, now: float) -> str:
         package(Package): Package to inspect.
         now(float): Current epoch seconds.
 
-    Return:
+    Returns:
         text(str): Duration string for SYNC packages, "-" otherwise.
     """
     if package.status != "SYNC" or not package.timestamp:
@@ -156,7 +156,7 @@ def format_last_success(package: Package) -> str:
     Args:
         package(Package): Package to inspect.
 
-    Return:
+    Returns:
         text(str): Datetime string, "(never)" if no successful sync.
     """
     epoch = package.statusinfo.lastsuccesstime or 0.0
@@ -172,7 +172,7 @@ def format_ago(epoch: float, now: float) -> str:
         epoch(float): Past epoch seconds. 0 or future values yield "-".
         now(float): Current epoch seconds.
 
-    Return:
+    Returns:
         text(str): Human-readable duration string, "-" if not applicable.
     """
     if epoch <= 0:
@@ -189,7 +189,7 @@ def status_style(status: str) -> str:
     Args:
         status(str): Package status string.
 
-    Return:
+    Returns:
         style_class(str): prompt_toolkit style class.
     """
     mapping = {
@@ -244,7 +244,7 @@ def _col_width(col: str) -> int:
     Args:
         col(str): Column identifier (e.g. "PACKAGE", "STATUS").
 
-    Return:
+    Returns:
         width(int): Column width in characters.
     """
     widths = {
@@ -265,7 +265,7 @@ def _format_table_row(prefix: str, cells: list[tuple[str, int]]) -> str:
         prefix(str): Two-character row prefix (e.g. "> " for selected, "  " otherwise).
         cells(list[tuple[str, int]]): List of (text, width) pairs for each visible column.
 
-    Return:
+    Returns:
         line(str): Formatted row string terminated with a newline.
     """
     if not cells:
@@ -288,7 +288,7 @@ def _visible_columns(terminal_cols: int) -> tuple[str, ...]:
     Args:
         terminal_cols(int): Available table pane width in terminal cells.
 
-    Return:
+    Returns:
         visible(tuple[str, ...]): Tuple of column names to render.
     """
     visible = list(_ALL_COLUMNS)
@@ -331,7 +331,7 @@ def build_table_header(
         visible(tuple[str, ...]): Ordered column names to include.
         available_width(int, optional): Available table pane width in terminal cells.
 
-    Return:
+    Returns:
         rows(list[tuple[str, str]]): Two (style, text) rows: the label row
             and a separator made of dashes.
     """
@@ -352,7 +352,7 @@ def _build_status_cell(pkg: Package) -> str:
     Args:
         pkg(Package): Package to format.
 
-    Return:
+    Returns:
         text(str): Status cell text (e.g. "ERROR x3" or "SYNC").
     """
     if pkg.status == "ERROR" and pkg.statusinfo.errorcount > 0:
@@ -378,7 +378,7 @@ def build_table_rows(
         selected_pkgid(str): pkgid of the currently selected package.
         available_width(int, optional): Available table pane width in terminal cells.
 
-    Return:
+    Returns:
         rows(list[tuple[str, str]]): List of (style, text) tuples.
     """
     rows: list[tuple[str, str]] = []
@@ -424,7 +424,7 @@ def compute_status_counts(packages: list[Package]) -> dict:
     Args:
         packages(list[Package]): List of packages to count.
 
-    Return:
+    Returns:
         counts(dict): Keys: "total", "SYNC", "ACTIVE", "ERROR", "UNKNOWN", "disabled".
     """
     counts = {"total": len(packages), "SYNC": 0, "ACTIVE": 0, "ERROR": 0, "UNKNOWN": 0, "disabled": 0}
@@ -446,7 +446,7 @@ def apply_sort(packages: list[Package], mode: str) -> list[Package]:
         packages(list[Package]): Input package list.
         mode(str): One of "default", "status", "ago", "pkgid".
 
-    Return:
+    Returns:
         sorted_list(list[Package]): Sorted copy (input unchanged).
     """
     if mode == "default":
@@ -469,7 +469,7 @@ def apply_filter(packages: list[Package], needle: str) -> list[Package]:
         packages(list[Package]): Input package list.
         needle(str): Substring to match. Empty string returns all packages.
 
-    Return:
+    Returns:
         filtered(list[Package]): Matching packages in original order.
     """
     if not needle:
@@ -484,7 +484,7 @@ def visible_packages(state: "TUIState") -> list[Package]:
     Args:
         state(TUIState): Current TUI state.
 
-    Return:
+    Returns:
         packages(list[Package]): Sorted and filtered package list.
     """
     return apply_filter(apply_sort(state.packages, state.sort_mode), state.filter_text)
@@ -493,7 +493,7 @@ def visible_packages(state: "TUIState") -> list[Package]:
 def build_help_text() -> FormattedText:
     """Build the key bindings help overlay content.
 
-    Return:
+    Returns:
         text(FormattedText): Formatted help table.
     """
     lines = [
@@ -522,7 +522,7 @@ def _modal_active(state: "TUIState") -> bool:
     Args:
         state(TUIState): Current TUI state.
 
-    Return:
+    Returns:
         active(bool): True when dialog, help, or filter input is open.
     """
     return (
@@ -542,7 +542,7 @@ def _fallback_package_from_dict(raw: dict) -> Package:
     Args:
         raw(dict): Raw package dict from the RPC payload.
 
-    Return:
+    Returns:
         package(Package): Minimal Package instance for display purposes.
     """
     from mirror.structure import PackageSettings
@@ -582,7 +582,7 @@ def packages_from_rpc(payload: dict) -> list[Package]:
     Args:
         payload(dict): RPC response from MasterClient.list_packages().
 
-    Return:
+    Returns:
         packages(list[Package]): Rehydrated Package instances.
     """
     result = []
@@ -613,7 +613,7 @@ def safe_open_log_for_read(path: Path, base: Optional[Path]) -> Optional[int]:
         path(Path): Path to the log file to open.
         base(Path, optional): Package log base directory for path traversal check.
 
-    Return:
+    Returns:
         fd(int, optional): Opened file descriptor, or None on rejection.
     """
     # Defense-in-depth: reject symlinks before open
@@ -655,7 +655,7 @@ def latest_completed_log(pkg: Package) -> Optional[Path]:
     Args:
         pkg(Package): Package whose status logs to inspect.
 
-    Return:
+    Returns:
         path(Path, optional): Newest completed log path, or None if none.
     """
     info = pkg.statusinfo
@@ -687,7 +687,7 @@ def _front_cut_offset(data: bytes, drop_lines: int) -> int:
         data(bytes): Buffer to scan from the front.
         drop_lines(int): Number of leading lines to drop.
 
-    Return:
+    Returns:
         offset(int): Byte offset where the retained content begins.
     """
     idx = 0
@@ -1266,7 +1266,7 @@ class TUIState:
 
         Uses identity-based selection (selected_pkgid) over the visible list.
 
-        Return:
+        Returns:
             package(Package, optional): Selected package or None.
         """
         visible = visible_packages(self)
@@ -1373,7 +1373,7 @@ class MirrorTUI:
     def _build_layout(self) -> tuple[Layout, TextArea]:
         """Build the prompt_toolkit layout and return (layout, log_area).
 
-        Return:
+        Returns:
             layout(Layout): Application layout.
             log_area(TextArea): Log tail text area for external reference.
         """
@@ -1663,7 +1663,7 @@ class MirrorTUI:
         Args:
             log_area(TextArea): Log text area (used for End/G re-follow).
 
-        Return:
+        Returns:
             kb(KeyBindings): Configured key bindings.
         """
         from prompt_toolkit.document import Document

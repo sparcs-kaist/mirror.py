@@ -130,7 +130,7 @@ def _safe_join(root: Path, *parts: str, validate: bool = True) -> Path:
         *parts(str): Path components to join under root.
         validate(bool): Whether to run _validate_name on each component.
 
-    Return:
+    Returns:
         path(Path): The safely-joined path.
 
     Raises:
@@ -432,7 +432,7 @@ def build_template_rsync_command(
         rsync_bin(str): Path or name of the rsync binary.
         excludes(Sequence[str]): Patterns to exclude (default: JIGDO_TEMPLATE_EXCLUDES).
 
-    Return:
+    Returns:
         argv(list[str]): rsync argument list suitable for subprocess.
     """
     src_arg = src if src.endswith("/") else src + "/"
@@ -482,7 +482,7 @@ def build_final_rsync_command(
         extra_rsync_args(Sequence[str]): Additional rsync flags appended after base args.
         rsync_bin(str): Path or name of the rsync binary.
 
-    Return:
+    Returns:
         argv(list[str]): rsync argument list suitable for subprocess.
     """
     src_arg = src if src.endswith("/") else src + "/"
@@ -530,7 +530,7 @@ def build_jigdo_set_conf(
         jigdo_file(str): Rsync URL or path to the jigdo-file index.
         debian_mirror(str): URL of the Debian package mirror to fetch pieces from.
 
-    Return:
+    Returns:
         conf(str): Shell-safe configuration string ready to write to disk.
 
     Raises:
@@ -571,7 +571,7 @@ def iter_jigdo_sets(dst: Path) -> tuple[str, list[tuple[str, str]]]:
     Args:
         dst(Path): Mirror root directory.
 
-    Return:
+    Returns:
         result(tuple[str, list[tuple[str, str]]]): (version, sets) where
             version is the string pointed to by the 'current' symlink and
             sets is a list of (arch, set_token) pairs sorted by arch then token.
@@ -657,7 +657,7 @@ def generate_jigdo_images(
         runner: Callable matching subprocess.run signature; injectable for tests.
         conf_writer: Callable(path, text) to write conf files; injectable for tests.
 
-    Return:
+    Returns:
         tuple[_JigdoSet, ...]: Selected sets and their expected image paths.
 
     Raises:
@@ -773,7 +773,7 @@ def run_standalone(
         jigdo_mirror_bin(str): Path or name of the jigdo-mirror binary.
         runner: Callable matching subprocess.run signature; injectable for tests.
 
-    Return:
+    Returns:
         None
     """
     from prompt_toolkit.shortcuts import print_formatted_text
@@ -940,7 +940,7 @@ def setup(path: Path, package: "mirror.structure.Package") -> None:
         path(Path): Unused setup path.
         package(mirror.structure.Package): Package being set up.
 
-    Return:
+    Returns:
         None
     """
     pass
@@ -953,7 +953,7 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger, tri
         package(mirror.structure.Package): Package to sync.
         pkg_logger(logging.Logger): Logger for this sync session.
 
-    Return:
+    Returns:
         None
     """
     pkg_logger.info(f"Starting sync.jigdo for {package.name}")
@@ -1055,7 +1055,7 @@ def execute(package: "mirror.structure.Package", pkg_logger: logging.Logger, tri
 def plugin() -> "mirror.plugin.PluginRecord":
     """Entry-point factory for the jigdo sync plug-in.
 
-    Return:
+    Returns:
         record(mirror.plugin.PluginRecord): Sync plug-in record exposing execute.
     """
     from mirror.plugin import sync_plugin
